@@ -5,6 +5,46 @@ Node process serves the browser editor, project APIs, and Yjs WebSocket rooms.
 Each project keeps ordinary source files, collaboration snapshots, and build
 artifacts in an isolated directory. There is no account system or database.
 
+## Features
+
+- A multi-project dashboard with stable, shareable editor URLs.
+- Real-time Yjs collaboration over WebSockets, with presence indicators.
+- Inline comments and tracked suggestions that can be accepted, rejected, or
+  resolved without leaving the source editor.
+- An independent Git repository for every project. The collaborative document
+  always represents `main`; incoming changes are merged in a temporary worktree.
+- Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live
+  Yjs document and `main` untouched until the content is resolved.
+- Git status, history, checkpoints, upstream/ref synchronization, and a
+  copy-ready read-only `git clone` command in the editor.
+- Local LaTeX compilation with PDF preview, build logs, and PDF download.
+- Whole-project ZIP export, including the current uncommitted working tree.
+- A Markdown manual and checked file/patch APIs for coding agents.
+
+## LaTeX Coder vs. Overleaf
+
+| LaTeX Coder | Overleaf |
+| --- | --- |
+| **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
+| **Access:** A project link grants edit access to anyone who can reach the server. There are currently no accounts, roles, or private share tokens. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
+| **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
+| **Review workflow:** Inline comments and suggestions are stored with the LaTeX source and are available without a paid plan. | **Review workflow:** Comments and reviewing are integrated into the platform; real-time Track Changes is a premium feature. |
+| **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
+| **Git transport:** Provides read-only smart HTTP clone. Commits and sync operations are performed from the web UI or API against server-visible refs and upstreams. | **Git transport:** Its Git bridge supports authenticated clone, pull, and push. GitHub synchronization is a separate integration. |
+| **Export:** Downloads the live working tree as a ZIP, including uncommitted files, without changing the index. | **Export:** Downloads the current project source as a ZIP; generated PDF and most generated files are downloaded separately. |
+| **Automation:** Exposes a concise Markdown manual plus file, checked-patch, build, review, and Git APIs for agents. | **Automation:** Emphasizes the hosted editor and integrations such as Git, GitHub, and reference managers. |
+
+The Overleaf descriptions above follow its official documentation for
+[collaboration][overleaf-collaboration], [Track Changes][overleaf-track-changes],
+[Git integration][overleaf-git], [advanced Git behavior][overleaf-git-advanced],
+and [project downloads][overleaf-download].
+
+[overleaf-collaboration]: https://docs.overleaf.com/collaborating/collaborating-in-overleaf
+[overleaf-track-changes]: https://docs.overleaf.com/collaborating/track-changes
+[overleaf-git]: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git
+[overleaf-git-advanced]: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations
+[overleaf-download]: https://docs.overleaf.com/managing-projects-and-files/downloading-a-project
+
 ## Development
 
 ```sh
