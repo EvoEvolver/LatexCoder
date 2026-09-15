@@ -91,7 +91,7 @@ function agentAuthor(agent) {
 }
 
 function atomicWriteSync(target, bytes) {
-  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`);
   writeFileSync(temporary, bytes);
   renameSync(temporary, target);
 }

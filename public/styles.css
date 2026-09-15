@@ -124,8 +124,6 @@ dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
   .output-pane.mobile-open { display: grid; }
   .mobile-output-close { display: grid; }
   .name-field { width: 118px; }
-  .project-switcher { min-width: 130px; }
-  .project-switcher .icon-button { display: none; }
 }
 
 @media (max-width: 680px) {

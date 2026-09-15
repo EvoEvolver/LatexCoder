@@ -250,6 +250,24 @@ test("real collaborative page replaces a selection and exposes review actions", 
   });
 });
 
+test("project creation remains available at compact desktop widths", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.setViewportSize({ width: 800, height: 700 });
+    await page.goto(`${base}/`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    assert.equal(await page.locator("#new-project").isVisible(), true);
+
+    page.once("dialog", dialog => dialog.accept("Compact Project"));
+    await page.locator("#new-project").click();
+    await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Compact Project");
+    assert.equal(await page.locator("#project-select").inputValue(), "compact-project");
+
+    page.once("dialog", dialog => dialog.accept());
+    await page.locator("#delete-project").click();
+    await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Paper");
+  });
+});
+
 test("suggesting keeps the caret before a Backspace deletion", async () => {
   await withEditor(async ({ page }) => {
     await createEditor(page, LIPSUM);
