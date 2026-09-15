@@ -121,7 +121,7 @@ function createCollaborationStore(projectDir, stateDir) {
   }
 
   function persist(shared) {
-    if (shuttingDown || suspended) return;
+    if (shuttingDown || suspended || shared.removed) return;
     if (shared.persistTimer) clearTimeout(shared.persistTimer);
     shared.persistTimer = setTimeout(() => {
       shared.persistTimer = undefined;
@@ -158,6 +158,7 @@ function createCollaborationStore(projectDir, stateDir) {
       awareness: new awarenessProtocol.Awareness(doc),
       connections: new Map(),
       persistTimer: undefined,
+      removed: false,
     };
     shared.awareness.setLocalState(null);
     doc.on("update", (update, origin) => {
@@ -348,6 +349,7 @@ function createCollaborationStore(projectDir, stateDir) {
 
   function flush() {
     for (const shared of docs.values()) {
+      if (shared.removed) continue;
       if (shared.persistTimer) clearTimeout(shared.persistTimer);
       shared.persistTimer = undefined;
       atomicWriteSync(path.join(projectDir, shared.relativePath), shared.doc.getText("content").toString());
@@ -358,6 +360,9 @@ function createCollaborationStore(projectDir, stateDir) {
   function remove(relativePath) {
     const shared = docs.get(relativePath);
     if (shared) {
+      shared.removed = true;
+      if (shared.persistTimer) clearTimeout(shared.persistTimer);
+      shared.persistTimer = undefined;
       for (const connection of shared.connections.keys()) connection.close(1000, "file removed");
       shared.doc.destroy();
       docs.delete(relativePath);
@@ -427,6 +432,30 @@ function run(command, args, options) {
   });
 }
 
+function runBinary(command, args, options = {}, input = Buffer.alloc(0)) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, shell: false });
+    const stdout = [];
+    const stderr = [];
+    let settled = false;
+    child.stdout.on("data", chunk => stdout.push(chunk));
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", error => {
+      if (!settled) reject(error);
+      settled = true;
+    });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    child.on("close", code => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (code === 0) return resolve(Buffer.concat(stdout));
+      reject(apiError("git_failed", Buffer.concat(stderr).toString("utf8").trim() || `Git exited with code ${code}`, 409));
+    });
+    child.stdin.end(input);
+  });
+}
+
 const GIT_IDENTITY_ENV = {
   GIT_AUTHOR_NAME: "Collaborative Editor",
   GIT_AUTHOR_EMAIL: "editor@localhost",
@@ -437,7 +466,7 @@ const GIT_IDENTITY_ENV = {
 async function git(projectDir, args, options = {}) {
   const result = await run("git", ["-c", "core.hooksPath=/dev/null", ...args], {
     cwd: projectDir,
-    env: { ...process.env, ...GIT_IDENTITY_ENV },
+    env: { ...process.env, ...GIT_IDENTITY_ENV, ...(options.env || {}) },
   });
   const allowed = options.allowedCodes || [0];
   if (!allowed.includes(result.code)) {
@@ -721,6 +750,34 @@ async function gitResolve(runtime, message) {
   });
 }
 
+async function createProjectArchive(runtime) {
+  assertProjectWritable(runtime);
+  runtime.collaboration.flush();
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "paper-archive-"));
+  const index = path.join(temporary, "index");
+  const archive = path.join(temporary, `${runtime.id}.zip`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    await git(runtime.projectDir, ["read-tree", "HEAD"], { env });
+    await git(runtime.projectDir, ["add", "--force", "-A"], { env });
+    const tree = (await git(runtime.projectDir, ["write-tree"], { env })).output.split("\n").at(-1);
+    await git(runtime.projectDir, ["archive", "--format=zip", `--prefix=${runtime.id}/`, `--output=${archive}`, tree]);
+    return { archive, temporary };
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function gitUploadPack(runtime, args, input, protocol) {
+  const env = { ...process.env, ...GIT_IDENTITY_ENV };
+  if (protocol) env.GIT_PROTOCOL = protocol;
+  return runBinary("git", ["-c", "core.hooksPath=/dev/null", "upload-pack", "--stateless-rpc", ...args, runtime.projectDir], {
+    cwd: runtime.projectDir,
+    env,
+  }, input);
+}
+
 async function findCompiler(configured, stateDir) {
   const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
   for (const candidate of candidates) {
@@ -752,6 +809,10 @@ LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams.
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
 the first project is used for backwards compatibility.
 
+Browser routes \`/projects\` and \`/projects/:id\` provide the project list and
+shareable editor URLs. There is no account gate: anyone who can reach a project
+URL can edit it.
+
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
 history. \`POST /v1/git/commit\` creates a collaborative checkpoint.
@@ -760,6 +821,10 @@ configured upstream when ref is omitted. A conflicting incoming commit is
 quarantined on \`conflict/<UTC timestamp>\`; Yjs and main remain unchanged.
 After resolving the content on main, \`POST /v1/git/resolve\` records the
 two-parent merge commit.
+
+\`GET /v1/project/archive?project=<id>\` downloads the current working tree as
+a ZIP, including uncommitted files. Clone committed history over read-only
+smart HTTP with \`git clone <origin>/git/<project-id>\`.
 
 ## Inspect
 
@@ -946,6 +1011,10 @@ export async function createPaperServer(options = {}) {
     }
     return response.type("text/markdown; charset=utf-8").send(manual());
   });
+  app.get(["/projects", "/projects/:projectId"], (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.sendFile(path.join(APP_DIR, "public", "index.html"));
+  });
   app.get("/health", (_request, response) => response.json({ ok: true, name: "latexcoder" }));
   app.get("/v1/projects", async (_request, response, next) => {
     try { response.json({ projects: await projectSummaries(), defaultProjectId }); }
@@ -988,6 +1057,16 @@ export async function createPaperServer(options = {}) {
       response.json({ project: { ...runtime.metadata, main: runtime.build.main, files: await listFiles(runtime.projectDir), build: runtime.build } });
     } catch (error) { next(error); }
   });
+  app.get("/v1/project/archive", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const { archive, temporary } = await withGitReader(runtime, () => createProjectArchive(runtime));
+      response.download(archive, `${runtime.id}.zip`, async error => {
+        await rm(temporary, { recursive: true, force: true });
+        if (error && !response.headersSent) next(error);
+      });
+    } catch (error) { next(error); }
+  });
   app.get("/v1/git", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
@@ -1023,6 +1102,34 @@ export async function createPaperServer(options = {}) {
         return { ...result, current: await gitStatus(runtime) };
       });
       response.json({ git: payload });
+    } catch (error) { next(error); }
+  });
+  app.get("/git/:projectId/info/refs", async (request, response, next) => {
+    try {
+      if (request.query.service !== "git-upload-pack") throw apiError("git_service_invalid", "only git-upload-pack is available", 400);
+      const runtime = await loadProject(request.params.projectId);
+      const advertised = await withGitReader(runtime, () => gitUploadPack(
+        runtime,
+        ["--advertise-refs"],
+        Buffer.alloc(0),
+        request.get("git-protocol"),
+      ));
+      response.setHeader("Cache-Control", "no-store");
+      response.type("application/x-git-upload-pack-advertisement");
+      response.send(Buffer.concat([Buffer.from("001e# service=git-upload-pack\n0000"), advertised]));
+    } catch (error) { next(error); }
+  });
+  app.post("/git/:projectId/git-upload-pack", express.raw({ type: () => true, limit: "2mb" }), async (request, response, next) => {
+    try {
+      const runtime = await loadProject(request.params.projectId);
+      const result = await withGitReader(runtime, () => gitUploadPack(
+        runtime,
+        [],
+        Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+        request.get("git-protocol"),
+      ));
+      response.setHeader("Cache-Control", "no-store");
+      response.type("application/x-git-upload-pack-result").send(result);
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {

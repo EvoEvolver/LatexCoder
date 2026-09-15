@@ -22,6 +22,7 @@ async function withEditor(run) {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
     await page.goto(`${base}/?test=1`);
     await page.waitForFunction(() => globalThis.__paperTest);
     await run({ page, base });
@@ -250,26 +251,42 @@ test("real collaborative page replaces a selection and exposes review actions", 
   });
 });
 
-test("project creation remains available at compact desktop widths", async () => {
+test("project page exposes sharing while destructive actions stay in menus", async () => {
   await withEditor(async ({ page, base }) => {
     await page.setViewportSize({ width: 800, height: 700 });
-    await page.goto(`${base}/`);
-    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.goto(`${base}/projects`);
+    await page.locator("#projects-page").waitFor();
     assert.equal(await page.locator("#new-project").isVisible(), true);
+    assert.equal(await page.locator("#delete-project").count(), 0);
 
     await page.locator("#new-project").click();
     await page.locator("#action-input").fill("Cancelled Project");
     await page.keyboard.press("Escape");
     await page.locator("#action-dialog").waitFor({ state: "hidden" });
-    assert.equal(await page.locator("#project-select option", { hasText: "Cancelled Project" }).count(), 0);
+    assert.equal(await page.locator(".project-row", { hasText: "Cancelled Project" }).count(), 0);
 
     await page.locator("#new-project").click();
     await page.locator("#action-dialog").waitFor();
     assert.equal(await page.locator("#action-title").textContent(), "New project");
     await page.locator("#action-input").fill("Compact Project");
     await page.locator("#action-submit").click();
-    await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Compact Project");
-    assert.equal(await page.locator("#project-select").inputValue(), "compact-project");
+    await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Compact Project");
+    await page.waitForURL(/\/projects\/compact-project$/);
+    assert.match(page.url(), /\/projects\/compact-project$/);
+
+    await page.locator("#share-project").click();
+    assert.equal(await page.locator("#share-link").inputValue(), `${base}/projects/compact-project`);
+    assert.equal(await page.locator("#clone-command").inputValue(), `git clone ${base}/git/compact-project`);
+    await page.locator("#access-close").click();
+
+    await page.locator("#new-file").click();
+    await page.locator("#action-input").fill("delete-me.tex");
+    await page.locator("#action-submit").click();
+    await page.locator("#file-menu > summary").click();
+    await page.locator("#delete-file").click();
+    await page.locator("#action-submit").click();
+    await page.waitForFunction(() => ![...document.querySelectorAll(".file-row")].some(row => row.textContent.includes("delete-me.tex")));
+    await page.locator("#toast", { hasText: "File deleted." }).waitFor();
 
     await page.locator("#git-button").click();
     await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
@@ -277,11 +294,14 @@ test("project creation remains available at compact desktop widths", async () =>
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 
-    await page.locator("#delete-project").click();
+    await page.locator("#back-projects").click();
+    const row = page.locator(".project-row", { hasText: "Compact Project" });
+    await row.locator("summary").click();
+    await row.getByText("Delete project").click();
     await page.locator("#action-dialog").waitFor();
     assert.equal(await page.locator("#action-submit").textContent(), "Delete project");
     await page.locator("#action-submit").click();
-    await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Paper");
+    await page.waitForFunction(() => ![...document.querySelectorAll(".project-row")].some(item => item.textContent.includes("Compact Project")));
     await page.locator("#toast", { hasText: "Project deleted." }).waitFor();
   });
 });

@@ -119,6 +119,9 @@ test("root negotiates Agent and human representations", async () => {
 
     const browser = await fetch(`${base}/`, { headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" } });
     assert.match(browser.headers.get("content-type"), /^text\/html/);
+    const sharedProject = await fetch(`${base}/projects/paper`);
+    assert.match(sharedProject.headers.get("content-type"), /^text\/html/);
+    assert.match(await sharedProject.text(), /id="editor-page"/);
     const agentOverride = await fetch(`${base}/`, {
       headers: { "User-Agent": "Mozilla/5.0", Accept: "text/markdown" },
     });
@@ -176,6 +179,41 @@ test("projects isolate files and support lifecycle operations", async () => {
     assert.equal(deleted.status, 200);
     const remaining = await (await fetch(`${base}/v1/projects`)).json();
     assert.deepEqual(remaining.projects.map(project => project.id), [originalId]);
+  });
+});
+
+test("project ZIP includes live files and Git HTTP serves cloneable history", async () => {
+  await withServer(async ({ base }) => {
+    const projects = await (await fetch(`${base}/v1/projects`)).json();
+    const projectId = projects.defaultProjectId;
+    await fetch(`${base}/v1/files?project=${projectId}&path=notes.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "included before commit\n",
+    });
+
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-export-test-"));
+    try {
+      const archiveResponse = await fetch(`${base}/v1/project/archive?project=${projectId}`);
+      assert.equal(archiveResponse.status, 200);
+      assert.match(archiveResponse.headers.get("content-disposition"), new RegExp(`${projectId}\\.zip`));
+      const archive = path.join(temporary, "project.zip");
+      await writeFile(archive, Buffer.from(await archiveResponse.arrayBuffer()));
+      const { stdout: archivedNotes } = await execFileAsync("unzip", ["-p", archive, `${projectId}/notes.tex`]);
+      assert.equal(archivedNotes, "included before commit\n");
+
+      await fetch(`${base}/v1/git/commit?project=${projectId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Include notes" }),
+      });
+      const clone = path.join(temporary, "clone");
+      await execFileAsync("git", ["clone", `${base}/git/${projectId}`, clone]);
+      assert.equal(await readFile(path.join(clone, "notes.tex"), "utf8"), "included before commit\n");
+      assert.equal(await testGit(clone, ["branch", "--show-current"]), "main");
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
   });
 });
 

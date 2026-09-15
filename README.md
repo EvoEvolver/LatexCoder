@@ -21,8 +21,11 @@ or `latexmk`. The older `PAPER_*` names remain supported as fallbacks. The insta
 
 ## Projects
 
-Projects can be created, renamed, selected, and deleted from the toolbar. Their
-state is stored beneath:
+The browser opens on a dedicated project page. Opening a project uses the
+shareable URL `/projects/<project-id>`; anyone who can reach the server can use
+that URL to edit. Rename, download, and delete actions live in each project's
+overflow menu so destructive actions are not primary controls. Project state
+is stored beneath:
 
 ```text
 .latexcoder/projects/<project-id>/
@@ -50,6 +53,16 @@ Git or review-storage validation finds a conflict, the incoming commit is kept
 on `conflict/<UTC timestamp>` while `main` and Yjs remain unchanged. Resolve the
 content on `main`, then use **Mark resolved** to create the two-parent merge
 commit and remove the quarantine branch.
+
+The editor's **Clone** action exposes a read-only smart HTTP endpoint:
+
+```sh
+git clone http://127.0.0.1:8090/git/<project-id>
+```
+
+Cloning returns committed history. **Download ZIP** instead packages the live
+working tree, including current uncommitted files, without changing the Git
+index or creating a commit.
 
 ## Agent API
 

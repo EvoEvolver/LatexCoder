@@ -27,8 +27,11 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import {
+  Archive,
+  ArrowLeft,
   createIcons,
   CheckCheck,
+  Copy,
   Download,
   File,
   FileCheck2,
@@ -41,7 +44,9 @@ import {
   GitMerge,
   GitPullRequestCreateArrow,
   Image,
+  Link,
   MessageSquarePlus,
+  MoreHorizontal,
   PanelLeft,
   Pencil,
   Play,
@@ -62,7 +67,10 @@ import * as Y from "yjs";
 import { parseReviews, stripReviewStorage } from "./review.js";
 
 const ICONS = {
+    Archive,
+    ArrowLeft,
     CheckCheck,
+    Copy,
     Download,
     File,
     FileCheck2,
@@ -75,7 +83,9 @@ const ICONS = {
     GitMerge,
     GitPullRequestCreateArrow,
     Image,
+    Link,
     MessageSquarePlus,
+    MoreHorizontal,
     PanelLeft,
     Pencil,
     Play,
@@ -96,18 +106,19 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
+  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "back-projects",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
-  "build-log", "build-output", "close-log", "close-output", "compile-button", "delete-file", "display-name",
-  "delete-project", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
+  "build-log", "build-output", "clone-button", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "delete-file", "display-name", "download-project",
+  "editor-page", "editor", "empty-output", "file-list", "file-menu", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "rename-file", "review-count", "review-dialog", "review-form",
-  "project-select", "rename-project", "review-list", "review-pane", "review-text", "show-log", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-ref", "git-refresh", "git-resolve", "git-summary", "git-sync",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
-const apiUrl = relative => new URL(relative, window.location.href);
+const apiUrl = relative => new URL(`/${String(relative).replace(/^\//, "")}`, window.location.origin);
 GlobalWorkerOptions.workerSrc = apiUrl("pdf.worker.min.mjs").toString();
 const socketUrl = relative => {
   const url = apiUrl(relative);
@@ -283,6 +294,9 @@ function renderFiles() {
     button.addEventListener("click", () => openFile(file.path));
     elements.file_list.append(button);
   }
+  elements.file_menu.hidden = !state.activeFile;
+  elements.delete_file.disabled = !state.activeFile || state.activeFile === state.main;
+  elements.delete_file.title = state.activeFile === state.main ? "The main document cannot be deleted" : "";
   createIcons({ icons: ICONS });
 }
 
@@ -861,30 +875,99 @@ async function refreshProject(open = false) {
 }
 
 function renderProjects() {
-  elements.project_select.replaceChildren();
+  elements.project_list.replaceChildren();
   for (const project of state.projects) {
-    const option = document.createElement("option");
-    option.value = project.id;
-    option.textContent = project.name;
-    elements.project_select.append(option);
+    const row = document.createElement("article");
+    row.className = "project-row";
+    row.innerHTML = '<i data-lucide="folder-kanban"></i>';
+    const main = document.createElement("div");
+    main.className = "project-row-main";
+    const name = document.createElement("button");
+    name.type = "button";
+    name.textContent = project.name;
+    name.addEventListener("click", () => openProjectPage(project.id));
+    const details = document.createElement("span");
+    details.textContent = project.createdAt
+      ? `Created ${new Date(project.createdAt).toLocaleDateString()}`
+      : "Collaborative LaTeX project";
+    main.append(name, details);
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "secondary-button";
+    open.textContent = "Open";
+    open.addEventListener("click", () => openProjectPage(project.id));
+    const menu = document.createElement("details");
+    menu.className = "context-menu";
+    menu.innerHTML = '<summary class="icon-button" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel"></div>';
+    const panel = menu.querySelector("div");
+    const actions = [
+      ["pencil", "Rename", () => renameProject(project)],
+      ["archive", "Download ZIP", () => downloadProject(project.id)],
+      ["trash-2", "Delete project", () => deleteProject(project), true],
+    ];
+    for (const [icon, label, action, danger] of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      if (danger) button.className = "danger";
+      button.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
+      button.querySelector("span").textContent = label;
+      button.addEventListener("click", () => {
+        menu.open = false;
+        action();
+      });
+      panel.append(button);
+    }
+    row.append(main, open, menu);
+    elements.project_list.append(row);
   }
-  elements.project_select.value = state.projectId;
+  createIcons({ icons: ICONS });
 }
 
-async function refreshProjects(preferredId = state.projectId) {
+async function refreshProjects(preferredId = "") {
   const data = await request("v1/projects");
   state.projects = data.projects;
-  state.projectId = state.projects.some(project => project.id === preferredId)
-    ? preferredId
-    : data.defaultProjectId || state.projects[0]?.id || "";
+  if (preferredId && state.projects.some(project => project.id === preferredId)) state.projectId = preferredId;
   renderProjects();
+  return data;
 }
 
-async function switchProject(projectId) {
-  if (!projectId || projectId === state.projectId) return;
+function projectPageUrl(projectId) {
+  return `/projects/${encodeURIComponent(projectId)}`;
+}
+
+function routeProjectId() {
+  const match = window.location.pathname.match(/^\/projects\/([^/]+)$/);
+  if (match) return decodeURIComponent(match[1]);
+  return new URLSearchParams(window.location.search).get("project") || "";
+}
+
+function showProjectsPage(push = true) {
   disconnectEditor();
   if (elements.git_dialog.open) elements.git_dialog.close();
+  if (elements.access_dialog.open) elements.access_dialog.close();
+  elements.editor_page.hidden = true;
+  elements.projects_page.hidden = false;
+  if (push && window.location.pathname !== "/projects") window.history.pushState({}, "", "/projects");
+  document.title = "Projects · LaTeX Coder";
+}
+
+async function openProjectPage(projectId, push = true) {
+  const project = state.projects.find(candidate => candidate.id === projectId);
+  if (!project) {
+    showProjectsPage(false);
+    throw new Error("Project does not exist");
+  }
+  const changed = projectId !== state.projectId;
+  if (changed) disconnectEditor();
+  elements.projects_page.hidden = true;
+  elements.editor_page.hidden = false;
   state.projectId = projectId;
+  elements.project_name.textContent = project.name;
+  elements.download_project.href = projectApiUrl("v1/project/archive");
+  elements.download_project.download = `${project.id}.zip`;
+  if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
+  document.title = `${project.name} · LaTeX Coder`;
+  if (!changed && state.view) return;
   state.activeFile = "";
   state.pdfRequestVersion += 1;
   state.pdfRenderVersion += 1;
@@ -896,7 +979,6 @@ async function switchProject(projectId) {
   elements.empty_output.hidden = false;
   elements.pdf_status.textContent = "No compiled PDF";
   elements.build_output.textContent = "";
-  renderProjects();
   await refreshProject(true);
 }
 
@@ -1085,15 +1167,104 @@ async function runGitAction(endpoint, body, successMessage) {
   }
 }
 
+function downloadProject(projectId) {
+  const link = document.createElement("a");
+  link.href = `${window.location.origin}/v1/project/archive?project=${encodeURIComponent(projectId)}`;
+  link.download = `${projectId}.zip`;
+  link.click();
+}
+
+async function renameProject(project) {
+  const name = await openActionDialog({
+    title: "Rename project",
+    label: "Project name",
+    value: project.name,
+    maxLength: 80,
+    submitLabel: "Rename",
+  });
+  if (!name || name === project.name) return;
+  try {
+    await request(`v1/projects/${encodeURIComponent(project.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    await refreshProjects(project.id);
+    if (state.projectId === project.id) {
+      elements.project_name.textContent = name;
+      document.title = `${name} · LaTeX Coder`;
+    }
+    showToast("Project renamed.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function deleteProject(project) {
+  const confirmed = await openActionDialog({
+    title: "Delete project",
+    message: `Delete “${project.name}” and all of its files? This cannot be undone.`,
+    submitLabel: "Delete project",
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    if (state.projectId === project.id) disconnectEditor();
+    await request(`v1/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+    if (state.projectId === project.id) state.projectId = "";
+    await refreshProjects();
+    showProjectsPage();
+    showToast("Project deleted.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function copyText(value, message) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const input = document.createElement("textarea");
+    input.value = value;
+    document.body.append(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+  showToast(message);
+}
+
+function openAccessDialog(focusClone = false) {
+  const project = state.projects.find(candidate => candidate.id === state.projectId);
+  if (!project) return;
+  const shareUrl = `${window.location.origin}${projectPageUrl(project.id)}`;
+  const cloneUrl = `${window.location.origin}/git/${encodeURIComponent(project.id)}`;
+  elements.access_project_name.textContent = project.name;
+  elements.share_link.value = shareUrl;
+  elements.clone_command.value = `git clone ${cloneUrl}`;
+  elements.access_download.href = projectApiUrl("v1/project/archive");
+  elements.access_download.download = `${project.id}.zip`;
+  elements.access_dialog.showModal();
+  (focusClone ? elements.clone_command : elements.share_link).select();
+}
+
 elements.display_name.value = localStorage.getItem("paper-display-name") || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
 elements.display_name.addEventListener("change", () => {
   elements.display_name.value = cleanMetadata(displayName()).slice(0, 28) || "Guest";
   localStorage.setItem("paper-display-name", elements.display_name.value);
   setAwareness();
 });
-elements.project_select.addEventListener("change", () => {
-  switchProject(elements.project_select.value).catch(error => showToast(error.message));
+elements.back_projects.addEventListener("click", () => showProjectsPage());
+elements.share_project.addEventListener("click", () => openAccessDialog(false));
+elements.clone_button.addEventListener("click", () => openAccessDialog(true));
+elements.download_project.addEventListener("click", event => {
+  event.preventDefault();
+  downloadProject(state.projectId);
 });
+elements.access_close.addEventListener("click", () => elements.access_dialog.close());
+elements.access_done.addEventListener("click", () => elements.access_dialog.close());
+elements.access_dialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  elements.access_dialog.close();
+});
+elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
+elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.git_button.addEventListener("click", async () => {
   elements.git_dialog.showModal();
   await refreshGit();
@@ -1133,50 +1304,8 @@ elements.new_project.addEventListener("click", async () => {
       body: JSON.stringify({ name }),
     });
     await refreshProjects(result.project.id);
-    const nextId = state.projectId;
-    state.projectId = "";
-    await switchProject(nextId);
+    await openProjectPage(result.project.id);
     showToast("Project created.");
-  } catch (error) { showToast(error.message); }
-});
-elements.rename_project.addEventListener("click", async () => {
-  const project = state.projects.find(candidate => candidate.id === state.projectId);
-  if (!project) return;
-  const name = await openActionDialog({
-    title: "Rename project",
-    label: "Project name",
-    value: project.name,
-    maxLength: 80,
-    submitLabel: "Rename",
-  });
-  if (!name || name === project.name) return;
-  try {
-    await request(`v1/projects/${encodeURIComponent(project.id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    await refreshProjects(project.id);
-    showToast("Project renamed.");
-  } catch (error) { showToast(error.message); }
-});
-elements.delete_project.addEventListener("click", async () => {
-  const project = state.projects.find(candidate => candidate.id === state.projectId);
-  if (!project) return;
-  const confirmed = await openActionDialog({
-    title: "Delete project",
-    message: `Delete “${project.name}” and all of its files? This cannot be undone.`,
-    submitLabel: "Delete project",
-    danger: true,
-  });
-  if (!confirmed) return;
-  try {
-    disconnectEditor();
-    await request(`v1/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
-    state.projectId = "";
-    await refreshProjects();
-    await refreshProject(true);
-    showToast("Project deleted.");
   } catch (error) { showToast(error.message); }
 });
 elements.compile_button.addEventListener("click", compile);
@@ -1240,6 +1369,7 @@ elements.new_file.addEventListener("click", async () => {
 });
 elements.rename_file.addEventListener("click", async () => {
   if (!state.activeFile) return;
+  elements.file_menu.open = false;
   const name = await openActionDialog({
     title: "Rename file",
     label: "File path",
@@ -1261,6 +1391,7 @@ elements.rename_file.addEventListener("click", async () => {
 });
 elements.delete_file.addEventListener("click", async () => {
   if (!state.activeFile) return;
+  elements.file_menu.open = false;
   const confirmed = await openActionDialog({
     title: "Delete file",
     message: `Delete “${state.activeFile}”? This cannot be undone.`,
@@ -1274,6 +1405,7 @@ elements.delete_file.addEventListener("click", async () => {
     await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
     state.activeFile = "";
     await refreshProject(true);
+    showToast("File deleted.");
   } catch (error) {
     showToast(error.message);
     await refreshProject(true);
@@ -1282,8 +1414,14 @@ elements.delete_file.addEventListener("click", async () => {
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
 document.querySelectorAll("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
 window.addEventListener("beforeunload", disconnectEditor);
+window.addEventListener("popstate", () => {
+  const projectId = routeProjectId();
+  if (projectId) openProjectPage(projectId, false).catch(error => showToast(error.message));
+  else showProjectsPage(false);
+});
 
 if (testMode) {
+  elements.editor_page.hidden = false;
   window.__paperTest = {
     state,
     createEditor(content, suggesting = true) {
@@ -1306,7 +1444,11 @@ if (testMode) {
   };
 } else {
   if (e2eMode) window.__paperE2E = { state };
-  refreshProjects()
-    .then(() => refreshProject(true))
-    .catch(error => showToast(error.message));
+  refreshProjects().then(data => {
+    const requested = routeProjectId();
+    if (requested) return openProjectPage(requested, false);
+    if (e2eMode) return openProjectPage(data.defaultProjectId || state.projects[0]?.id, false);
+    showProjectsPage(false);
+    if (window.location.pathname !== "/projects") window.history.replaceState({}, "", "/projects");
+  }).catch(error => showToast(error.message));
 }
