@@ -36,12 +36,16 @@ import {
   FileText,
   FolderKanban,
   FolderPlus,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
   GitPullRequestCreateArrow,
   Image,
   MessageSquarePlus,
   PanelLeft,
   Pencil,
   Play,
+  RefreshCw,
   TerminalSquare,
   Trash2,
   Upload,
@@ -66,12 +70,16 @@ const ICONS = {
     FileText,
     FolderKanban,
     FolderPlus,
+    GitBranch,
+    GitCommitHorizontal,
+    GitMerge,
     GitPullRequestCreateArrow,
     Image,
     MessageSquarePlus,
     PanelLeft,
     Pencil,
     Play,
+    RefreshCw,
     TerminalSquare,
     Trash2,
     Upload,
@@ -94,6 +102,8 @@ const elements = Object.fromEntries([
   "delete-project", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "rename-file", "review-count", "review-dialog", "review-form",
   "project-select", "rename-project", "review-list", "review-pane", "review-text", "show-log", "suggest-edit", "sync-state",
+  "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
+  "git-history", "git-message", "git-ref", "git-refresh", "git-resolve", "git-summary", "git-sync",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
@@ -110,6 +120,7 @@ const state = {
   activeFile: "main.tex",
   projectId: "",
   projects: [],
+  git: null,
   main: "main.tex",
   files: [],
   view: null,
@@ -567,7 +578,10 @@ function editorExtensions(ytext, provider) {
     keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
-      if (update.docChanged) queueReviewRender();
+      if (update.docChanged) {
+        queueReviewRender();
+        elements.git_dirty.hidden = false;
+      }
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
         queueMicrotask(renderSelectionActions);
       }
@@ -843,6 +857,7 @@ async function refreshProject(open = false) {
       await openFile(target);
     }
   }
+  await refreshGit(false);
 }
 
 function renderProjects() {
@@ -868,6 +883,7 @@ async function refreshProjects(preferredId = state.projectId) {
 async function switchProject(projectId) {
   if (!projectId || projectId === state.projectId) return;
   disconnectEditor();
+  if (elements.git_dialog.open) elements.git_dialog.close();
   state.projectId = projectId;
   state.activeFile = "";
   state.pdfRequestVersion += 1;
@@ -988,6 +1004,87 @@ function selectOutput(name) {
   if (name === "review") renderReviews();
 }
 
+function renderGitStatus(gitState) {
+  state.git = gitState;
+  elements.git_dirty.hidden = !gitState.dirty;
+  const relation = gitState.upstream
+    ? `${gitState.ahead} ahead, ${gitState.behind} behind ${gitState.upstream}`
+    : "no upstream";
+  elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"} · ${relation}`;
+  elements.git_change_count.textContent = String(gitState.files.length);
+  elements.git_file_list.replaceChildren();
+  if (!gitState.files.length) {
+    const empty = document.createElement("div");
+    empty.className = "git-empty";
+    empty.textContent = "Working tree clean";
+    elements.git_file_list.append(empty);
+  } else {
+    for (const file of gitState.files) {
+      const row = document.createElement("div");
+      row.className = "git-file-row";
+      const status = document.createElement("code");
+      status.textContent = `${file.index}${file.worktree}`.trim() || "M";
+      const name = document.createElement("span");
+      name.textContent = file.path;
+      row.append(status, name);
+      elements.git_file_list.append(row);
+    }
+  }
+  elements.git_history.replaceChildren();
+  for (const commit of gitState.history) {
+    const row = document.createElement("div");
+    row.className = "git-history-row";
+    const id = document.createElement("code");
+    id.textContent = commit.shortId;
+    const subject = document.createElement("span");
+    subject.textContent = commit.subject;
+    subject.title = `${commit.author}: ${commit.subject}`;
+    const date = document.createElement("time");
+    date.dateTime = commit.date;
+    date.textContent = new Date(commit.date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    row.append(id, subject, date);
+    elements.git_history.append(row);
+  }
+  const conflict = gitState.conflict;
+  elements.git_conflict.hidden = !conflict;
+  elements.git_conflict_branch.textContent = conflict?.branch || "";
+  elements.git_resolve.hidden = !conflict;
+}
+
+async function refreshGit(showErrors = true) {
+  try {
+    const result = await request("v1/git");
+    renderGitStatus(result.git);
+    return result.git;
+  } catch (error) {
+    if (showErrors) showToast(error.message);
+    return null;
+  }
+}
+
+async function runGitAction(endpoint, body, successMessage) {
+  const buttons = [elements.git_commit, elements.git_sync, elements.git_resolve, elements.git_refresh];
+  buttons.forEach(button => { button.disabled = true; });
+  elements.sync_state.textContent = "Git operation";
+  try {
+    const result = await request(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (["fast_forward", "merged"].includes(result.git.status)) await refreshProject(true);
+    await refreshGit();
+    showToast(result.git.status === "conflict" ? `Conflict saved to ${result.git.conflict.branch}.` : successMessage);
+    return result;
+  } catch (error) {
+    showToast(error.message);
+    return null;
+  } finally {
+    buttons.forEach(button => { button.disabled = false; });
+    elements.sync_state.textContent = state.provider ? "Saved live" : "Stored";
+  }
+}
+
 elements.display_name.value = localStorage.getItem("paper-display-name") || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
 elements.display_name.addEventListener("change", () => {
   elements.display_name.value = cleanMetadata(displayName()).slice(0, 28) || "Guest";
@@ -996,6 +1093,29 @@ elements.display_name.addEventListener("change", () => {
 });
 elements.project_select.addEventListener("change", () => {
   switchProject(elements.project_select.value).catch(error => showToast(error.message));
+});
+elements.git_button.addEventListener("click", async () => {
+  elements.git_dialog.showModal();
+  await refreshGit();
+});
+elements.git_close.addEventListener("click", () => elements.git_dialog.close());
+elements.git_dialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  elements.git_dialog.close();
+});
+elements.git_refresh.addEventListener("click", () => refreshGit());
+elements.git_commit.addEventListener("click", async () => {
+  const result = await runGitAction("v1/git/commit", { message: elements.git_message.value }, "Checkpoint committed.");
+  if (result) elements.git_message.value = "";
+});
+elements.git_sync.addEventListener("click", () => runGitAction(
+  "v1/git/sync",
+  { ref: elements.git_ref.value.trim() || undefined },
+  "Git synchronization complete.",
+));
+elements.git_resolve.addEventListener("click", async () => {
+  const result = await runGitAction("v1/git/resolve", { message: elements.git_message.value }, "Conflict marked resolved.");
+  if (result) elements.git_message.value = "";
 });
 elements.new_project.addEventListener("click", async () => {
   const name = await openActionDialog({

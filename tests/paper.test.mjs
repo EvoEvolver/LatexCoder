@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { WebSocket } from "ws";
 import { WebsocketProvider } from "y-websocket";
@@ -11,6 +13,30 @@ import * as Y from "yjs";
 
 import { createPaperServer, safeRelativePath } from "../server.mjs";
 import { parseReviews, stripReviewStorage } from "../src/review.js";
+
+const execFileAsync = promisify(execFile);
+
+async function testGit(cwd, args) {
+  const { stdout } = await execFileAsync("git", [
+    "-c", "user.name=Test User",
+    "-c", "user.email=test@example.com",
+    ...args,
+  ], { cwd });
+  return stdout.trim();
+}
+
+async function createIncomingBranch(projectDir, branch, mutate) {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-git-worktree-"));
+  try {
+    await testGit(projectDir, ["worktree", "add", "-b", branch, temporary, "main"]);
+    await mutate(temporary);
+    await testGit(temporary, ["add", "-A"]);
+    await testGit(temporary, ["commit", "-m", `${branch} changes`]);
+  } finally {
+    await testGit(projectDir, ["worktree", "remove", "--force", temporary]).catch(() => {});
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
 
 async function withServer(run) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-test-"));
@@ -119,6 +145,7 @@ test("projects isolate files and support lifecycle operations", async () => {
     const initial = await (await fetch(`${base}/v1/projects`)).json();
     assert.equal(initial.projects.length, 1);
     const originalId = initial.projects[0].id;
+    assert.equal(await testGit(path.join(projectsDir, originalId, "project"), ["branch", "--show-current"]), "main");
 
     const createdResponse = await fetch(`${base}/v1/projects`, {
       method: "POST",
@@ -149,6 +176,139 @@ test("projects isolate files and support lifecycle operations", async () => {
     assert.equal(deleted.status, 200);
     const remaining = await (await fetch(`${base}/v1/projects`)).json();
     assert.deepEqual(remaining.projects.map(project => project.id), [originalId]);
+  });
+});
+
+test("Git checkpoints and fast-forward sync keep collaboration on main", async () => {
+  await withServer(async ({ base, projectDir }) => {
+    await fetch(`${base}/v1/files?path=notes.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "local checkpoint\n",
+    });
+    const committed = await fetch(`${base}/v1/git/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Add notes" }),
+    });
+    assert.equal(committed.status, 200);
+    assert.equal(await testGit(projectDir, ["status", "--short"]), "");
+    assert.equal(await testGit(projectDir, ["log", "-1", "--format=%s"]), "Add notes");
+
+    await createIncomingBranch(projectDir, "incoming", async worktree => {
+      await writeFile(path.join(worktree, "remote.tex"), "incoming file\n", "utf8");
+    });
+    const synced = await fetch(`${base}/v1/git/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "incoming" }),
+    });
+    assert.equal(synced.status, 200);
+    assert.equal((await synced.json()).git.status, "fast_forward");
+    assert.equal(await testGit(projectDir, ["branch", "--show-current"]), "main");
+    assert.equal(await (await fetch(`${base}/v1/files?path=remote.tex`)).text(), "incoming file\n");
+    assert.equal(await testGit(projectDir, ["status", "--short"]), "");
+  });
+});
+
+test("Git sync creates a clean merge without checking Yjs off main", async () => {
+  await withServer(async ({ base, projectDir, ws }) => {
+    await createIncomingBranch(projectDir, "incoming-clean", async worktree => {
+      await writeFile(path.join(worktree, "incoming.tex"), "incoming side\n", "utf8");
+      const source = await readFile(path.join(worktree, "main.tex"), "utf8");
+      await writeFile(path.join(worktree, "main.tex"), `${source}\n% incoming update\n`, "utf8");
+    });
+    await fetch(`${base}/v1/files?path=local.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "collaborative side\n",
+    });
+    await fetch(`${base}/v1/git/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Local side" }),
+    });
+    const doc = new Y.Doc();
+    const provider = new WebsocketProvider(`${ws}/v1/collab`, Buffer.from("main.tex").toString("base64url"), doc, { WebSocketPolyfill: WebSocket });
+    await waitFor(() => provider.synced);
+
+    const response = await fetch(`${base}/v1/git/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "incoming-clean" }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).git.status, "merged");
+    assert.equal(await testGit(projectDir, ["branch", "--show-current"]), "main");
+    assert.equal((await testGit(projectDir, ["rev-list", "--parents", "-1", "HEAD"])).split(" ").length, 3);
+    assert.equal(await (await fetch(`${base}/v1/files?path=incoming.tex`)).text(), "incoming side\n");
+    assert.equal(await (await fetch(`${base}/v1/files?path=local.tex`)).text(), "collaborative side\n");
+    await waitFor(() => doc.getText("content").toString().endsWith("% incoming update\n"));
+    assert.equal(await testGit(projectDir, ["status", "--short"]), "");
+    provider.destroy();
+    doc.destroy();
+  });
+});
+
+test("Git conflicts quarantine incoming commits while Yjs stays on main", async () => {
+  await withServer(async ({ base, projectDir }) => {
+    const original = await (await fetch(`${base}/v1/files?path=main.tex`)).text();
+    await createIncomingBranch(projectDir, "incoming-conflict", async worktree => {
+      await writeFile(path.join(worktree, "main.tex"), original.replace("shared live", "incoming version"), "utf8");
+    });
+
+    const local = original.replace("shared live", "local collaborative version");
+    await fetch(`${base}/v1/files?path=main.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: local,
+    });
+    await fetch(`${base}/v1/git/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Local collaboration" }),
+    });
+
+    const sync = await fetch(`${base}/v1/git/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "incoming-conflict" }),
+    });
+    assert.equal(sync.status, 200);
+    const result = (await sync.json()).git;
+    assert.equal(result.status, "conflict");
+    assert.match(result.conflict.branch, /^conflict\/\d{8}-\d{6}Z(?:-[a-f0-9]+)?$/);
+    assert.equal(await testGit(projectDir, ["branch", "--show-current"]), "main");
+    assert.equal(await (await fetch(`${base}/v1/files?path=main.tex`)).text(), local);
+    assert.match(await testGit(projectDir, ["show", `${result.conflict.branch}:main.tex`]), /incoming version/);
+
+    await testGit(projectDir, ["branch", "-f", result.conflict.branch, "HEAD"]);
+    const changedConflict = await fetch(`${base}/v1/git/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Must not resolve a changed conflict branch" }),
+    });
+    assert.equal(changedConflict.status, 409);
+    assert.equal((await changedConflict.json()).error.code, "git_conflict_changed");
+    await testGit(projectDir, ["branch", "-f", result.conflict.branch, result.conflict.incoming]);
+
+    const resolvedSource = local.replace("local collaborative version", "resolved version");
+    await fetch(`${base}/v1/files?path=main.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: resolvedSource,
+    });
+    const resolved = await fetch(`${base}/v1/git/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Resolve incoming changes" }),
+    });
+    assert.equal(resolved.status, 200);
+    assert.equal((await resolved.json()).git.status, "resolved");
+    assert.equal((await testGit(projectDir, ["rev-list", "--parents", "-1", "HEAD"])).split(" ").length, 3);
+    assert.equal(await testGit(projectDir, ["branch", "--show-current"]), "main");
+    assert.equal(await (await fetch(`${base}/v1/files?path=main.tex`)).text(), resolvedSource);
+    assert.doesNotMatch(await testGit(projectDir, ["branch", "--list", "conflict/*"]), /conflict\//);
   });
 });
 

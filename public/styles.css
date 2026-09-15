@@ -44,7 +44,7 @@ button { cursor: pointer; }
 .output-pane { display: grid; grid-template-rows: 42px minmax(0, 1fr); background: #eceeea; }
 .pane-header, .editor-toolbar { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 10px; border-bottom: 1px solid #e5e7e2; }
 .pane-header strong { font-size: 11px; text-transform: uppercase; color: #646a62; }
-.icon-actions, .review-actions, .file-actions { display: flex; align-items: center; gap: 2px; }
+.icon-actions, .review-actions, .editor-actions, .file-actions { display: flex; align-items: center; gap: 2px; }
 .icon-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 5px; background: transparent; }
 .icon-button:hover { background: #e9ece7; }
 .icon-button.danger:hover { color: #a73535; background: #f7e7e5; }
@@ -57,9 +57,10 @@ button { cursor: pointer; }
 .file-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-actions { height: 40px; justify-content: flex-end; padding: 4px 8px; border-top: 1px solid #e5e7e2; }
 .editor-toolbar { justify-content: space-between; padding: 0 8px; background: #fafbf9; }
-.tool-button { height: 29px; padding: 0 9px; border: 0; background: transparent; font-size: 11px; }
+.tool-button { position: relative; height: 29px; padding: 0 9px; border: 0; background: transparent; font-size: 11px; }
 .tool-button.active { color: #fff; background: #1f6955; }
 .tool-button.active:hover { background: #185845; }
+.git-dirty { width: 7px; height: 7px; border-radius: 50%; background: #bf6a2f; }
 #editor { min-width: 0; min-height: 0; overflow: hidden; }
 .cm-editor { height: 100%; font-size: 13px; }
 .cm-scroller { overflow: auto; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; line-height: 1.55; }
@@ -120,6 +121,33 @@ dialog textarea:focus, .dialog-input:focus { border-color: #438b77; box-shadow: 
 .dialog-input { height: 38px; resize: none; }
 .dialog-message { margin: 0; color: #50554e; font-size: 13px; line-height: 1.5; }
 dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
+.git-dialog { width: min(680px, calc(100% - 24px)); }
+.git-dialog-body { display: flex; max-height: min(760px, calc(100dvh - 32px)); flex-direction: column; padding: 16px; }
+.git-dialog-body > header, .git-dialog-body > footer, .git-dialog-body > footer > div { display: flex; align-items: center; }
+.git-dialog-body > header { justify-content: space-between; margin-bottom: 8px; }
+.git-dialog-body > header > div { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
+.git-dialog-body > header strong { font-size: 15px; }
+#git-summary { overflow: hidden; color: #737970; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.git-dialog-body > footer { justify-content: space-between; margin-top: 14px; }
+.git-dialog-body > footer > div { gap: 7px; }
+.git-conflict { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; margin: 4px 0 10px; padding: 10px 12px; border-left: 3px solid #b04a42; background: #f9e9e7; }
+.git-conflict strong { font-size: 12px; }
+.git-conflict span { grid-column: 1; overflow: hidden; color: #72534f; font: 10px/1.4 "SFMono-Regular", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.git-conflict button { grid-column: 2; grid-row: 1 / 3; }
+.git-section { padding: 10px 0; border-top: 1px solid #e5e7e2; }
+.git-section > label, .git-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: #666c64; font-size: 11px; font-weight: 650; }
+.git-file-list, .git-history { max-height: 150px; overflow: auto; }
+.git-file-row, .git-history-row { display: grid; min-height: 27px; align-items: center; gap: 8px; border-bottom: 1px solid #f0f1ee; font-size: 11px; }
+.git-file-row { grid-template-columns: 24px minmax(0, 1fr); }
+.git-file-row code { color: #9b572b; font-size: 10px; }
+.git-file-row span, .git-history-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-history-row { grid-template-columns: 64px minmax(0, 1fr) 110px; }
+.git-history-row code { color: #346457; font-size: 10px; }
+.git-history-row time { color: #8a8f87; font-size: 9px; text-align: right; }
+.git-empty { padding: 8px 0; color: #92978f; font-size: 11px; }
+.git-sync-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 8px; }
+.git-sync-row > label { margin: 0; }
+.git-sync-row .dialog-input { height: 34px; }
 .mobile-files, .mobile-output-close { display: none; }
 
 @media (max-width: 960px) {
@@ -146,6 +174,9 @@ dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
   .mobile-files { display: grid; }
   .tool-button { font-size: 0; width: 31px; padding: 0; }
   .tool-button svg { width: 16px; }
+  .git-dirty { display: block; position: absolute; margin: -17px 0 0 17px; }
+  .git-history-row { grid-template-columns: 56px minmax(0, 1fr); }
+  .git-history-row time { display: none; }
   .topbar > .primary-button { width: 34px; padding: 0; }
   .topbar > .primary-button span { display: none; }
 }

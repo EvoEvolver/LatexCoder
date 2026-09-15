@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 import path from "node:path";
 
 import * as awarenessProtocol from "y-protocols/awareness";
@@ -112,6 +113,7 @@ function createCollaborationStore(projectDir, stateDir) {
   const docs = new Map();
   const snapshotsDir = path.join(stateDir, "yjs");
   let shuttingDown = false;
+  let suspended = false;
 
   function snapshotPath(relativePath) {
     const digest = createHash("sha256").update(relativePath).digest("hex");
@@ -119,7 +121,7 @@ function createCollaborationStore(projectDir, stateDir) {
   }
 
   function persist(shared) {
-    if (shuttingDown) return;
+    if (shuttingDown || suspended) return;
     if (shared.persistTimer) clearTimeout(shared.persistTimer);
     shared.persistTimer = setTimeout(() => {
       shared.persistTimer = undefined;
@@ -182,6 +184,10 @@ function createCollaborationStore(projectDir, stateDir) {
   }
 
   function attach(connection, relativePath) {
+    if (suspended) {
+      connection.close(1012, "project is synchronizing with Git");
+      return;
+    }
     const shared = load(relativePath);
     shared.connections.set(connection, new Set());
     connection.binaryType = "arraybuffer";
@@ -246,6 +252,21 @@ function createCollaborationStore(projectDir, stateDir) {
       text.insert(0, source);
     }, "rest-api");
     return true;
+  }
+
+  function importText(relativePath, source) {
+    const target = path.join(projectDir, relativePath);
+    if (!existsSync(target)) {
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, source);
+    }
+    const shared = load(relativePath);
+    const text = shared.doc.getText("content");
+    if (text.toString() === source) return;
+    shared.doc.transact(() => {
+      text.delete(0, text.length);
+      text.insert(0, source);
+    }, "git-sync");
   }
 
   function readText(relativePath) {
@@ -355,7 +376,19 @@ function createCollaborationStore(projectDir, stateDir) {
     docs.clear();
   }
 
-  return { attach, flush, load, patchText, readText, remove, replaceText, roomNameForPath, shutdown };
+  function suspend() {
+    suspended = true;
+    for (const shared of docs.values()) {
+      for (const connection of shared.connections.keys()) connection.close(1012, "project is synchronizing with Git");
+    }
+    flush();
+  }
+
+  function resume() {
+    suspended = false;
+  }
+
+  return { attach, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
 }
 
 async function listFiles(projectDir) {
@@ -394,6 +427,300 @@ function run(command, args, options) {
   });
 }
 
+const GIT_IDENTITY_ENV = {
+  GIT_AUTHOR_NAME: "Collaborative Editor",
+  GIT_AUTHOR_EMAIL: "editor@localhost",
+  GIT_COMMITTER_NAME: "Collaborative Editor",
+  GIT_COMMITTER_EMAIL: "editor@localhost",
+};
+
+async function git(projectDir, args, options = {}) {
+  const result = await run("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+    cwd: projectDir,
+    env: { ...process.env, ...GIT_IDENTITY_ENV },
+  });
+  const allowed = options.allowedCodes || [0];
+  if (!allowed.includes(result.code)) {
+    const message = result.output.trim().split("\n").slice(-8).join("\n") || `Git exited with code ${result.code}`;
+    throw apiError(options.code || "git_failed", message, options.status || 409);
+  }
+  return { ...result, output: result.output.trim() };
+}
+
+async function ensureGitRepository(projectDir) {
+  if (!existsSync(path.join(projectDir, ".git"))) {
+    await git(projectDir, ["init", "-b", "main"]);
+    await git(projectDir, ["add", "-A"]);
+    await git(projectDir, ["commit", "--allow-empty", "-m", "Initial project"]);
+  }
+  const branch = (await git(projectDir, ["branch", "--show-current"])).output;
+  if (branch !== "main") throw apiError("git_branch_invalid", "the collaborative working tree must remain on main", 409);
+}
+
+function cleanCommitMessage(value, fallback = "Collaborative checkpoint") {
+  const message = typeof value === "string" ? value.replace(/\r/g, "").trim() : "";
+  if (message.length > 500) throw apiError("invalid_commit_message", "commit message must not exceed 500 characters");
+  return message || fallback;
+}
+
+async function gitHead(projectDir, ref = "HEAD") {
+  return (await git(projectDir, ["rev-parse", "--verify", `${ref}^{commit}`])).output.split("\n").at(-1);
+}
+
+async function gitCheckpoint(runtime, message) {
+  runtime.collaboration.flush();
+  await git(runtime.projectDir, ["add", "-A"]);
+  const changed = await git(runtime.projectDir, ["diff", "--cached", "--quiet"], { allowedCodes: [0, 1] });
+  if (changed.code === 1) await git(runtime.projectDir, ["commit", "-m", cleanCommitMessage(message)]);
+  return { commit: await gitHead(runtime.projectDir), created: changed.code === 1 };
+}
+
+function parseGitStatus(output) {
+  if (!output) return [];
+  return output.split("\n").filter(Boolean).map(line => ({
+    index: line[0],
+    worktree: line[1],
+    path: line.slice(3),
+  }));
+}
+
+async function gitStatus(runtime) {
+  runtime.collaboration.flush();
+  const branch = (await git(runtime.projectDir, ["branch", "--show-current"])).output;
+  const files = parseGitStatus((await git(runtime.projectDir, ["status", "--short", "--untracked-files=all"])).output);
+  const upstreamResult = await git(runtime.projectDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { allowedCodes: [0, 128] });
+  const upstream = upstreamResult.code === 0 ? upstreamResult.output.split("\n").at(-1) : null;
+  let ahead = 0;
+  let behind = 0;
+  if (upstream) {
+    const counts = (await git(runtime.projectDir, ["rev-list", "--left-right", "--count", `HEAD...${upstream}`])).output.split(/\s+/).map(Number);
+    [ahead, behind] = counts;
+  }
+  const logOutput = (await git(runtime.projectDir, ["log", "-10", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"])).output;
+  const history = logOutput ? logOutput.split("\n").map(line => {
+    const [id, shortId, author, date, subject] = line.split("\x1f");
+    return { id, shortId, author, date, subject };
+  }) : [];
+  const conflictsOutput = (await git(runtime.projectDir, ["for-each-ref", "--format=%(refname:short)", "refs/heads/conflict"])).output;
+  return {
+    branch,
+    head: await gitHead(runtime.projectDir),
+    upstream,
+    ahead,
+    behind,
+    dirty: files.length > 0,
+    files,
+    history,
+    conflictBranches: conflictsOutput ? conflictsOutput.split("\n") : [],
+    conflict: runtime.metadata.git?.conflict || null,
+  };
+}
+
+function conflictBranchName(date = new Date()) {
+  return `conflict/${date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").replace("T", "-")}`;
+}
+
+function validateMergedText(relativePath, source) {
+  if (/^(?:<{7}|={7}|>{7})/m.test(source)) throw apiError("git_merge_invalid", `${relativePath} contains merge markers`, 409);
+  if (!relativePath.endsWith(".tex")) return;
+  const kinds = [
+    ["\\cmtbg", "comment"], ["\\revbg", "revision"],
+    ["\\addbg", "addition"], ["\\delbg", "deletion"],
+  ];
+  const reviews = parseReviews(source);
+  for (const [marker, kind] of kinds) {
+    const count = source.split(marker).length - 1;
+    if (count !== reviews.filter(item => item.kind === kind).length) {
+      throw apiError("git_review_conflict", `${relativePath} contains malformed review storage`, 409);
+    }
+  }
+}
+
+async function trackedPaths(projectDir) {
+  const output = (await git(projectDir, ["ls-files", "-z"])).output;
+  return output ? output.split("\0").filter(Boolean) : [];
+}
+
+async function importGitWorktree(runtime, sourceDir) {
+  const before = new Set(await trackedPaths(runtime.projectDir));
+  const after = new Set(await trackedPaths(sourceDir));
+  if (!after.has(runtime.build.main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
+
+  // Validate the complete target tree before changing any live Yjs document.
+  for (const relativePath of after) {
+    safeRelativePath(relativePath);
+    const source = path.join(sourceDir, relativePath);
+    const details = await lstat(source);
+    if (!details.isFile()) throw apiError("git_file_unsupported", `${relativePath} is not a regular file`, 409);
+    if (details.size > MAX_FILE_BYTES) throw apiError("file_too_large", `${relativePath} is too large to synchronize`, 413);
+    if (isTextFile(relativePath)) {
+      const content = await readFile(source, "utf8");
+      if (Buffer.byteLength(content) > MAX_TEXT_BYTES) throw apiError("file_too_large", `${relativePath} is too large to synchronize`, 413);
+      validateMergedText(relativePath, content);
+    }
+  }
+
+  for (const relativePath of after) {
+    const source = path.join(sourceDir, relativePath);
+    const target = path.join(runtime.projectDir, relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    if (isTextFile(relativePath)) {
+      const content = await readFile(source, "utf8");
+      runtime.collaboration.importText(relativePath, content);
+    } else {
+      await cp(source, target);
+    }
+  }
+  for (const relativePath of before) {
+    if (after.has(relativePath)) continue;
+    await runtime.collaboration.remove(relativePath);
+    await rm(path.join(runtime.projectDir, relativePath), { force: true });
+  }
+  runtime.collaboration.flush();
+}
+
+async function createConflictBranch(runtime, incoming, local) {
+  const existing = runtime.metadata.git?.conflict;
+  if (existing?.incoming === incoming) return existing;
+  let branch = conflictBranchName();
+  const check = await git(runtime.projectDir, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { allowedCodes: [0, 1] });
+  if (check.code === 0) branch = `${branch}-${incoming.slice(0, 7)}`;
+  await git(runtime.projectDir, ["branch", branch, incoming]);
+  const conflict = { branch, incoming, base: local, createdAt: new Date().toISOString() };
+  runtime.metadata = { ...runtime.metadata, git: { ...(runtime.metadata.git || {}), conflict } };
+  await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
+  return conflict;
+}
+
+async function withGitOperation(runtime, task) {
+  if (runtime.gitBusy || runtime.deleting) throw apiError("git_busy", "another Git operation is already running", 409);
+  runtime.gitBusy = true;
+  runtime.collaboration.suspend();
+  try {
+    return await task();
+  } finally {
+    runtime.collaboration.resume();
+    runtime.gitBusy = false;
+  }
+}
+
+async function withGitReader(runtime, task) {
+  if (runtime.deleting) throw apiError("project_not_found", "project does not exist", 404);
+  runtime.gitReaders += 1;
+  try {
+    return await task();
+  } finally {
+    runtime.gitReaders -= 1;
+    if (runtime.gitReaders === 0) {
+      for (const resolve of runtime.gitReaderWaiters.splice(0)) resolve();
+    }
+  }
+}
+
+async function waitForGitReaders(runtime) {
+  runtime.deleting = true;
+  if (runtime.gitReaders > 0) await new Promise(resolve => runtime.gitReaderWaiters.push(resolve));
+}
+
+function assertProjectWritable(runtime) {
+  if (runtime.gitBusy) throw apiError("git_busy", "the project is synchronizing with Git", 409);
+}
+
+async function withTemporaryWorktree(runtime, commit, task) {
+  // The worktree target itself must not exist when `git worktree add` runs.
+  const parent = await mkdtemp(path.join(os.tmpdir(), "paper-git-"));
+  const worktree = path.join(parent, "worktree");
+  try {
+    await git(runtime.projectDir, ["worktree", "add", "--detach", worktree, commit]);
+    return await task(worktree);
+  } finally {
+    if (existsSync(worktree)) await git(runtime.projectDir, ["worktree", "remove", "--force", worktree], { allowedCodes: [0, 128] });
+    await rm(parent, { recursive: true, force: true });
+  }
+}
+
+async function gitSync(runtime, requestedRef) {
+  return withGitOperation(runtime, async () => {
+    await ensureGitRepository(runtime.projectDir);
+    const checkpoint = await gitCheckpoint(runtime, "Checkpoint before sync");
+    const local = checkpoint.commit;
+    let incomingRef = typeof requestedRef === "string" ? requestedRef.trim() : "";
+    if (!incomingRef) {
+      const upstream = await git(runtime.projectDir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { allowedCodes: [0, 128] });
+      if (upstream.code !== 0) throw apiError("git_upstream_missing", "configure an upstream or provide an incoming ref", 409);
+      await git(runtime.projectDir, ["fetch"]);
+      incomingRef = upstream.output.split("\n").at(-1);
+    }
+    if (!incomingRef || incomingRef.length > 200 || incomingRef.startsWith("-")) {
+      throw apiError("invalid_git_ref", "incoming Git ref is invalid");
+    }
+    const incoming = await gitHead(runtime.projectDir, incomingRef);
+    if (incoming === local) return { status: "up_to_date", commit: local };
+
+    const incomingIsAncestor = await git(runtime.projectDir, ["merge-base", "--is-ancestor", incoming, local], { allowedCodes: [0, 1] });
+    if (incomingIsAncestor.code === 0) return { status: "local_ahead", commit: local, incoming };
+
+    const localIsAncestor = await git(runtime.projectDir, ["merge-base", "--is-ancestor", local, incoming], { allowedCodes: [0, 1] });
+    let mergedCommit = incoming;
+    let mergeConflict = false;
+    let semanticConflict = null;
+
+    await withTemporaryWorktree(runtime, localIsAncestor.code === 0 ? incoming : local, async worktree => {
+      if (localIsAncestor.code !== 0) {
+        const merge = await git(worktree, ["merge", "--no-ff", "--no-edit", incoming], { allowedCodes: [0, 1] });
+        if (merge.code === 1) {
+          mergeConflict = true;
+          return;
+        }
+        mergedCommit = await gitHead(worktree);
+      }
+      try {
+        await importGitWorktree(runtime, worktree);
+      } catch (error) {
+        semanticConflict = error;
+      }
+    });
+
+    if (mergeConflict || semanticConflict) {
+      const conflict = await createConflictBranch(runtime, incoming, local);
+      return {
+        status: "conflict",
+        commit: local,
+        incoming,
+        conflict,
+        reason: semanticConflict?.message || "Git could not merge the incoming version automatically",
+      };
+    }
+
+    await git(runtime.projectDir, ["update-ref", "refs/heads/main", mergedCommit, local]);
+    await git(runtime.projectDir, ["read-tree", mergedCommit]);
+    return { status: localIsAncestor.code === 0 ? "fast_forward" : "merged", commit: mergedCommit, incoming };
+  });
+}
+
+async function gitResolve(runtime, message) {
+  return withGitOperation(runtime, async () => {
+    await ensureGitRepository(runtime.projectDir);
+    const conflict = runtime.metadata.git?.conflict;
+    if (!conflict) throw apiError("git_conflict_missing", "the project has no pending Git conflict", 409);
+    const branchTip = await gitHead(runtime.projectDir, conflict.branch);
+    if (branchTip !== conflict.incoming) {
+      throw apiError("git_conflict_changed", "the pending conflict branch changed; synchronize again before resolving", 409);
+    }
+    const checkpoint = await gitCheckpoint(runtime, "Checkpoint before conflict resolution");
+    const local = checkpoint.commit;
+    const tree = (await git(runtime.projectDir, ["write-tree"])).output.split("\n").at(-1);
+    const commit = (await git(runtime.projectDir, ["commit-tree", tree, "-p", local, "-p", conflict.incoming, "-m", cleanCommitMessage(message, "Resolve Git conflict")])).output.split("\n").at(-1);
+    await git(runtime.projectDir, ["update-ref", "refs/heads/main", commit, local]);
+    await git(runtime.projectDir, ["branch", "-D", conflict.branch]);
+    const nextGit = { ...(runtime.metadata.git || {}) };
+    delete nextGit.conflict;
+    runtime.metadata = { ...runtime.metadata, git: nextGit };
+    await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
+    return { status: "resolved", commit };
+  });
+}
+
 async function findCompiler(configured, stateDir) {
   const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
   for (const candidate of candidates) {
@@ -424,6 +751,15 @@ LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
 the first project is used for backwards compatibility.
+
+Each project's source directory is an independent Git repository whose live
+working tree always remains on \`main\`. \`GET /v1/git\` returns status and
+history. \`POST /v1/git/commit\` creates a collaborative checkpoint.
+\`POST /v1/git/sync\` accepts \`{"ref":"incoming-branch"}\`, or uses the
+configured upstream when ref is omitted. A conflicting incoming commit is
+quarantined on \`conflict/<UTC timestamp>\`; Yjs and main remain unchanged.
+After resolving the content on main, \`POST /v1/git/resolve\` records the
+two-parent merge commit.
 
 ## Inspect
 
@@ -482,7 +818,7 @@ function projectSlug(name) {
 async function readProjectMetadata(projectRoot, id) {
   try {
     const metadata = JSON.parse(await readFile(path.join(projectRoot, "project.json"), "utf8"));
-    return { id, name: cleanProjectName(metadata.name), createdAt: metadata.createdAt || null };
+    return { ...metadata, id, name: cleanProjectName(metadata.name), createdAt: metadata.createdAt || null };
   } catch {
     return { id, name: id === "paper" ? "Paper" : id, createdAt: null };
   }
@@ -524,6 +860,7 @@ export async function createPaperServer(options = {}) {
     await mkdir(buildDir, { recursive: true });
     const mainPath = path.join(projectDir, "main.tex");
     if (!existsSync(mainPath)) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
+    await ensureGitRepository(projectDir);
     let build = { status: "idle", main: "main.tex", startedAt: null, finishedAt: null, log: "", pdf: false };
     try {
       build = JSON.parse(await readFile(path.join(buildDir, "latest.json"), "utf8"));
@@ -533,6 +870,10 @@ export async function createPaperServer(options = {}) {
       id, metadata, projectRoot, projectDir, buildDir,
       collaboration: createCollaborationStore(projectDir, projectRoot),
       build,
+      gitBusy: false,
+      gitReaders: 0,
+      gitReaderWaiters: [],
+      deleting: false,
     };
     projects.set(id, runtime);
     return runtime;
@@ -627,6 +968,7 @@ export async function createPaperServer(options = {}) {
   app.delete("/v1/projects/:projectId", async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
+      await waitForGitReaders(runtime);
       runtime.collaboration.shutdown();
       projects.delete(runtime.id);
       await rm(runtime.projectRoot, { recursive: true, force: false });
@@ -644,6 +986,43 @@ export async function createPaperServer(options = {}) {
     try {
       const runtime = await resolveProject(request);
       response.json({ project: { ...runtime.metadata, main: runtime.build.main, files: await listFiles(runtime.projectDir), build: runtime.build } });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/git", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      response.json({ git: await withGitReader(runtime, () => gitStatus(runtime)) });
+    }
+    catch (error) { next(error); }
+  });
+  app.post("/v1/git/commit", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const payload = await withGitReader(runtime, async () => {
+        const result = await withGitOperation(runtime, () => gitCheckpoint(runtime, request.body?.message));
+        return { ...result, status: await gitStatus(runtime) };
+      });
+      response.json({ git: payload });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/git/sync", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const payload = await withGitReader(runtime, async () => {
+        const result = await gitSync(runtime, request.body?.ref);
+        return { ...result, current: await gitStatus(runtime) };
+      });
+      response.json({ git: payload });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/git/resolve", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const payload = await withGitReader(runtime, async () => {
+        const result = await gitResolve(runtime, request.body?.message);
+        return { ...result, current: await gitStatus(runtime) };
+      });
+      response.json({ git: payload });
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {
@@ -664,7 +1043,9 @@ export async function createPaperServer(options = {}) {
   });
   app.put("/v1/files", express.raw({ type: () => true, limit: MAX_FILE_BYTES }), async (request, response, next) => {
     try {
-      const { projectDir, collaboration } = await resolveProject(request);
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const { projectDir, collaboration } = runtime;
       const relativePath = safeRelativePath(request.query.path);
       const target = path.join(projectDir, relativePath);
       const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
@@ -680,7 +1061,9 @@ export async function createPaperServer(options = {}) {
     } catch (error) { next(error); }
   });
   app.post("/v1/files/patch", express.json({ limit: `${MAX_TEXT_BYTES}b` }), (request, response, next) => {
-    resolveProject(request).then(({ collaboration }) => {
+    resolveProject(request).then(runtime => {
+      assertProjectWritable(runtime);
+      const { collaboration } = runtime;
       const relativePath = safeRelativePath(request.query.path);
       if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be patched", 415);
       const result = collaboration.patchText(relativePath, request.body?.baseSha256, request.body?.changes, {
@@ -699,6 +1082,7 @@ export async function createPaperServer(options = {}) {
   app.delete("/v1/files", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
       const { projectDir, collaboration } = runtime;
       const relativePath = safeRelativePath(request.query.path);
       if (relativePath === runtime.build.main) throw apiError("main_file_required", "the main document cannot be deleted", 409);
@@ -713,6 +1097,7 @@ export async function createPaperServer(options = {}) {
   app.post("/v1/files/move", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
       const { projectDir, collaboration } = runtime;
       const from = safeRelativePath(request.body?.from);
       const to = safeRelativePath(request.body?.to);
@@ -741,6 +1126,7 @@ export async function createPaperServer(options = {}) {
     let runtime;
     try {
       runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
       const { projectDir, buildDir, collaboration } = runtime;
       if (runtime.build.status === "running") throw apiError("compile_busy", "a compile is already running", 409);
       collaboration.flush();
@@ -748,7 +1134,8 @@ export async function createPaperServer(options = {}) {
       if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
       runtime.build = { status: "running", main, startedAt: new Date().toISOString(), finishedAt: null, log: "", pdf: runtime.build.pdf };
       workDir = path.join(buildDir, `job-${randomUUID()}`);
-      await cp(projectDir, workDir, { recursive: true });
+      const gitDir = path.join(projectDir, ".git");
+      await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
       // Review storage belongs to the editor, not the rendered document.
       // Compile a clean temporary projection of every TeX file: comment and
       // legacy revision bodies remain, additions are accepted, and deletions

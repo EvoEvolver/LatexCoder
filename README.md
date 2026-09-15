@@ -26,7 +26,8 @@ state is stored beneath:
 
 ```text
 .latexcoder/projects/<project-id>/
-  project/       canonical source files
+  project/       canonical source files and independent Git repository
+    .git/
   yjs/           collaborative editing snapshots
   build/         latest build metadata and PDF
   project.json   display metadata
@@ -34,6 +35,21 @@ state is stored beneath:
 
 An existing single-project state root containing `project/`, `yjs/`, and
 `build/` is migrated automatically to `projects/paper/` on first startup.
+
+## Git And Collaboration
+
+Every project is initialized on `main`. Yjs always represents that branch;
+the service never checks another branch out into the collaborative working
+tree. Git operations briefly flush and suspend live synchronization so a
+commit sees one coherent source snapshot.
+
+The Git panel supports status, history, commits, and synchronization from an
+explicit ref or configured upstream. Incoming updates are merged in a temporary
+detached worktree. A clean result is imported into the live Yjs documents. If
+Git or review-storage validation finds a conflict, the incoming commit is kept
+on `conflict/<UTC timestamp>` while `main` and Yjs remain unchanged. Resolve the
+content on `main`, then use **Mark resolved** to create the two-parent merge
+commit and remove the quarantine branch.
 
 ## Agent API
 

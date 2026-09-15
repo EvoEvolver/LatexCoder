@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light">
     <title>LaTeX Coder</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="./styles.css?v=20260903-3">
+    <link rel="stylesheet" href="./styles.css?v=20260915-2">
   </head>
   <body>
     <div class="app-shell">
@@ -45,7 +45,10 @@
               <button class="tool-button" id="add-comment"><i data-lucide="message-square-plus"></i>Comment</button>
               <button class="tool-button" id="suggest-edit" aria-pressed="false"><i data-lucide="git-pull-request-create-arrow"></i><span>Suggest</span></button>
             </div>
-            <button class="icon-button mobile-files" id="toggle-files" title="Files"><i data-lucide="panel-left"></i></button>
+            <div class="editor-actions">
+              <button class="tool-button" id="git-button"><i data-lucide="git-branch"></i><span>Git</span><span class="git-dirty" id="git-dirty" hidden></span></button>
+              <button class="icon-button mobile-files" id="toggle-files" title="Files"><i data-lucide="panel-left"></i></button>
+            </div>
           </div>
           <div id="editor"></div>
           <div class="binary-view" id="binary-view" hidden><i data-lucide="file"></i><strong id="binary-name"></strong><a id="binary-download" class="secondary-button">Download</a></div>
@@ -96,6 +99,38 @@
         <footer><button class="secondary-button" id="action-cancel" type="button">Cancel</button><button class="primary-button" id="action-submit" type="submit"></button></footer>
       </form>
     </dialog>
-    <script type="module" src="./app.js?v=20260915-1"></script>
+    <dialog class="git-dialog" id="git-dialog">
+      <div class="git-dialog-body">
+        <header><div><strong>Git</strong><span id="git-summary"></span></div><button class="icon-button" id="git-close" type="button" title="Close"><i data-lucide="x"></i></button></header>
+        <div class="git-conflict" id="git-conflict" hidden>
+          <strong>Merge conflict</strong><span id="git-conflict-branch"></span>
+          <button class="secondary-button" id="git-resolve" type="button"><i data-lucide="git-merge"></i>Mark resolved</button>
+        </div>
+        <section class="git-section">
+          <div class="git-section-title"><strong>Changes</strong><span id="git-change-count">0</span></div>
+          <div class="git-file-list" id="git-file-list"></div>
+        </section>
+        <section class="git-section">
+          <label for="git-message">Commit message</label>
+          <input class="dialog-input" id="git-message" maxlength="500" placeholder="Describe this checkpoint">
+        </section>
+        <section class="git-section git-sync-row">
+          <label for="git-ref">Incoming ref</label>
+          <input class="dialog-input" id="git-ref" maxlength="200" placeholder="Configured upstream">
+        </section>
+        <section class="git-section">
+          <div class="git-section-title"><strong>History</strong></div>
+          <div class="git-history" id="git-history"></div>
+        </section>
+        <footer>
+          <button class="icon-button" id="git-refresh" type="button" title="Refresh"><i data-lucide="refresh-cw"></i></button>
+          <div>
+            <button class="secondary-button" id="git-sync" type="button"><i data-lucide="git-merge"></i>Sync</button>
+            <button class="primary-button" id="git-commit" type="button"><i data-lucide="git-commit-horizontal"></i>Commit all</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
+    <script type="module" src="./app.js?v=20260915-2"></script>
   </body>
 </html>

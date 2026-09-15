@@ -271,11 +271,18 @@ test("project creation remains available at compact desktop widths", async () =>
     await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Compact Project");
     assert.equal(await page.locator("#project-select").inputValue(), "compact-project");
 
+    await page.locator("#git-button").click();
+    await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
+    assert.match(await page.locator("#git-summary").textContent(), /^main · clean/);
+    assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
+    await page.locator("#git-close").click();
+
     await page.locator("#delete-project").click();
     await page.locator("#action-dialog").waitFor();
     assert.equal(await page.locator("#action-submit").textContent(), "Delete project");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Paper");
+    await page.locator("#toast", { hasText: "Project deleted." }).waitFor();
   });
 });
 
