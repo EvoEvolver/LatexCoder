@@ -88,6 +88,7 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
+  "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
   "build-log", "build-output", "close-log", "close-output", "compile-button", "delete-file", "display-name",
   "delete-project", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
@@ -157,6 +158,53 @@ function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.hidden = false;
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
+}
+
+function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false }) {
+  const hasInput = Boolean(label);
+  elements.action_title.textContent = title;
+  elements.action_label.textContent = label;
+  elements.action_label.hidden = !hasInput;
+  elements.action_input.hidden = !hasInput;
+  elements.action_input.disabled = !hasInput;
+  elements.action_input.required = hasInput;
+  elements.action_input.value = value;
+  elements.action_input.maxLength = maxLength;
+  elements.action_message.textContent = message;
+  elements.action_message.hidden = !message;
+  elements.action_submit.textContent = submitLabel;
+  elements.action_submit.classList.toggle("danger-button", danger);
+  elements.action_dialog.showModal();
+
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      elements.action_form.removeEventListener("submit", submit);
+      elements.action_dialog.removeEventListener("cancel", cancel);
+      elements.action_cancel.removeEventListener("click", cancel);
+      elements.action_close.removeEventListener("click", cancel);
+      elements.action_dialog.close();
+      resolve(result);
+    };
+    const submit = event => {
+      event.preventDefault();
+      const result = hasInput ? elements.action_input.value.trim() : true;
+      if (hasInput && !result) return elements.action_input.reportValidity();
+      finish(result);
+    };
+    const cancel = event => {
+      event.preventDefault();
+      finish(null);
+    };
+    elements.action_form.addEventListener("submit", submit);
+    elements.action_dialog.addEventListener("cancel", cancel);
+    elements.action_cancel.addEventListener("click", cancel);
+    elements.action_close.addEventListener("click", cancel);
+    queueMicrotask(() => (hasInput ? elements.action_input : elements.action_submit).focus());
+    if (hasInput) queueMicrotask(() => elements.action_input.select());
+  });
 }
 
 function renderSelectionActions() {
@@ -950,7 +998,13 @@ elements.project_select.addEventListener("change", () => {
   switchProject(elements.project_select.value).catch(error => showToast(error.message));
 });
 elements.new_project.addEventListener("click", async () => {
-  const name = window.prompt("Project name", "Untitled paper")?.trim();
+  const name = await openActionDialog({
+    title: "New project",
+    label: "Project name",
+    value: "Untitled paper",
+    maxLength: 80,
+    submitLabel: "Create project",
+  });
   if (!name) return;
   try {
     const result = await request("v1/projects", {
@@ -968,7 +1022,13 @@ elements.new_project.addEventListener("click", async () => {
 elements.rename_project.addEventListener("click", async () => {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
-  const name = window.prompt("Rename project", project.name)?.trim();
+  const name = await openActionDialog({
+    title: "Rename project",
+    label: "Project name",
+    value: project.name,
+    maxLength: 80,
+    submitLabel: "Rename",
+  });
   if (!name || name === project.name) return;
   try {
     await request(`v1/projects/${encodeURIComponent(project.id)}`, {
@@ -982,7 +1042,14 @@ elements.rename_project.addEventListener("click", async () => {
 });
 elements.delete_project.addEventListener("click", async () => {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
-  if (!project || !window.confirm(`Delete project “${project.name}” and all of its files?`)) return;
+  if (!project) return;
+  const confirmed = await openActionDialog({
+    title: "Delete project",
+    message: `Delete “${project.name}” and all of its files? This cannot be undone.`,
+    submitLabel: "Delete project",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     disconnectEditor();
     await request(`v1/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
@@ -1034,7 +1101,12 @@ elements.upload_input.addEventListener("change", async () => {
   elements.upload_input.value = "";
 });
 elements.new_file.addEventListener("click", async () => {
-  const name = window.prompt("File path", "chapter.tex")?.trim();
+  const name = await openActionDialog({
+    title: "New file",
+    label: "File path",
+    value: "chapter.tex",
+    submitLabel: "Create file",
+  });
   if (!name) return;
   try {
     await request(`v1/files?path=${encodeURIComponent(name)}`, {
@@ -1048,7 +1120,12 @@ elements.new_file.addEventListener("click", async () => {
 });
 elements.rename_file.addEventListener("click", async () => {
   if (!state.activeFile) return;
-  const name = window.prompt("Rename file", state.activeFile)?.trim();
+  const name = await openActionDialog({
+    title: "Rename file",
+    label: "File path",
+    value: state.activeFile,
+    submitLabel: "Rename",
+  });
   if (!name || name === state.activeFile) return;
   try {
     const old = state.activeFile;
@@ -1063,7 +1140,14 @@ elements.rename_file.addEventListener("click", async () => {
   } catch (error) { showToast(error.message); }
 });
 elements.delete_file.addEventListener("click", async () => {
-  if (!state.activeFile || !window.confirm(`Delete ${state.activeFile}?`)) return;
+  if (!state.activeFile) return;
+  const confirmed = await openActionDialog({
+    title: "Delete file",
+    message: `Delete “${state.activeFile}”? This cannot be undone.`,
+    submitLabel: "Delete file",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     const target = state.activeFile;
     disconnectEditor();

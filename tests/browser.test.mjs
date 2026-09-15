@@ -257,13 +257,24 @@ test("project creation remains available at compact desktop widths", async () =>
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await page.locator("#new-project").isVisible(), true);
 
-    page.once("dialog", dialog => dialog.accept("Compact Project"));
     await page.locator("#new-project").click();
+    await page.locator("#action-input").fill("Cancelled Project");
+    await page.keyboard.press("Escape");
+    await page.locator("#action-dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#project-select option", { hasText: "Cancelled Project" }).count(), 0);
+
+    await page.locator("#new-project").click();
+    await page.locator("#action-dialog").waitFor();
+    assert.equal(await page.locator("#action-title").textContent(), "New project");
+    await page.locator("#action-input").fill("Compact Project");
+    await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Compact Project");
     assert.equal(await page.locator("#project-select").inputValue(), "compact-project");
 
-    page.once("dialog", dialog => dialog.accept());
     await page.locator("#delete-project").click();
+    await page.locator("#action-dialog").waitFor();
+    assert.equal(await page.locator("#action-submit").textContent(), "Delete project");
+    await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-select")?.selectedOptions[0]?.textContent === "Paper");
   });
 });

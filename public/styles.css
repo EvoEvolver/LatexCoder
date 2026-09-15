@@ -31,6 +31,8 @@ button { cursor: pointer; }
 .primary-button, .secondary-button, .tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 6px; font-size: 12px; font-weight: 650; text-decoration: none; }
 .primary-button { border: 1px solid #1d604e; color: #fff; background: #1f6955; }
 .primary-button:hover { background: #185845; }
+.danger-button { border-color: #9e3535; background: #b33d3d; }
+.danger-button:hover { background: #982f2f; }
 .primary-button:disabled { opacity: .55; cursor: wait; }
 .secondary-button, .tool-button { border: 1px solid #d8dbd5; background: #fff; }
 .secondary-button:hover, .tool-button:hover { background: #f1f3ef; }
@@ -113,8 +115,10 @@ dialog header, dialog footer { display: flex; align-items: center; justify-conte
 dialog header { margin-bottom: 16px; }
 dialog header strong { font-size: 15px; }
 dialog label { margin-bottom: 6px; color: #686e66; font-size: 11px; font-weight: 650; }
-dialog textarea { width: 100%; resize: vertical; padding: 9px; border: 1px solid #d8dbd5; border-radius: 6px; outline: 0; font: 12px/1.5 "SFMono-Regular", Consolas, monospace; }
-dialog textarea:focus { border-color: #438b77; box-shadow: 0 0 0 2px #deeee8; }
+dialog textarea, .dialog-input { width: 100%; resize: vertical; padding: 9px; border: 1px solid #d8dbd5; border-radius: 6px; outline: 0; font: 12px/1.5 "SFMono-Regular", Consolas, monospace; }
+dialog textarea:focus, .dialog-input:focus { border-color: #438b77; box-shadow: 0 0 0 2px #deeee8; }
+.dialog-input { height: 38px; resize: none; }
+.dialog-message { margin: 0; color: #50554e; font-size: 13px; line-height: 1.5; }
 dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
 .mobile-files, .mobile-output-close { display: none; }
 
@@ -142,6 +146,6 @@ dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
   .mobile-files { display: grid; }
   .tool-button { font-size: 0; width: 31px; padding: 0; }
   .tool-button svg { width: 16px; }
-  .primary-button { width: 34px; padding: 0; }
-  .primary-button span { display: none; }
+  .topbar > .primary-button { width: 34px; padding: 0; }
+  .topbar > .primary-button span { display: none; }
 }

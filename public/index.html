@@ -87,6 +87,15 @@
         <footer><button class="secondary-button" value="cancel">Cancel</button><button class="primary-button" id="dialog-submit" value="default">Insert</button></footer>
       </form>
     </dialog>
-    <script type="module" src="./app.js?v=20260903-3"></script>
+    <dialog id="action-dialog">
+      <form id="action-form">
+        <header><strong id="action-title"></strong><button class="icon-button" id="action-close" type="button" title="Close"><i data-lucide="x"></i></button></header>
+        <p class="dialog-message" id="action-message" hidden></p>
+        <label for="action-input" id="action-label"></label>
+        <input class="dialog-input" id="action-input" autocomplete="off" required>
+        <footer><button class="secondary-button" id="action-cancel" type="button">Cancel</button><button class="primary-button" id="action-submit" type="submit"></button></footer>
+      </form>
+    </dialog>
+    <script type="module" src="./app.js?v=20260915-1"></script>
   </body>
 </html>
