@@ -9,8 +9,9 @@ artifacts in an isolated directory. There is no account system or database.
 
 - A multi-project dashboard with stable, shareable editor URLs.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
-- Inline comments and tracked suggestions that can be accepted, rejected, or
-  resolved without leaving the source editor.
+- Inline comments and tracked suggestions encoded as explicit LaTeX macros.
+  Humans and agents see and edit the same review state through ordinary source
+  reads and checked patches, including accepting, rejecting, and resolving it.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live
@@ -28,7 +29,7 @@ artifacts in an isolated directory. There is no account system or database.
 | **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
 | **Access:** A project link grants edit access to anyone who can reach the server. There are currently no accounts, roles, or private share tokens. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
-| **Review workflow:** Inline comments and suggestions are stored with the LaTeX source and are available without a paid plan. | **Review workflow:** Comments and reviewing are integrated into the platform; real-time Track Changes is a premium feature. |
+| **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
 | **Git transport:** Provides read-only smart HTTP clone. Commits and sync operations are performed from the web UI or API against server-visible refs and upstreams. | **Git transport:** Its Git bridge supports authenticated clone, pull, and push. GitHub synchronization is a separate integration. |
 | **Export:** Downloads the live working tree as a ZIP, including uncommitted files, without changing the index. | **Export:** Downloads the current project source as a ZIP; generated PDF and most generated files are downloaded separately. |
