@@ -1,0 +1,315 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { WebSocket } from "ws";
+import { WebsocketProvider } from "y-websocket";
+import * as Y from "yjs";
+
+import { createPaperServer, safeRelativePath } from "../server.mjs";
+import { parseReviews, stripReviewStorage } from "../src/review.js";
+
+async function withServer(run) {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-test-"));
+  const paper = await createPaperServer({ stateDir });
+  await new Promise((resolve, reject) => {
+    paper.server.once("error", reject);
+    paper.server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = paper.server.address();
+  try {
+    await run({ ...paper, base: `http://127.0.0.1:${address.port}`, ws: `ws://127.0.0.1:${address.port}` });
+  } finally {
+    paper.shutdown();
+    paper.sockets.close();
+    await new Promise(resolve => paper.server.close(resolve));
+    await rm(stateDir, { recursive: true, force: true });
+  }
+}
+
+function waitFor(testValue, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (testValue()) {
+        clearInterval(timer);
+        resolve();
+      } else if (Date.now() - started > timeout) {
+        clearInterval(timer);
+        reject(new Error("condition timed out"));
+      }
+    }, 20);
+  });
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+test("path validation contains project access", () => {
+  assert.equal(safeRelativePath("chapters/intro.tex"), "chapters/intro.tex");
+  assert.throws(() => safeRelativePath("../../etc/passwd"), /inside the project/);
+  assert.throws(() => safeRelativePath("/etc/passwd"), /inside the project/);
+});
+
+test("review storage parses without leaking into visible source", () => {
+  const source = "A \\cmtbg{c1}{Ada}claim\\cmted{Needs evidence}; "
+    + "\\revbg{r0}{Mo}modern wording\\reved{old wording}; "
+    + "\\delbg{r1}{Lin}unclear text\\deled"
+    + "\\addbg{r1}{Lin}clear text\\added.";
+  const reviews = parseReviews(source);
+  assert.deepEqual(reviews.map(item => [item.kind, item.id, item.author, item.body, item.note]), [
+    ["comment", "c1", "Ada", "claim", "Needs evidence"],
+    ["revision", "r0", "Mo", "modern wording", "old wording"],
+    ["deletion", "r1", "Lin", "unclear text", ""],
+    ["addition", "r1", "Lin", "clear text", ""],
+  ]);
+  assert.equal(stripReviewStorage(source), "A claim; modern wording; clear text.");
+});
+
+test("compile projection removes storage macros beside ordinary letters", () => {
+  const source = "before \\delbg{r1}{Lin}bad\\deledafter "
+    + "\\addbg{r1}{Lin}good\\addedtext";
+  const clean = stripReviewStorage(source);
+  assert.equal(clean, "before after goodtext");
+  assert.doesNotMatch(clean, /\\(?:cmtbg|cmted|revbg|reved|addbg|added|delbg|deled)\\b/);
+});
+
+test("root negotiates Agent and human representations", async () => {
+  await withServer(async ({ base }) => {
+    const root = await fetch(`${base}/`);
+    assert.match(root.headers.get("content-type"), /^text\/markdown/);
+    assert.match(await root.text(), /^# LaTeX Coder/);
+
+    const human = await fetch(`${base}/`, { headers: { Accept: "text/html" } });
+    assert.match(human.headers.get("content-type"), /^text\/html/);
+    assert.match(human.headers.get("vary"), /Accept/);
+    assert.match(human.headers.get("vary"), /User-Agent/);
+    assert.match(human.headers.get("content-security-policy"), /object-src 'none'/);
+    assert.match(await human.text(), /<title>LaTeX Coder<\/title>/);
+
+    const browser = await fetch(`${base}/`, { headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" } });
+    assert.match(browser.headers.get("content-type"), /^text\/html/);
+    const agentOverride = await fetch(`${base}/`, {
+      headers: { "User-Agent": "Mozilla/5.0", Accept: "text/markdown" },
+    });
+    assert.match(agentOverride.headers.get("content-type"), /^text\/markdown/);
+    const removedHumanPrefix = await fetch(`${base}/_human/`);
+    assert.equal(removedHumanPrefix.status, 404);
+
+    const asset = await fetch(`${base}/app.js`);
+    assert.match(asset.headers.get("content-type"), /javascript/);
+    await asset.arrayBuffer();
+
+    const project = await fetch(`${base}/v1/project`);
+    assert.match(project.headers.get("content-type"), /^application\/json/);
+    assert.equal((await project.json()).project.main, "main.tex");
+
+    const missing = await fetch(`${base}/does-not-exist`);
+    assert.equal(missing.status, 404);
+    assert.equal((await missing.json()).error.code, "route_not_found");
+  });
+});
+
+test("projects isolate files and support lifecycle operations", async () => {
+  await withServer(async ({ base, projectsDir }) => {
+    const initial = await (await fetch(`${base}/v1/projects`)).json();
+    assert.equal(initial.projects.length, 1);
+    const originalId = initial.projects[0].id;
+
+    const createdResponse = await fetch(`${base}/v1/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Second Paper" }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()).project;
+    assert.equal(created.id, "second-paper");
+
+    const write = await fetch(`${base}/v1/files?project=${created.id}&path=notes.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "Only in project two.\n",
+    });
+    assert.equal(write.status, 201);
+    assert.equal(await readFile(path.join(projectsDir, created.id, "project", "notes.tex"), "utf8"), "Only in project two.\n");
+    assert.equal((await fetch(`${base}/v1/files?project=${originalId}&path=notes.tex`)).status, 404);
+
+    const renamed = await fetch(`${base}/v1/projects/${created.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Revised Paper" }),
+    });
+    assert.equal((await renamed.json()).project.name, "Revised Paper");
+
+    const deleted = await fetch(`${base}/v1/projects/${created.id}`, { method: "DELETE" });
+    assert.equal(deleted.status, 200);
+    const remaining = await (await fetch(`${base}/v1/projects`)).json();
+    assert.deepEqual(remaining.projects.map(project => project.id), [originalId]);
+  });
+});
+
+test("legacy single-project state migrates without changing source files", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-migrate-"));
+  const legacyProject = path.join(stateDir, "project");
+  await mkdir(legacyProject, { recursive: true });
+  await writeFile(path.join(legacyProject, "main.tex"), "legacy source\n", "utf8");
+  const paper = await createPaperServer({ stateDir });
+  try {
+    assert.equal(await readFile(path.join(stateDir, "projects", "paper", "project", "main.tex"), "utf8"), "legacy source\n");
+    assert.equal(paper.projectDir, path.join(stateDir, "projects", "paper", "project"));
+  } finally {
+    paper.shutdown();
+    paper.sockets.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("file API writes canonical project files", async () => {
+  await withServer(async ({ base, projectDir }) => {
+    const response = await fetch(`${base}/v1/files?path=chapter.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "A new chapter.\n",
+    });
+    assert.equal(response.status, 201);
+    assert.equal(await readFile(path.join(projectDir, "chapter.tex"), "utf8"), "A new chapter.\n");
+    const downloaded = await fetch(`${base}/v1/files?path=chapter.tex`);
+    assert.equal(downloaded.status, 200);
+    assert.equal(await downloaded.text(), "A new chapter.\n");
+  });
+});
+
+test("patch API applies one checked Yjs transaction and rejects stale edits", async () => {
+  await withServer(async ({ base, ws, projectDir, collaboration }) => {
+    const room = Buffer.from("main.tex").toString("base64url");
+    const firstDoc = new Y.Doc();
+    const secondDoc = new Y.Doc();
+    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket });
+    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket });
+    await waitFor(() => first.synced && second.synced);
+
+    const beforeResponse = await fetch(`${base}/v1/files?path=main.tex`);
+    const before = await beforeResponse.text();
+    const revision = beforeResponse.headers.get("x-content-sha256");
+    assert.equal(revision, sha256(before));
+    const from = before.indexOf("shared live");
+    const patch = await fetch(`${base}/v1/files/patch?path=main.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseSha256: revision,
+        agent: { id: "ag_test123", name: "Test Writer" },
+        changes: [{ from, to: from + "shared live".length, insert: "edited together" }],
+      }),
+    });
+    assert.equal(patch.status, 200);
+    const result = await patch.json();
+    assert.equal(result.file.sha256, patch.headers.get("x-content-sha256"));
+    assert.equal(result.patch.mode, "suggesting");
+    assert.equal(result.patch.suggestionIds.length, 1);
+    await waitFor(() => parseReviews(firstDoc.getText("content").toString()).length === 2);
+    await waitFor(() => parseReviews(secondDoc.getText("content").toString()).length === 2);
+    const reviews = parseReviews(firstDoc.getText("content").toString());
+    assert.deepEqual(reviews.map(item => [item.kind, item.id, item.author, item.body]), [
+      ["deletion", result.patch.suggestionIds[0], "Agent: Test Writer [ag_test123]", "shared live"],
+      ["addition", result.patch.suggestionIds[0], "Agent: Test Writer [ag_test123]", "edited together"],
+    ]);
+
+    const stale = await fetch(`${base}/v1/files/patch?path=main.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseSha256: revision, changes: [{ from: 0, to: 0, insert: "stale" }] }),
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).error.code, "stale_file");
+    collaboration.flush();
+    const persisted = await readFile(path.join(projectDir, "main.tex"), "utf8");
+    assert.match(persisted, /edited together/);
+    assert.match(persisted, /Agent: Test Writer \[ag_test123\]/);
+    assert.doesNotMatch(persisted, /^stale/);
+    first.destroy();
+    second.destroy();
+    firstDoc.destroy();
+    secondDoc.destroy();
+  });
+});
+
+test("patch API validates all ranges before changing a file", async () => {
+  await withServer(async ({ base }) => {
+    await fetch(`${base}/v1/files?path=unicode.tex`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "A😀B",
+    });
+    const current = await fetch(`${base}/v1/files?path=unicode.tex`);
+    const revision = current.headers.get("x-content-sha256");
+    assert.equal(await current.text(), "A😀B");
+
+    const splitUnicode = await fetch(`${base}/v1/files/patch?path=unicode.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseSha256: revision, changes: [{ from: 2, to: 2, insert: "x" }] }),
+    });
+    assert.equal(splitUnicode.status, 400);
+    assert.equal((await splitUnicode.json()).error.code, "invalid_change");
+
+    const overlap = await fetch(`${base}/v1/files/patch?path=unicode.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseSha256: revision,
+        changes: [
+          { from: 0, to: 3, insert: "x" },
+          { from: 1, to: 4, insert: "y" },
+        ],
+      }),
+    });
+    assert.equal(overlap.status, 400);
+    assert.equal((await overlap.json()).error.code, "overlapping_changes");
+    assert.equal(await (await fetch(`${base}/v1/files?path=unicode.tex`)).text(), "A😀B");
+
+    const missingAgent = await fetch(`${base}/v1/files/patch?path=unicode.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseSha256: revision, changes: [{ from: 3, to: 4, insert: "C" }] }),
+    });
+    assert.equal(missingAgent.status, 400);
+    assert.equal((await missingAgent.json()).error.code, "invalid_agent");
+
+    const direct = await fetch(`${base}/v1/files/patch?path=unicode.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseSha256: revision,
+        mode: "direct",
+        changes: [{ from: 3, to: 4, insert: "C" }],
+      }),
+    });
+    assert.equal(direct.status, 200);
+    assert.equal((await direct.json()).patch.mode, "direct");
+    assert.equal(await (await fetch(`${base}/v1/files?path=unicode.tex`)).text(), "A😀C");
+  });
+});
+
+test("two Yjs clients collaborate and persist plain LaTeX", async () => {
+  await withServer(async ({ ws, projectDir, collaboration }) => {
+    const room = Buffer.from("main.tex").toString("base64url");
+    const firstDoc = new Y.Doc();
+    const secondDoc = new Y.Doc();
+    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket });
+    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket });
+    await waitFor(() => first.synced && second.synced);
+    firstDoc.getText("content").insert(firstDoc.getText("content").length, "\n% collaborative edit\n");
+    await waitFor(() => secondDoc.getText("content").toString().endsWith("% collaborative edit\n"));
+    collaboration.flush();
+    assert.match(await readFile(path.join(projectDir, "main.tex"), "utf8"), /% collaborative edit\n$/);
+    first.destroy();
+    second.destroy();
+    firstDoc.destroy();
+    secondDoc.destroy();
+  });
+});

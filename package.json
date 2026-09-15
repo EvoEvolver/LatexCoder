@@ -1,0 +1,36 @@
+{
+  "name": "latexcoder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/app.js --bundle --format=esm --minify --legal-comments=inline --outfile=public/app.js && cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs",
+    "check": "npm run build && node --check server.mjs",
+    "prestart": "npm run build",
+    "start": "node server.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.0",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/language": "^6.11.3",
+    "@codemirror/legacy-modes": "^6.5.2",
+    "@codemirror/search": "^6.5.11",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.6",
+    "express": "^5.2.1",
+    "lib0": "^0.2.117",
+    "lucide": "^0.544.0",
+    "pdfjs-dist": "^6.3.289",
+    "ws": "^8.18.3",
+    "y-codemirror.next": "^0.3.6",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.9",
+    "jsdom": "^30.0.1",
+    "playwright": "^1.62.1"
+  }
+}

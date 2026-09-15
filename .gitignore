@@ -1,0 +1,5 @@
+node_modules/
+public/app.js
+public/pdf.worker.min.mjs
+.treer/
+.latexcoder/

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>LaTeX Coder</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="./styles.css?v=20260903-3">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand"><i data-lucide="file-text"></i><strong>LaTeX Coder</strong></div>
+        <div class="project-switcher">
+          <i data-lucide="folder-kanban"></i>
+          <select id="project-select" aria-label="Project"></select>
+          <button class="icon-button" id="new-project" title="New project"><i data-lucide="folder-plus"></i></button>
+          <button class="icon-button" id="rename-project" title="Rename project"><i data-lucide="pencil"></i></button>
+          <button class="icon-button danger" id="delete-project" title="Delete project"><i data-lucide="trash-2"></i></button>
+        </div>
+        <div class="document-name"><span id="active-file-label">main.tex</span><span id="sync-state">Connecting</span></div>
+        <div class="presence" id="presence" aria-label="Active collaborators"></div>
+        <label class="name-field"><i data-lucide="user-round"></i><input id="display-name" maxlength="28" aria-label="Display name"></label>
+        <button class="primary-button" id="compile-button"><i data-lucide="play"></i><span>Compile</span></button>
+      </header>
+
+      <main class="workspace">
+        <aside class="files-pane" id="files-pane">
+          <div class="pane-header"><strong>Files</strong><div class="icon-actions">
+            <button class="icon-button" id="new-file" title="New file"><i data-lucide="file-plus-2"></i></button>
+            <button class="icon-button" id="upload-file" title="Upload"><i data-lucide="upload"></i></button>
+            <input id="upload-input" type="file" multiple hidden>
+          </div></div>
+          <div class="file-list" id="file-list"></div>
+          <div class="file-actions">
+            <button class="icon-button" id="rename-file" title="Rename"><i data-lucide="pencil"></i></button>
+            <button class="icon-button danger" id="delete-file" title="Delete"><i data-lucide="trash-2"></i></button>
+          </div>
+        </aside>
+
+        <section class="editor-pane">
+          <div class="editor-toolbar">
+            <div class="review-actions">
+              <button class="tool-button" id="add-comment"><i data-lucide="message-square-plus"></i>Comment</button>
+              <button class="tool-button" id="suggest-edit" aria-pressed="false"><i data-lucide="git-pull-request-create-arrow"></i><span>Suggest</span></button>
+            </div>
+            <button class="icon-button mobile-files" id="toggle-files" title="Files"><i data-lucide="panel-left"></i></button>
+          </div>
+          <div id="editor"></div>
+          <div class="binary-view" id="binary-view" hidden><i data-lucide="file"></i><strong id="binary-name"></strong><a id="binary-download" class="secondary-button">Download</a></div>
+          <div class="build-log" id="build-log" hidden><div class="pane-header"><strong>Build log</strong><button class="icon-button" id="close-log" title="Close"><i data-lucide="x"></i></button></div><pre id="build-output"></pre></div>
+        </section>
+
+        <section class="output-pane" id="output-pane">
+          <div class="pane-header output-header">
+            <div class="segmented" role="tablist">
+              <button class="active" data-output="pdf">PDF</button>
+              <button data-output="review">Review <span id="review-count">0</span></button>
+            </div>
+            <div class="icon-actions">
+              <button class="icon-button" id="pdf-zoom-out" title="Zoom out"><i data-lucide="zoom-out"></i></button>
+              <button class="icon-button" id="pdf-zoom-in" title="Zoom in"><i data-lucide="zoom-in"></i></button>
+              <a class="icon-button" id="pdf-download" title="Download PDF" download="paper.pdf"><i data-lucide="download"></i></a>
+              <button class="icon-button" id="show-log" title="Build log"><i data-lucide="terminal-square"></i></button>
+              <button class="icon-button mobile-output-close" id="close-output" title="Back to editor"><i data-lucide="x"></i></button>
+            </div>
+          </div>
+          <div class="pdf-view" id="pdf-view"><div class="empty-output" id="empty-output"><i data-lucide="file-check-2"></i><span id="pdf-status">No compiled PDF</span></div><div class="pdf-document" id="pdf-document" hidden></div></div>
+          <div class="review-pane" id="review-pane" hidden><div id="review-list"></div></div>
+        </section>
+      </main>
+
+      <div class="toast" id="toast" role="status" hidden></div>
+      <div class="selection-actions" id="selection-actions" hidden>
+        <button class="selection-accept" id="selection-accept" type="button">
+          <i data-lucide="check-check"></i><span>Accept suggestion</span>
+        </button>
+      </div>
+    </div>
+
+    <dialog id="review-dialog">
+      <form method="dialog" id="review-form">
+        <header><strong id="dialog-title">Comment</strong><button class="icon-button" value="cancel" title="Close"><i data-lucide="x"></i></button></header>
+        <label for="review-text" id="dialog-label">Comment</label>
+        <textarea id="review-text" rows="5" required></textarea>
+        <footer><button class="secondary-button" value="cancel">Cancel</button><button class="primary-button" id="dialog-submit" value="default">Insert</button></footer>
+      </form>
+    </dialog>
+    <script type="module" src="./app.js?v=20260903-3"></script>
+  </body>
+</html>
