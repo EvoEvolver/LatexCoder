@@ -788,6 +788,9 @@ async function followReference(link: ReferenceLink) {
 }
 
 const referenceControl = StateEffect.define<boolean>();
+const macReferences = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+const referenceModifier = macReferences ? "Meta" : "Control";
+const referenceModifierPressed = (event: MouseEvent) => macReferences ? event.metaKey : event.ctrlKey;
 let controlHeld = false;
 const referenceHighlights = StateField.define({
   create: () => ({ held: controlHeld, marks: Decoration.none }),
@@ -808,8 +811,8 @@ function setReferenceControl(held: boolean) {
   state.view?.dispatch({ effects: referenceControl.of(held) });
   if (!held && state.view) state.view.contentDOM.style.cursor = "";
 }
-window.addEventListener("keydown", event => { if (event.key === "Control") setReferenceControl(true); }, true);
-window.addEventListener("keyup", event => { if (event.key === "Control") setReferenceControl(false); }, true);
+window.addEventListener("keydown", event => { if (event.key === referenceModifier) setReferenceControl(true); }, true);
+window.addEventListener("keyup", event => { if (event.key === referenceModifier) setReferenceControl(false); }, true);
 window.addEventListener("blur", () => setReferenceControl(false));
 
 function editorExtensions(ytext, provider) {
@@ -836,7 +839,7 @@ function editorExtensions(ytext, provider) {
     referenceHighlights,
     EditorView.domEventHandlers({
       mousedown(event, view) {
-        if (!event.ctrlKey || event.button !== 0) return false;
+        if (!referenceModifierPressed(event) || event.button !== 0) return false;
         const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
         if (position === null) return false;
         const link = referenceLinks(view.state.doc.toString()).find(link => position >= link.from && position < link.to);
@@ -846,11 +849,11 @@ function editorExtensions(ytext, provider) {
         return true;
       },
       mousemove(event, view) {
-        const position = event.ctrlKey ? view.posAtCoords({ x: event.clientX, y: event.clientY }) : null;
+        const position = referenceModifierPressed(event) ? view.posAtCoords({ x: event.clientX, y: event.clientY }) : null;
         const linked = position !== null && referenceLinks(view.state.doc.toString()).some(link => position >= link.from && position < link.to);
         view.contentDOM.style.cursor = linked ? "pointer" : "";
       },
-      keyup(event, view) { if (event.key === "Control") view.contentDOM.style.cursor = ""; },
+      keyup(event, view) { if (event.key === referenceModifier) view.contentDOM.style.cursor = ""; },
     }),
     reviewDecorations,
     reviewTooltip,
@@ -1603,6 +1606,19 @@ async function renderPdf() {
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     canvas.setAttribute("aria-label", `PDF page ${pageNumber}`);
+    canvas.title = "Double-click to open source";
+    const revision = state.pdfSourceRevision;
+    const projectId = state.projectId;
+    canvas.addEventListener("dblclick", async event => {
+      const bounds = canvas.getBoundingClientRect();
+      try {
+        const destination = await request("v1/build/source", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ page: pageNumber, x: (event.clientX - bounds.left) * viewport.width / bounds.width / scale, y: (event.clientY - bounds.top) * viewport.height / bounds.height / scale, revision }),
+        });
+        if (state.projectId === projectId) await revealSource(destination);
+      } catch (error) { showToast(error.message); }
+    });
     fragment.append(canvas);
     await page.render({
       canvas,
@@ -1636,6 +1652,7 @@ async function showPdf(force = false) {
     if (!state.pdfDocument) {
       const response = await fetch(elements.pdf_download.href);
       if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
+      state.pdfSourceRevision = response.headers.get("X-LaTeX-Coder-Source-Revision");
       const loadingTask = getDocument({ data: await response.arrayBuffer() });
       state.pdfLoadingTask = loadingTask;
       const pdf = await loadingTask.promise;
@@ -2157,6 +2174,71 @@ async function deleteFile(target) {
     await refreshProject(state.activeFile === target);
   }
 }
+async function revealSource(destination: { path: string; line: number; from?: number; to?: number }) {
+  const project = state.projectId;
+  await openFile(destination.path);
+  const view = state.view;
+  const provider = state.provider;
+  if (!view || !provider) return;
+  const deadline = Date.now() + 5000;
+  while (!provider.synced && state.view === view && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+  if (state.projectId !== project || state.view !== view || !provider.synced) return;
+  const line = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, destination.line)));
+  view.dispatch({ selection: { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) }, scrollIntoView: true });
+  elements.output_pane.classList.remove("mobile-open");
+  view.focus();
+}
+
+const searchDialog = document.getElementById("search-dialog") as HTMLDialogElement;
+const searchQuery = document.getElementById("search-query") as HTMLInputElement;
+const searchStatus = document.getElementById("search-status")!;
+const searchResults = document.getElementById("search-results")!;
+let searchVersion = 0;
+const openProjectSearch = () => { searchDialog.showModal(); searchQuery.focus(); };
+document.getElementById("project-search")!.addEventListener("click", openProjectSearch);
+document.getElementById("editor-search")!.addEventListener("click", openProjectSearch);
+document.getElementById("search-close")!.addEventListener("click", () => searchDialog.close());
+searchDialog.addEventListener("close", () => { searchVersion++; });
+window.addEventListener("keydown", event => {
+  if ((macReferences ? event.metaKey : event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f" && !elements.editor_page.hidden) {
+    event.preventDefault();
+    if (!searchDialog.open) openProjectSearch();
+  }
+});
+document.getElementById("search-form")!.addEventListener("submit", async event => {
+  event.preventDefault();
+  const version = ++searchVersion;
+  const project = state.projectId;
+  searchStatus.textContent = "Searching...";
+  searchResults.replaceChildren();
+  try {
+    const result = await request("v1/search/project", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: searchQuery.value, caseSensitive: (document.getElementById("search-case") as HTMLInputElement).checked, regex: (document.getElementById("search-regex") as HTMLInputElement).checked }),
+    });
+    if (version !== searchVersion || state.projectId !== project) return;
+    searchStatus.textContent = result.matches.length ? `${result.matches.length} matches${result.truncated ? " (first 500)" : ""}` : "No matches";
+    for (const match of result.matches) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "search-result block w-full min-w-0 border-b px-2 py-2 text-left hover:bg-accent focus-visible:bg-accent";
+      const label = document.createElement("strong");
+      label.className = "block truncate text-xs";
+      label.textContent = `${match.path}:${match.line}`;
+      const text = document.createElement("div");
+      text.className = "mt-1 overflow-hidden text-ellipsis whitespace-pre font-mono text-xs text-muted-foreground";
+      text.append(document.createTextNode(match.text.slice(0, match.from)));
+      const mark = document.createElement("mark");
+      mark.className = "bg-amber-200 text-foreground";
+      mark.textContent = match.text.slice(match.from, match.to);
+      text.append(mark, document.createTextNode(match.text.slice(match.to)));
+      button.append(label, text);
+      button.addEventListener("click", () => { searchDialog.close(); void revealSource(match).catch(error => showToast(error.message)); });
+      searchResults.append(button);
+    }
+  } catch (error) { if (version === searchVersion) searchStatus.textContent = error.message; }
+});
+
 const workspace = document.getElementById("workspace")!;
 const filesResize = document.getElementById("files-resize")!;
 const outputResize = document.getElementById("output-resize")!;

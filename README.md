@@ -33,6 +33,10 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
   build logs, and an always-current PDF download endpoint.
 - In-editor previews for project images and PDF files, with zoom and download.
+- Double-click compiled PDF content to open its LaTeX source via SyncTeX,
+  including included files and review-aware line mapping.
+- Project-wide text search with highlighted matches and cross-file navigation;
+  optional case-sensitive and sandboxed ripgrep regular-expression search.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
 - A project-scoped ripgrep API with native regex, glob, line-number, and output
@@ -83,7 +87,12 @@ change the listener. State defaults to `.latexcoder/`; set
 or `latexmk`. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
 
-Project search requires Linux bubblewrap (`bwrap`) and ripgrep (`rg`). Every
+PDF source navigation requires the `synctex` executable (included in the Docker
+image). Recompile existing PDFs once to generate synchronization data.
+
+The agent ripgrep API and regular-expression project search require Linux
+bubblewrap (`bwrap`) and ripgrep (`rg`). Literal project search also works on macOS.
+Every ripgrep
 search runs without network access, with the project mounted read-only, a 15
 second timeout, and a 4 MiB output limit. `LATEXCODER_BWRAP_BIN` and
 `LATEXCODER_RG_BIN` may point to explicit binaries.

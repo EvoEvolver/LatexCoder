@@ -648,6 +648,18 @@ test("search API exposes project-scoped ripgrep output", async () => {
         body: JSON.stringify({ pattern: ".", args: ["--pre=cat"] }),
       });
       assert.equal(externalCommand.status, 400);
+      const uiSearch = await fetch(`${base}/v1/search/project`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "needle \\[(?:one|two)\\]", regex: true }),
+      });
+      assert.equal(uiSearch.status, 200);
+      const matches = (await uiSearch.json()).matches;
+      assert.deepEqual(matches.map(match => [match.path, match.line, match.from, match.to]), [["notes.tex", 2, 0, 12], ["notes.tex", 3, 0, 12]]);
+      const invalidRegex = await fetch(`${base}/v1/search/project`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "[", regex: true }),
+      });
+      assert.equal(invalidRegex.status, 422);
     }, { bwrap });
 
     const sandboxArgs = await readFile(path.join(sandboxDir, "args"), "utf8");

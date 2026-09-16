@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -40,6 +41,75 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 }
 
 const LIPSUM = "Hello brave new world.";
+
+test("project search opens cross-file matches and respects case", async () => {
+  await withEditor(async ({ page, base }) => {
+    const projects = await (await page.request.get(`${base}/v1/projects`)).json();
+    const id = projects.defaultProjectId;
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/search.tex`, { data: "First line\nUnique Search Target\nunique search target", headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.view);
+    await page.locator("#editor-search").click();
+    await page.locator("#search-query").fill("Unique Search Target");
+    await page.locator("#search-form button").click();
+    await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "2 matches");
+    await page.locator("#search-case").check();
+    await page.locator("#search-form button").click();
+    await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "1 matches");
+    await page.screenshot({ path: "/tmp/latexcoder-project-search.png" });
+    await page.locator(".search-result").click();
+    await page.waitForFunction(() => {
+      const view = globalThis.__paperE2E.state.view;
+      return view.state.doc.sliceString(view.state.selection.main.from, view.state.selection.main.to) === "Unique Search Target";
+    });
+    assert.equal(await page.locator("#active-file-label").textContent(), "chapters/search.tex");
+  });
+});
+
+const realLatexmk = ["/Library/TeX/texbin/latexmk", "/usr/bin/latexmk"].find(existsSync);
+test("real SyncTeX PDF double-click opens included source and rejects stale source", { skip: !realLatexmk }, async () => {
+  await withEditor(async ({ page, base }) => {
+    page.setDefaultTimeout(30000);
+    const projects = await (await page.request.get(`${base}/v1/projects`)).json();
+    const id = projects.defaultProjectId;
+    const child = "\\cmtbg{test}{Author}Intro.\\cmted{\nHidden comment\n}\nUnique source navigation sentence.\n";
+    for (const [file, source] of [["main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapters/intro}\n\\end{document}"], ["chapters/intro.tex", child]]) {
+      await page.request.put(`${base}/v1/files?project=${id}&path=${encodeURIComponent(file)}`, { data: source, headers: { "Content-Type": "text/plain" } });
+    }
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.view);
+    await page.locator("#compile-button").click();
+    await page.locator("#pdf-document canvas").waitFor();
+    const point = await page.evaluate(async () => {
+      const pdf = globalThis.__paperE2E.state.pdfDocument;
+      const page = await pdf.getPage(1);
+      const item = (await page.getTextContent()).items.find(item => "str" in item && item.str.includes("Unique source"));
+      if (!item || !("transform" in item)) throw new Error("PDF text not rendered");
+      const viewport = page.getViewport({ scale: 1 });
+      const [x, y] = viewport.convertToViewportPoint(item.transform[4] + item.width / 2, item.transform[5] + item.height / 2);
+      const bounds = document.querySelector("#pdf-document canvas").getBoundingClientRect();
+      return { x: bounds.left + x / viewport.width * bounds.width, y: bounds.top + y / viewport.height * bounds.height };
+    });
+    const sourceResponse = page.waitForResponse(response => response.url().includes("/v1/build/source"));
+    await page.mouse.dblclick(point.x, point.y);
+    const response = await sourceResponse;
+    assert.equal(response.status(), 200, await response.text());
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro.tex");
+    await page.waitForFunction(() => {
+      const view = globalThis.__paperE2E.state.view;
+      return view.state.doc.lineAt(view.state.selection.main.head).text.includes("Unique source");
+    });
+    await page.screenshot({ path: "/tmp/latexcoder-pdf-source.png" });
+    const revision = await page.evaluate(() => globalThis.__paperE2E.state.pdfSourceRevision);
+    const invalid = await page.request.post(`${base}/v1/build/source?project=${id}`, { data: { page: 1, x: -1, y: 20, revision } });
+    assert.equal(invalid.status(), 400);
+    const outdated = await page.request.post(`${base}/v1/build/source?project=${id}`, { data: { page: 1, x: 200, y: 130, revision: "old" } });
+    assert.equal(outdated.status(), 409);
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/intro.tex`, { data: child + "Changed", headers: { "Content-Type": "text/plain" } });
+    await page.mouse.dblclick(point.x, point.y);
+    await page.waitForFunction(() => document.querySelector("#toast")?.textContent?.includes("source changed"));
+  }, { compiler: realLatexmk });
+});
 
 test("workspace panels resize and Files can be hidden and restored", async () => {
   await withEditor(async ({ page }) => {
@@ -450,8 +520,11 @@ test("project reviews span files, folders default closed, and files download", a
   });
 });
 
-test("Ctrl-click follows includes, citations, and label references", async () => {
+for (const platform of ["MacIntel", "Linux x86_64"]) {
+test(`${platform} modifier-click follows includes, citations, and label references`, async () => {
   await withEditor(async ({ page, base }) => {
+    await page.addInitScript(value => Object.defineProperty(navigator, "platform", { value }), platform);
+    const modifier = platform === "MacIntel" ? "Meta" : "Control";
     const projects = await (await page.request.get(`${base}/v1/projects`)).json();
     const id = projects.defaultProjectId;
     const source = String.raw`\include{chapters/intro}
@@ -470,11 +543,14 @@ test("Ctrl-click follows includes, citations, and label references", async () =>
         const coords = view.coordsAtPos(pos);
         return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
       }, macro);
-      await page.keyboard.down("Control");
+      await page.keyboard.down(modifier === "Meta" ? "Control" : "Meta");
+      assert.equal(await page.locator(".cm-reference-link").count(), 0);
+      await page.keyboard.up(modifier === "Meta" ? "Control" : "Meta");
+      await page.keyboard.down(modifier);
       await page.locator(".cm-reference-link").first().waitFor();
       assert.equal(await page.locator(".cm-reference-link").first().evaluate(element => getComputedStyle(element).textDecorationLine), "underline");
       await page.mouse.click(point.x, point.y);
-      await page.keyboard.up("Control");
+      await page.keyboard.up(modifier);
       assert.equal(await page.locator(".cm-reference-link").count(), 0);
       const target = macro.startsWith("cite") ? "refs.bib" : "chapters/intro.tex";
       await page.waitForFunction(path => document.querySelector("#active-file-label")?.textContent === path, target);
@@ -482,6 +558,7 @@ test("Ctrl-click follows includes, citations, and label references", async () =>
     }
   });
 });
+}
 
 test("sidebar folders expand, collapse, and create nested files", async () => {
   await withEditor(async ({ page, base }) => {

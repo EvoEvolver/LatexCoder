@@ -17,6 +17,7 @@ import { unzipSync } from "fflate";
 
 import { StateDatabase } from "./src/database.ts";
 import { parseReviews, stripReviewStorage } from "./src/review.ts";
+import { compileSourceMap } from "./src/source-map.ts";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TEXT_EXTENSIONS = new Set([".bib", ".cls", ".csv", ".json", ".md", ".sty", ".tex", ".txt", ".yaml", ".yml"]);
@@ -599,13 +600,14 @@ async function compilationSourceRevision(projectDir) {
 
 function run(command: string, args: string[], options: any): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, shell: false });
+    const { timeoutMs = 60_000, ...spawnOptions } = options;
+    const child = spawn(command, args, { ...spawnOptions, shell: false });
     let output = "";
     const append = chunk => { output = (output + chunk.toString()).slice(-300_000); };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
     child.on("error", reject);
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("close", code => {
       clearTimeout(timer);
       resolve({ code, output });
@@ -1733,19 +1735,22 @@ export async function createPaperServer(options: any = {}) {
       const gitDir = path.join(projectDir, ".git");
       await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
       const sourceRevision = await compilationSourceRevision(workDir);
+      const sourceMaps: Record<string, { lines: number[]; source: string }> = {};
       for (const file of await listFiles(workDir)) {
         if (!file.path.endsWith(".tex")) continue;
         const sourcePath = path.join(workDir, file.path);
         const source = await readFile(sourcePath, "utf8");
-        await writeFile(sourcePath, stripReviewStorage(source), "utf8");
+        const projection = compileSourceMap(source);
+        sourceMaps[file.path] = { lines: projection.lines, source };
+        await writeFile(sourcePath, projection.text, "utf8");
       }
       const outputDir = path.join(workDir, ".paper-output");
       await mkdir(outputDir, { recursive: true });
       const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN, stateDir);
       const executable = path.basename(compiler);
       const args = executable.startsWith("latexmk")
-        ? ["-pdf", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
-        : ["--keep-logs", "--outdir", outputDir, main];
+        ? ["-pdf", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
+        : ["--synctex", "--keep-logs", "--outdir", outputDir, main];
       const result = await run(compiler, args, {
         cwd: workDir,
         env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
@@ -1753,7 +1758,13 @@ export async function createPaperServer(options: any = {}) {
       const pdfName = `${path.basename(main, ".tex")}.pdf`;
       const outputPdf = path.join(outputDir, pdfName);
       const success = result.code === 0 && existsSync(outputPdf);
-      if (success) await cp(outputPdf, path.join(buildDir, "latest.pdf"));
+      if (success) {
+        await cp(outputPdf, path.join(buildDir, "latest.pdf"));
+        const syncFile = path.join(outputDir, pdfName.replace(/\.pdf$/, ".synctex.gz"));
+        await rm(path.join(buildDir, "latest.synctex.gz"), { force: true });
+        if (existsSync(syncFile)) await cp(syncFile, path.join(buildDir, "latest.synctex.gz"));
+        await writeFile(path.join(buildDir, "source-map.json"), JSON.stringify({ root: await realpath(workDir), files: sourceMaps, revision: sourceRevision }));
+      }
       runtime.build = {
         status: success ? "success" : "error",
         main,
@@ -2168,6 +2179,52 @@ export async function createPaperServer(options: any = {}) {
       response.type("application/x-git-receive-pack-result").send(result.output);
     } catch (error) { next(error); }
   });
+  app.post("/v1/search/project", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const { query, caseSensitive = false, regex = false } = request.body || {};
+      if (typeof query !== "string" || !query.length || query.length > 512 || query.includes("\0")) throw apiError("invalid_query", "Search must contain 1 to 512 characters");
+      // Literal UI search works on macOS too; regex stays in the sandboxed rg API.
+      runtime.collaboration.flush();
+      const matches: Array<{ path: string; line: number; from: number; to: number; text: string }> = [];
+      if (regex) {
+        const result = await runRipgrep(runtime.projectDir, ["--no-config", "--json", "--threads=4", "--one-file-system", ...(caseSensitive ? [] : ["--ignore-case"]), "--glob=!.git/**", "--regexp", query, "--", "."], { bwrap: options.bwrap, rg: options.rg, timeoutMs: options.searchTimeoutMs });
+        if (result.code !== 0 && result.code !== 1) throw apiError("invalid_query", result.stderr.toString(), 422);
+        for (const row of result.stdout.toString().split("\n")) {
+          if (!row) continue;
+          const event = JSON.parse(row);
+          if (event.type !== "match" || !event.data.path.text || !event.data.lines.text) continue;
+          const data = event.data;
+          const file = data.path.text.replace(/^\.\//, "");
+          if (!TEXT_EXTENSIONS.has(path.extname(file))) continue;
+          for (const match of data.submatches) {
+            const from = Buffer.from(data.lines.text).subarray(0, match.start).toString().length;
+            const to = Buffer.from(data.lines.text).subarray(0, match.end).toString().length;
+            matches.push({ path: file, line: data.line_number, from, to, text: data.lines.text.trimEnd() });
+            if (matches.length >= 500) break;
+          }
+          if (matches.length >= 500) break;
+        }
+      } else {
+        const literal = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "g" : "gi");
+        outer: for (const file of await listFiles(runtime.projectDir)) {
+          if (!TEXT_EXTENSIONS.has(path.extname(file.path))) continue;
+          const source = await readFile(path.join(runtime.projectDir, file.path), "utf8");
+          const lines = source.split("\n");
+          for (let index = 0; index < lines.length; index++) {
+            const text = lines[index];
+            for (const match of text.matchAll(literal)) {
+              const from = match.index;
+              matches.push({ path: file.path, line: index + 1, from, to: from + query.length, text });
+              if (matches.length >= 500) break outer;
+            }
+          }
+        }
+      }
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ matches, truncated: matches.length >= 500 });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/search", express.json({ limit: "32kb" }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
@@ -2323,6 +2380,33 @@ export async function createPaperServer(options: any = {}) {
       response.setHeader("ETag", `"${build.sourceRevision}"`);
       response.setHeader("X-LaTeX-Coder-Source-Revision", build.sourceRevision);
       response.sendFile(path.join(runtime.buildDir, "latest.pdf"), { dotfiles: "allow" });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/build/source", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const { page, x, y, revision } = request.body || {};
+      if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 100000 || y > 100000) throw apiError("invalid_position", "Invalid PDF position");
+      if (runtime.compilePromise || revision !== runtime.build.sourceRevision) throw apiError("stale_pdf", "The PDF changed. Refresh the preview and try again.", 409);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) throw apiError("synctex_missing", "Compile the project to enable PDF source navigation.", 409);
+      const snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      let result;
+      try {
+        result = await run(options.synctex || "synctex", ["edit", "-o", `${page}:${x}:${y}:${path.join(runtime.buildDir, "latest.pdf")}`], { cwd: runtime.buildDir, timeoutMs: 5000, env: { ...process.env, SYNCTEX_EDITOR: "" } });
+      } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
+      if (runtime.compilePromise || revision !== runtime.build.sourceRevision) throw apiError("stale_pdf", "The PDF changed. Refresh the preview and try again.", 409);
+      const input = /^Input:(.*)$/m.exec(result.output)?.[1]?.trim();
+      const line = Number(/^Line:(\d+)$/m.exec(result.output)?.[1]);
+      if (!input || !line || result.code !== 0) throw apiError("source_not_found", "No source location at this PDF position", 404);
+      let file = path.relative(snapshot.root, path.resolve(snapshot.root, input));
+      if (!snapshot.files[file] && snapshot.files[`${file}.tex`]) file += ".tex";
+      const map = snapshot.files[file];
+      if (!map) throw apiError("source_not_found", "The source is outside this project", 404);
+      runtime.collaboration.flush();
+      const current = await readFile(path.join(runtime.projectDir, safeRelativePath(file)), "utf8");
+      if (current !== map.source) throw apiError("stale_source", "This source changed since compilation. Compile again to navigate accurately.", 409);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ path: file, line: map.lines[line - 1] || line });
     } catch (error) { next(error); }
   });
   app.post("/v1/compile", express.json({ limit: "16kb" }), async (request, response, next) => {

@@ -3,7 +3,7 @@ import {
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
   MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, TerminalSquare, Trash2,
-  Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
+  Search, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -40,6 +40,7 @@ const iconComponents = {
   "pencil": Pencil,
   "play": Play,
   "refresh-cw": RefreshCw,
+  "search": Search,
   "terminal-square": TerminalSquare,
   "trash-2": Trash2,
   "upload": Upload,
@@ -137,6 +138,7 @@ export function AppShell() {
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex items-center gap-0.5">
               <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
+              <IconButton id="project-search" icon="search" title="Search project" />
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="upload-file" icon="upload" title="Upload" />
               <input id="upload-input" type="file" multiple hidden />
@@ -148,7 +150,7 @@ export function AppShell() {
           <section className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] border-r">
             <div className="editor-toolbar flex items-center justify-between border-b bg-muted/20 px-2">
               <div id="review-actions" className="review-actions flex items-center gap-1"><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
-              <div className="editor-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Hide files" /></div>
+              <div className="editor-actions flex items-center gap-1"><IconButton id="editor-search" icon="search" title="Search project" /><IconButton id="toggle-files" icon="panel-left" title="Hide files" /></div>
             </div>
             <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
             <div id="binary-view" className="binary-view absolute inset-x-0 bottom-0 top-11 grid min-h-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-background" hidden>
@@ -172,6 +174,7 @@ export function AppShell() {
       </div>
 
       <div id="toast" className="toast fixed bottom-5 left-1/2 z-50 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-xl" role="status" hidden />
+      <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search project" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[60dvh] overflow-auto" /></div></dialog>
 
       <dialog id="review-dialog" className={dialogClass}><form id="review-form" className="space-y-4 p-5"><header className="flex items-center justify-between"><strong id="dialog-title">Comment</strong><Button id="review-close" className={iconButton} variant="ghost" size="icon" type="button" title="Close"><Icon name="x" /></Button></header><label id="dialog-label" className="block text-sm font-medium" htmlFor="review-text">Comment</label><Textarea id="review-text" rows={5} required /><footer className="flex justify-end gap-2"><Button id="review-cancel" variant="outline" type="button">Cancel</Button><Button id="dialog-submit" type="submit">Insert</Button></footer></form></dialog>
 

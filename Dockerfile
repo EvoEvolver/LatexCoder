@@ -20,6 +20,7 @@ RUN apt-get update \
     curl \
     git \
     ripgrep \
+    texlive-binaries \
     tini \
   && rm -rf /var/lib/apt/lists/*
 
