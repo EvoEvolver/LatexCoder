@@ -133,9 +133,9 @@ export function AppShell() {
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
         </header>
 
-        <main className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_minmax(21rem,1fr)_minmax(22rem,46%)] overflow-hidden max-[760px]:grid-cols-1">
+        <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
-            <div className="pane-header flex h-11 items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex items-center gap-0.5">
+            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex items-center gap-0.5">
               <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="upload-file" icon="upload" title="Upload" />
@@ -143,11 +143,12 @@ export function AppShell() {
             </div></div>
             <div id="file-list" className="file-list min-h-0 flex-1 overflow-auto p-1.5" />
           </aside>
+          <div id="files-resize" role="separator" aria-label="Resize files" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
 
           <section className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] border-r">
             <div className="editor-toolbar flex items-center justify-between border-b bg-muted/20 px-2">
               <div id="review-actions" className="review-actions flex items-center gap-1"><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
-              <div className="editor-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Files" className="mobile-files lg:hidden" /></div>
+              <div className="editor-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Hide files" /></div>
             </div>
             <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
             <div id="binary-view" className="binary-view absolute inset-x-0 bottom-0 top-11 grid min-h-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-background" hidden>
@@ -156,9 +157,10 @@ export function AppShell() {
             </div>
             <div id="build-log" className="build-log absolute inset-x-0 bottom-0 z-10 grid grid-rows-[2.5rem_minmax(6rem,34vh)] border-t bg-zinc-950 text-zinc-100 shadow-2xl" hidden><div className="pane-header flex items-center justify-between border-b border-zinc-800 px-2.5"><strong className="text-xs">Build log</strong><IconButton id="close-log" icon="x" title="Close" /></div><pre id="build-output" className="m-0 overflow-auto whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed" /></div>
           </section>
+          <div id="output-resize" role="separator" aria-label="Resize editor and output" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
 
-          <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:inset-0 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
-            <div className="pane-header output-header flex items-center justify-between border-b bg-muted px-2.5">
+          <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:inset-0 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
+            <div className="pane-header output-header flex min-h-11 flex-wrap items-center justify-between border-b bg-muted px-2.5">
               <div className="flex min-w-0 items-center gap-1.5"><Button id="compile-button" className="h-8 min-w-[6.75rem] shrink-0 px-3 text-xs" size="sm" type="button" title="Compile document"><Icon name="play" /><span>Compile</span></Button><div className="segmented grid w-40 grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist"><Button className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="pdf">PDF</Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="review">Review <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div></div>
               <div className="flex items-center"><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button><IconButton id="show-log" icon="terminal-square" title="Build log" /><IconButton id="close-output" icon="x" title="Back to editor" className="mobile-output-close lg:hidden" /></div>
             </div>

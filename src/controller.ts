@@ -10,7 +10,7 @@ import {
 } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Annotation, EditorSelection, EditorState, StateField, Transaction } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
   crosshairCursor,
   Decoration,
@@ -787,6 +787,31 @@ async function followReference(link: ReferenceLink) {
   } catch (error) { showToast(error.message); }
 }
 
+const referenceControl = StateEffect.define<boolean>();
+let controlHeld = false;
+const referenceHighlights = StateField.define({
+  create: () => ({ held: controlHeld, marks: Decoration.none }),
+  update(value, transaction) {
+    let held = value.held;
+    for (const effect of transaction.effects) if (effect.is(referenceControl)) held = effect.value;
+    if (!held) return { held, marks: Decoration.none };
+    const marks = referenceLinks(transaction.state.doc.toString()).map(link =>
+      Decoration.mark({ class: "cm-reference-link" }).range(link.from, link.to));
+    return { held, marks: Decoration.set(marks, true) };
+  },
+  provide: field => EditorView.decorations.from(field, value => value.marks),
+});
+
+function setReferenceControl(held: boolean) {
+  if (held === controlHeld) return;
+  controlHeld = held;
+  state.view?.dispatch({ effects: referenceControl.of(held) });
+  if (!held && state.view) state.view.contentDOM.style.cursor = "";
+}
+window.addEventListener("keydown", event => { if (event.key === "Control") setReferenceControl(true); }, true);
+window.addEventListener("keyup", event => { if (event.key === "Control") setReferenceControl(false); }, true);
+window.addEventListener("blur", () => setReferenceControl(false));
+
 function editorExtensions(ytext, provider) {
   const undoManager = new Y.UndoManager(ytext);
   return [
@@ -808,6 +833,7 @@ function editorExtensions(ytext, provider) {
     highlightActiveLine(),
     highlightSelectionMatches(),
     StreamLanguage.define(stex),
+    referenceHighlights,
     EditorView.domEventHandlers({
       mousedown(event, view) {
         if (!event.ctrlKey || event.button !== 0) return false;
@@ -848,6 +874,7 @@ function editorExtensions(ytext, provider) {
       ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f4f7f3" },
       ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "#1d6b55" },
       ".cm-line": { padding: "0 14px" },
+      ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "#1d6b55", cursor: "pointer" },
       "&.cm-focused .cm-cursor": { borderLeftColor: "#1d6b55" },
       ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "#fff0aa", cursor: "help" },
       ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "#dcefe7", color: "#115b48", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
@@ -2130,7 +2157,84 @@ async function deleteFile(target) {
     await refreshProject(state.activeFile === target);
   }
 }
-elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
+const workspace = document.getElementById("workspace")!;
+const filesResize = document.getElementById("files-resize")!;
+const outputResize = document.getElementById("output-resize")!;
+const narrowWorkspace = window.matchMedia("(max-width: 760px)");
+let filesWidth = 208;
+let outputFraction = 0.46;
+let filesHidden = false;
+try {
+  const saved = JSON.parse(localStorage.getItem("workspace-layout") || "null");
+  if (saved) {
+    if (Number.isFinite(saved.filesWidth)) filesWidth = saved.filesWidth;
+    if (Number.isFinite(saved.outputFraction)) outputFraction = saved.outputFraction;
+    filesHidden = saved.filesHidden === true;
+  }
+} catch { /* Ignore unavailable storage or invalid preferences. */ }
+
+function updateWorkspaceLayout() {
+  const mobile = narrowWorkspace.matches;
+  elements.files_pane.hidden = !mobile && filesHidden;
+  filesResize.hidden = !mobile && filesHidden;
+  const width = workspace.clientWidth;
+  if (width && !mobile) {
+    filesWidth = Math.max(180, Math.min(filesWidth, width - 576));
+    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
+    const output = Math.max(320, Math.min(remaining - 240, remaining * outputFraction));
+    workspace.style.gridTemplateColumns = filesHidden
+      ? `minmax(0,1fr) 8px ${output}px`
+      : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
+  }
+  elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
+  elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
+}
+
+function saveWorkspaceLayout() {
+  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputFraction, filesHidden })); } catch { /* Storage is optional. */ }
+}
+
+for (const handle of [filesResize, outputResize]) {
+  const adjust = (delta: number) => {
+    if (narrowWorkspace.matches) return;
+    if (handle === filesResize) filesWidth += delta;
+    else {
+      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
+      outputFraction = Math.max(320 / remaining, Math.min(1 - 240 / remaining, outputFraction - delta / remaining));
+    }
+    updateWorkspaceLayout();
+  };
+  handle.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    let previous = event.clientX;
+    const move = (next: PointerEvent) => { adjust(next.clientX - previous); previous = next.clientX; };
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("lostpointercapture", stop);
+      saveWorkspaceLayout();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("lostpointercapture", stop);
+  });
+  handle.addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    adjust((event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 40 : 10));
+    saveWorkspaceLayout();
+  });
+}
+elements.toggle_files.addEventListener("click", () => {
+  if (narrowWorkspace.matches) elements.files_pane.classList.toggle("mobile-open");
+  else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
+  updateWorkspaceLayout();
+});
+new ResizeObserver(updateWorkspaceLayout).observe(workspace);
+narrowWorkspace.addEventListener("change", updateWorkspaceLayout);
+updateWorkspaceLayout();
 document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
 window.addEventListener("beforeunload", () => {
   disconnectEditor();

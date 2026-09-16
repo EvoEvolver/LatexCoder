@@ -41,6 +41,40 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("workspace panels resize and Files can be hidden and restored", async () => {
+  await withEditor(async ({ page }) => {
+    await createEditor(page, LIPSUM);
+    const width = async selector => (await page.locator(selector).boundingBox()).width;
+    const drag = async (selector, delta) => {
+      const box = await page.locator(selector).boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + delta, box.y + box.height / 2, { steps: 8 });
+      await page.mouse.up();
+    };
+    const files = await width("#files-pane");
+    await drag("#files-resize", 60);
+    assert.ok(await width("#files-pane") > files + 50);
+    const output = await width("#output-pane");
+    await drag("#output-resize", -60);
+    assert.ok(await width("#output-pane") > output + 50);
+    await page.locator("#toggle-files").click();
+    assert.equal(await page.locator("#files-pane").isVisible(), false);
+    assert.equal(await page.locator("#files-resize").isVisible(), false);
+    await page.locator("#toggle-files").click();
+    assert.equal(await page.locator("#files-pane").isVisible(), true);
+    await page.screenshot({ path: "/tmp/latexcoder-resizable-desktop.png" });
+    await page.reload();
+    await page.waitForFunction(() => globalThis.__paperTest);
+    assert.ok(await width("#files-pane") > files + 50);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.locator("#files-resize").isVisible(), false);
+    await page.locator("#toggle-files").click();
+    assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), true);
+    await page.screenshot({ path: "/tmp/latexcoder-resizable-mobile.png" });
+  });
+});
+
 function previewPdf() {
   const stream = "BT /F1 20 Tf 48 110 Td (Project PDF preview) Tj ET\n";
   const objects = [
@@ -437,8 +471,11 @@ test("Ctrl-click follows includes, citations, and label references", async () =>
         return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
       }, macro);
       await page.keyboard.down("Control");
+      await page.locator(".cm-reference-link").first().waitFor();
+      assert.equal(await page.locator(".cm-reference-link").first().evaluate(element => getComputedStyle(element).textDecorationLine), "underline");
       await page.mouse.click(point.x, point.y);
       await page.keyboard.up("Control");
+      assert.equal(await page.locator(".cm-reference-link").count(), 0);
       const target = macro.startsWith("cite") ? "refs.bib" : "chapters/intro.tex";
       await page.waitForFunction(path => document.querySelector("#active-file-label")?.textContent === path, target);
       if (macro !== "include") await page.waitForFunction(() => !globalThis.__paperE2E.state.view.state.selection.main.empty);
