@@ -732,8 +732,7 @@ async function withTemporaryWorktree(runtime, commit, task) {
   }
 }
 
-async function gitSync(runtime, requestedRef) {
-  return withGitOperation(runtime, async () => {
+async function gitSyncLocked(runtime, requestedRef) {
     await ensureGitRepository(runtime.projectDir);
     const checkpoint = await gitCheckpoint(runtime, "Checkpoint before sync");
     const local = checkpoint.commit;
@@ -788,7 +787,10 @@ async function gitSync(runtime, requestedRef) {
     await git(runtime.projectDir, ["update-ref", "refs/heads/main", mergedCommit, local]);
     await git(runtime.projectDir, ["read-tree", mergedCommit]);
     return { status: localIsAncestor.code === 0 ? "fast_forward" : "merged", commit: mergedCommit, incoming };
-  });
+}
+
+async function gitSync(runtime, requestedRef) {
+  return withGitOperation(runtime, () => gitSyncLocked(runtime, requestedRef));
 }
 
 async function gitResolve(runtime, message) {
@@ -842,6 +844,40 @@ async function gitUploadPack(runtime, args, input, protocol) {
   }, input);
 }
 
+async function syncGitIngress(runtime) {
+  const ingressDir = path.join(runtime.projectRoot, "receive.git");
+  if (!existsSync(ingressDir)) await git(runtime.projectDir, ["init", "--bare", ingressDir]);
+  const head = await gitHead(runtime.projectDir);
+  await git(ingressDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+  await git(ingressDir, ["fetch", "--no-tags", runtime.projectDir, `+${head}:refs/heads/main`]);
+  return { ingressDir, head };
+}
+
+async function gitReceivePack(runtime, args, input, protocol) {
+  const { ingressDir, head: before } = await syncGitIngress(runtime);
+  const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
+  if (protocol) env.GIT_PROTOCOL = protocol;
+  const output = await runBinary("git", [
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "receive.denyDeletes=true",
+    "-c", "receive.denyNonFastForwards=true",
+    "receive-pack", "--stateless-rpc", ...args, ingressDir,
+  ], { cwd: ingressDir, env }, input);
+  if (args.includes("--advertise-refs")) return { output, sync: null };
+
+  const incoming = await gitHead(ingressDir, "refs/heads/main");
+  if (incoming === before) return { output, sync: null };
+  const incomingRef = `refs/latexcoder/incoming/${randomUUID()}`;
+  try {
+    await git(runtime.projectDir, ["fetch", "--no-tags", ingressDir, `+refs/heads/main:${incomingRef}`]);
+    const sync = await gitSyncLocked(runtime, incomingRef);
+    return { output, sync };
+  } finally {
+    await git(runtime.projectDir, ["update-ref", "-d", incomingRef], { allowedCodes: [0, 1] });
+    await syncGitIngress(runtime);
+  }
+}
+
 async function findCompiler(configured, stateDir) {
   const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
   for (const candidate of candidates) {
@@ -892,15 +928,16 @@ rotating it does not revoke another member's links or project membership.
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
 history. \`POST /v1/git/commit\` creates a collaborative checkpoint.
-\`POST /v1/git/sync\` accepts \`{"ref":"incoming-branch"}\`, or uses the
-configured upstream when ref is omitted. A conflicting incoming commit is
+Each registered collaborator gets a personal smart HTTP URL at
+\`/git/<project-id>/<share-secret>\`. Clone it and push \`main\` normally; no
+upstream configuration is required. A push checkpoints current Yjs changes and
+automatically merges the incoming commit into the live document. Conflicts are
 quarantined on \`conflict/<UTC timestamp>\`; Yjs and main remain unchanged.
 After resolving the content on main, \`POST /v1/git/resolve\` records the
 two-parent merge commit.
 
 \`GET /v1/project/archive?project=<id>\` downloads the current working tree as
-a ZIP, including uncommitted files. Clone committed history over read-only
-smart HTTP with \`git clone <origin>/git/<project-id>/<share-secret>\`.
+a ZIP, including uncommitted files.
 
 ## Inspect
 
@@ -991,9 +1028,8 @@ existing text because it detects concurrent edits.
 ## Git (Only When The User Explicitly Requests It)
 
 Do not use Git by default. For normal editing, use the checked Yjs patch API
-above. Only inspect Git status, create a commit, synchronize a ref, resolve a
-conflict, or clone the repository when the user explicitly requests that Git
-operation.
+above. Only inspect Git status, create a commit, resolve a conflict, clone, or
+push the repository when the user explicitly requests that Git operation.
 
 GET ${gitUrl("")}
 
@@ -1002,19 +1038,19 @@ Content-Type: application/json
 
 {"message":"Commit message requested by the user"}
 
-POST ${gitUrl("/sync")}
-Content-Type: application/json
-
-{"ref":"optional server-visible ref requested by the user"}
-
-Read-only clone command:
+Clone and push remote:
 
 git clone ${cloneUrl}
+cd ${runtime.id}
+git push origin main
 
-The clone URL exposes committed history only and does not accept pushes. It may
-not contain uncommitted Yjs changes. To make changes visible in the live editor,
-use the checked Yjs patch API unless the user specifically asks for a Git
-workflow.
+The personal URL accepts pushes from registered project members. A push
+checkpoints current Yjs changes, then automatically merges the pushed commit
+into Yjs-backed main. If it cannot merge safely, the incoming commit is kept on
+a conflict branch and the live document stays unchanged. The remote may not
+contain uncommitted Yjs changes until the checkpoint created by a push or web
+commit. Use the checked Yjs patch API unless the user specifically asks for a
+Git workflow.
 `;
 }
 
@@ -1277,6 +1313,14 @@ export async function createPaperServer(options: any = {}) {
     const runtime = await loadProject(request.params.projectId);
     if (hasProjectAccess(request, runtime)) return runtime;
     if (!findProjectShare(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
+    return runtime;
+  };
+  const resolveGitPushProject = async request => {
+    const runtime = await loadProject(request.params.projectId);
+    const share = findProjectShare(runtime, request.params.shareToken);
+    if (!share?.username || !database.getProjectMember(runtime.id, share.username)) {
+      throw apiError("project_access_required", "a registered member's personal Git URL is required for push", 401);
+    }
     return runtime;
   };
 
@@ -1578,17 +1622,25 @@ export async function createPaperServer(options: any = {}) {
   });
   app.get(["/git/:projectId/info/refs", "/git/:projectId/:shareToken/info/refs"], async (request, response, next) => {
     try {
-      if (request.query.service !== "git-upload-pack") throw apiError("git_service_invalid", "only git-upload-pack is available", 400);
-      const runtime = await resolveGitProject(request);
-      const advertised = await withGitReader(runtime, () => gitUploadPack(
-        runtime,
-        ["--advertise-refs"],
-        Buffer.alloc(0),
-        request.get("git-protocol"),
-      ));
+      const service = request.query.service;
+      if (service !== "git-upload-pack" && service !== "git-receive-pack") {
+        throw apiError("git_service_invalid", "unsupported Git service", 400);
+      }
+      const runtime = service === "git-receive-pack"
+        ? await resolveGitPushProject(request)
+        : await resolveGitProject(request);
+      const advertised = await withGitReader(runtime, async () => {
+        if (service === "git-upload-pack") {
+          return gitUploadPack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"));
+        }
+        assertProjectWritable(runtime);
+        return (await gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"))).output;
+      });
       response.setHeader("Cache-Control", "no-store");
-      response.type("application/x-git-upload-pack-advertisement");
-      response.send(Buffer.concat([Buffer.from("001e# service=git-upload-pack\n0000"), advertised]));
+      response.type(`application/x-${service}-advertisement`);
+      const header = `# service=${service}\n`;
+      const packet = `${(Buffer.byteLength(header) + 4).toString(16).padStart(4, "0")}${header}0000`;
+      response.send(Buffer.concat([Buffer.from(packet), advertised]));
     } catch (error) { next(error); }
   });
   app.post(["/git/:projectId/git-upload-pack", "/git/:projectId/:shareToken/git-upload-pack"], express.raw({ type: () => true, limit: "2mb" }), async (request, response, next) => {
@@ -1602,6 +1654,20 @@ export async function createPaperServer(options: any = {}) {
       ));
       response.setHeader("Cache-Control", "no-store");
       response.type("application/x-git-upload-pack-result").send(result);
+    } catch (error) { next(error); }
+  });
+  app.post("/git/:projectId/:shareToken/git-receive-pack", express.raw({ type: () => true, limit: "32mb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveGitPushProject(request);
+      const result = await withGitReader(runtime, () => withGitOperation(runtime, () => gitReceivePack(
+        runtime,
+        [],
+        Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+        request.get("git-protocol"),
+      )));
+      if (result.sync?.status) response.setHeader("X-LaTeX-Coder-Sync", result.sync.status);
+      response.setHeader("Cache-Control", "no-store");
+      response.type("application/x-git-receive-pack-result").send(result.output);
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {

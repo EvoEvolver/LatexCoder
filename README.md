@@ -27,8 +27,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
   always represents `main`; incoming changes are merged in a temporary worktree.
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live
   Yjs document and `main` untouched until the content is resolved.
-- Git status, history, checkpoints, upstream/ref synchronization, and a
-  copy-ready read-only `git clone` command in the editor.
+- Git status, history, checkpoints, and a copy-ready personal Git remote for
+  ordinary `clone`, `pull`, and `push` workflows.
 - Local LaTeX compilation with PDF preview, build logs, and PDF download.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
@@ -44,7 +44,7 @@ the JSON, Git HTTP, and WebSocket endpoints.
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
 | **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
-| **Git transport:** Provides read-only smart HTTP clone. Commits and sync operations are performed from the web UI or API against server-visible refs and upstreams. | **Git transport:** Its Git bridge supports authenticated clone, pull, and push. GitHub synchronization is a separate integration. |
+| **Git transport:** Each registered collaborator gets a personal smart HTTP URL for clone, pull, and push. A push is checkpointed and merged into the live Yjs-backed `main` automatically. | **Git transport:** Its Git bridge supports authenticated clone, pull, and push. GitHub synchronization is a separate integration. |
 | **Export:** Downloads the live working tree as a ZIP, including uncommitted files, without changing the index. | **Export:** Downloads the current project source as a ZIP; generated PDF and most generated files are downloaded separately. |
 | **Automation:** Exposes a concise Markdown manual plus file, checked-patch, build, review, and Git APIs for agents. | **Automation:** Emphasizes the hosted editor and integrations such as Git, GitHub, and reference managers. |
 
@@ -121,23 +121,26 @@ the service never checks another branch out into the collaborative working
 tree. Git operations briefly flush and suspend live synchronization so a
 commit sees one coherent source snapshot.
 
-The Git panel supports status, history, commits, and synchronization from an
-explicit ref or configured upstream. Incoming updates are merged in a temporary
-detached worktree. A clean result is imported into the live Yjs documents. If
-Git or review-storage validation finds a conflict, the incoming commit is kept
-on `conflict/<UTC timestamp>` while `main` and Yjs remain unchanged. Resolve the
-content on `main`, then use **Mark resolved** to create the two-parent merge
-commit and remove the quarantine branch.
-
-The editor's **Clone** action exposes a read-only smart HTTP endpoint:
+The Git panel supports status, history, and collaborative checkpoints. Each
+registered collaborator's personal Git URL is a normal smart HTTP remote:
 
 ```sh
 git clone http://127.0.0.1:8090/git/<project-id>/<share-secret>
+cd <project-id>
+# edit and commit normally
+git push origin main
 ```
 
-Cloning returns committed history. **Download ZIP** instead packages the live
-working tree, including current uncommitted files, without changing the Git
-index or creating a commit.
+No upstream or server-side ref configuration is required. Before accepting a
+push, the service checkpoints current Yjs changes. It then merges the pushed
+commit in a temporary detached worktree and imports a clean result into the live
+Yjs documents. If Git or review-storage validation finds a conflict, the pushed
+commit is kept on `conflict/<UTC timestamp>` while `main` and Yjs remain
+unchanged. Resolve the content on `main`, then use **Mark resolved** to create
+the two-parent merge commit and remove the quarantine branch.
+
+**Download ZIP** packages the live working tree, including current uncommitted
+files, without changing the Git index or creating a commit.
 
 ## Agent API
 
@@ -161,9 +164,9 @@ URLs. These URLs do not require an account or cookie; possession of the link
 grants edit access to that project.
 
 The Agent workspace also documents its capability-bearing Git status, commit,
-sync, and read-only clone interfaces. It explicitly tells agents not to use Git
-unless the user requests a Git operation; routine live-document edits continue
-to use checked Yjs patches.
+clone, and push interfaces. It explicitly tells agents not to use Git unless
+the user requests a Git operation; routine live-document edits continue to use
+checked Yjs patches.
 
 ## Trust Boundary
 

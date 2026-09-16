@@ -290,7 +290,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentInstructions, /Do not use Git by default/);
     assert.match(agentInstructions, /\/v1\/git\/commit\?project=/);
     assert.ok(agentInstructions.includes(`git clone ${base}${share.clonePath}`));
-    assert.match(agentInstructions, /clone URL exposes committed history only and does not accept pushes/);
+    assert.match(agentInstructions, /personal URL accepts pushes from registered project members/);
 
     const shareToken = share.agentPath.split("/").at(-1);
     const agentFileUrl = `${base}/v1/files?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
@@ -432,7 +432,7 @@ test("user and project sessions survive a server restart", async () => {
   }
 });
 
-test("project ZIP includes live files and Git HTTP serves cloneable history", async () => {
+test("project ZIP includes live files and a personal Git remote supports clone and push", async () => {
   await withServer(async ({ base }) => {
     const projects = await (await fetch(`${base}/v1/projects`)).json();
     const projectId = projects.defaultProjectId;
@@ -457,10 +457,33 @@ test("project ZIP includes live files and Git HTTP serves cloneable history", as
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "Include notes" }),
       });
+      const shareResponse = await fetch(`${base}/v1/project/share?project=${projectId}`, { method: "POST" });
+      assert.equal(shareResponse.status, 200);
+      const share = (await shareResponse.json()).share;
       const clone = path.join(temporary, "clone");
-      await execFileAsync("git", ["clone", `${base}/git/${projectId}`, clone]);
+      await execFileAsync("git", ["clone", `${base}${share.clonePath}`, clone]);
       assert.equal(await readFile(path.join(clone, "notes.tex"), "utf8"), "included before commit\n");
       assert.equal(await testGit(clone, ["branch", "--show-current"]), "main");
+      await fetch(`${base}/v1/files?project=${projectId}&path=live.tex`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: "uncommitted live collaboration\n",
+      });
+      await writeFile(path.join(clone, "pushed.tex"), "arrived through git push\n", "utf8");
+      await testGit(clone, ["add", "pushed.tex"]);
+      await testGit(clone, ["commit", "-m", "Push into collaboration"]);
+      await testGit(clone, ["push", "origin", "main"]);
+      assert.equal(
+        await (await fetch(`${base}/v1/files?project=${projectId}&path=pushed.tex`)).text(),
+        "arrived through git push\n",
+      );
+      assert.equal(
+        await (await fetch(`${base}/v1/files?project=${projectId}&path=live.tex`)).text(),
+        "uncommitted live collaboration\n",
+      );
+      const gitState = await (await fetch(`${base}/v1/git?project=${projectId}`)).json();
+      assert.equal(gitState.git.branch, "main");
+      assert.equal(gitState.git.dirty, false);
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }

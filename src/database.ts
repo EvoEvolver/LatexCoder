@@ -286,9 +286,14 @@ export class StateDatabase {
 
   getProjectShareByToken(projectId: string, tokenHash: string) {
     const row = this.db.prepare(`
-      SELECT id, project_id, created_at FROM project_shares WHERE project_id = ? AND token_hash = ?
+      SELECT id, project_id, username, created_at FROM project_shares WHERE project_id = ? AND token_hash = ?
     `).get(projectId, tokenHash) as any;
-    return row ? { id: row.id as string, projectId: row.project_id as string, createdAt: Number(row.created_at) } : null;
+    return row ? {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      username: row.username as string | null,
+      createdAt: Number(row.created_at),
+    } : null;
   }
 
   rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string) {

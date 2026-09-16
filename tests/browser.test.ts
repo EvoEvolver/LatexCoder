@@ -294,6 +294,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-link").inputValue(), new RegExp(`^${base}/agent/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
+    assert.equal(await page.locator("#clone-section label").textContent(), "Git clone and push");
     assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);
     assert.match(await page.locator("#collaborator-list").textContent(), /test-userowner/);
     const previousShareLink = await page.locator("#share-link").inputValue();
@@ -321,6 +322,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#git-button").click();
     await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
     assert.match(await page.locator("#git-summary").textContent(), /^main · clean/);
+    assert.equal(await page.locator("#git-ref").count(), 0);
+    assert.equal(await page.locator("#git-sync").count(), 0);
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 

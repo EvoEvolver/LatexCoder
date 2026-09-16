@@ -131,7 +131,7 @@ const elements: Record<string, any> = Object.fromEntries([
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
-  "git-history", "git-message", "git-ref", "git-refresh", "git-resolve", "git-summary", "git-sync",
+  "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
@@ -1238,10 +1238,7 @@ function selectOutput(name) {
 function renderGitStatus(gitState) {
   state.git = gitState;
   elements.git_dirty.hidden = !gitState.dirty;
-  const relation = gitState.upstream
-    ? `${gitState.ahead} ahead, ${gitState.behind} behind ${gitState.upstream}`
-    : "no upstream";
-  elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"} · ${relation}`;
+  elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"}`;
   elements.git_change_count.textContent = String(gitState.files.length);
   elements.git_file_list.replaceChildren();
   if (!gitState.files.length) {
@@ -1294,7 +1291,7 @@ async function refreshGit(showErrors = true) {
 }
 
 async function runGitAction(endpoint, body, successMessage) {
-  const buttons = [elements.git_commit, elements.git_sync, elements.git_resolve, elements.git_refresh];
+  const buttons = [elements.git_commit, elements.git_resolve, elements.git_refresh];
   buttons.forEach(button => { button.disabled = true; });
   elements.sync_state.textContent = "Git operation";
   try {
@@ -1567,11 +1564,6 @@ elements.git_commit.addEventListener("click", async () => {
   const result = await runGitAction("v1/git/commit", { message: elements.git_message.value }, "Checkpoint committed.");
   if (result) elements.git_message.value = "";
 });
-elements.git_sync.addEventListener("click", () => runGitAction(
-  "v1/git/sync",
-  { ref: elements.git_ref.value.trim() || undefined },
-  "Git synchronization complete.",
-));
 elements.git_resolve.addEventListener("click", async () => {
   const result = await runGitAction("v1/git/resolve", { message: elements.git_message.value }, "Conflict marked resolved.");
   if (result) elements.git_message.value = "";
