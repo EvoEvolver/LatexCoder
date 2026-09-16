@@ -35,6 +35,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - In-editor previews for project images and PDF files, with zoom and download.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
+- A project-scoped ripgrep API with native regex, glob, line-number, and output
+  options for coding agents.
 - Project-scoped plain-text Agent workspace links that can submit checked edits
   directly into the same Yjs documents used by browser collaborators.
 
@@ -80,6 +82,11 @@ change the listener. State defaults to `.latexcoder/`; set
 `LATEXCODER_STATE_DIR` to move it. `LATEXCODER_LATEX_BIN` may point to Tectonic
 or `latexmk`. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
+
+Project search requires Linux bubblewrap (`bwrap`) and ripgrep (`rg`). Every
+search runs without network access, with the project mounted read-only, a 15
+second timeout, and a 4 MiB output limit. `LATEXCODER_BWRAP_BIN` and
+`LATEXCODER_RG_BIN` may point to explicit binaries.
 
 On an empty state directory, `LATEXCODER_ADMIN_PASSWORD` creates the initial
 `admin` user. The password must contain at least 10 characters. It is hashed

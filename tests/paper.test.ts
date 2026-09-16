@@ -105,6 +105,36 @@ async function createFakeLatexmk(directory) {
   return executable;
 }
 
+async function createFakeBwrap(directory) {
+  const executable = path.join(directory, "bwrap-fake");
+  await writeFile(executable, [
+    "#!/bin/sh",
+    'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+    'printf "%s\\n" "$@" > "$root/args"',
+    'project=""',
+    'rg=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    --ro-bind)',
+    '      [ "$3" != "/project" ] || project="$2"',
+    '      [ "$3" != "/usr/bin/rg" ] || rg="$2"',
+    '      shift 3 ;;',
+    '    --setenv) shift 3 ;;',
+    '    --cap-drop) shift 2 ;;',
+    '    --dir|--proc|--dev|--tmpfs|--chdir) shift 2 ;;',
+    '    --die-with-parent|--new-session|--unshare-all|--clearenv) shift ;;',
+    '    /usr/bin/rg)',
+    '      cd "$project" || exit 125',
+    '      shift',
+    '      exec "$rg" "$@" ;;',
+    '    *) exit 126 ;;',
+    '  esac',
+    'done',
+  ].join("\n"), "utf8");
+  await chmod(executable, 0o755);
+  return executable;
+}
+
 test("path validation contains project access", () => {
   assert.equal(safeRelativePath("chapters/intro.tex"), "chapters/intro.tex");
   assert.throws(() => safeRelativePath("../../etc/passwd"), /inside the project/);
@@ -343,6 +373,9 @@ test("invite-only users and project capability sessions enforce access boundarie
     const agentInstructions = await agentWorkspace.text();
     assert.match(agentInstructions, /^# Shared Capability/m);
     assert.match(agentInstructions, /Submit A Yjs Edit/);
+    assert.match(agentInstructions, /Search The Project/);
+    assert.match(agentInstructions, /curl -fsS -X POST '.*\/v1\/search\?project=/);
+    assert.match(agentInstructions, /X-Ripgrep-Exit-Code/);
     assert.match(agentInstructions, /Download The Current PDF/);
     assert.match(agentInstructions, /curl -fsSL '.*\/v1\/build\/pdf\?project=/);
     assert.match(agentInstructions, /do not call the compile API first/);
@@ -538,6 +571,90 @@ test("PDF download compiles current inputs and caches by source revision", async
     }, { compiler });
   } finally {
     await rm(compilerDir, { recursive: true, force: true });
+  }
+});
+
+test("search API exposes project-scoped ripgrep output", async () => {
+  const sandboxDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-fake-bwrap-"));
+  const bwrap = await createFakeBwrap(sandboxDir);
+  try {
+    await withServer(async ({ base }) => {
+      const write = await fetch(`${base}/v1/files?path=notes.tex`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: "first line\nNeedle [one]\nneedle [two]\n",
+      });
+      assert.equal(write.status, 201);
+
+      const search = await fetch(`${base}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pattern: "needle \\[(?:one|two)\\]",
+          args: ["--ignore-case", "--line-number", "--with-filename", "--glob", "*.tex"],
+          paths: ["."],
+        }),
+      });
+      assert.equal(search.status, 200);
+      assert.equal(search.headers.get("cache-control"), "no-store");
+      assert.equal(search.headers.get("x-ripgrep-exit-code"), "0");
+      assert.equal(await search.text(), "./notes.tex:2:Needle [one]\n./notes.tex:3:needle [two]\n");
+
+      const noMatch = await fetch(`${base}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: "not present", args: ["-nH"], paths: ["notes.tex"] }),
+      });
+      assert.equal(noMatch.status, 200);
+      assert.equal(noMatch.headers.get("x-ripgrep-exit-code"), "1");
+      assert.equal(await noMatch.text(), "");
+
+      const externalPath = await fetch(`${base}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: "root", paths: ["../"] }),
+      });
+      assert.equal(externalPath.status, 400);
+
+      const externalCommand = await fetch(`${base}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: ".", args: ["--pre=cat"] }),
+      });
+      assert.equal(externalCommand.status, 400);
+    }, { bwrap });
+
+    const sandboxArgs = await readFile(path.join(sandboxDir, "args"), "utf8");
+    assert.match(sandboxArgs, /^--die-with-parent$/m);
+    assert.match(sandboxArgs, /^--unshare-all$/m);
+    assert.match(sandboxArgs, /^--ro-bind$/m);
+    assert.match(sandboxArgs, /^\/project$/m);
+    assert.match(sandboxArgs, /^\/usr\/bin\/rg$/m);
+  } finally {
+    await rm(sandboxDir, { recursive: true, force: true });
+  }
+});
+
+test("search API kills timed-out bubblewrap processes", async () => {
+  const sandboxDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-search-timeout-"));
+  try {
+    const bwrap = await createFakeBwrap(sandboxDir);
+    const slowRg = path.join(sandboxDir, "rg-slow");
+    await writeFile(slowRg, "#!/bin/sh\nsleep 5\n", "utf8");
+    await chmod(slowRg, 0o755);
+    await withServer(async ({ base }) => {
+      const startedAt = Date.now();
+      const response = await fetch(`${base}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: "anything" }),
+      });
+      assert.equal(response.status, 408);
+      assert.ok(Date.now() - startedAt < 2_000);
+      assert.equal((await response.json()).error.code, "search_timeout");
+    }, { bwrap, rg: slowRg, searchTimeoutMs: 50 });
+  } finally {
+    await rm(sandboxDir, { recursive: true, force: true });
   }
 });
 

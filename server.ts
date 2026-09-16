@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -24,6 +24,33 @@ const MESSAGE_AWARENESS = 1;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_PATCH_CHANGES = 1_000;
+const MAX_SEARCH_OUTPUT_BYTES = 4 * 1024 * 1024;
+const DEFAULT_SEARCH_TIMEOUT_MS = 15_000;
+const SEARCH_BOOLEAN_OPTIONS = new Set([
+  "--auto-hybrid-regex", "--block-buffered", "--byte-offset", "--case-sensitive",
+  "--column", "--count", "--count-matches", "--crlf", "--fixed-strings",
+  "--heading", "--hidden", "--ignore-case", "--include-zero", "--invert-match",
+  "--json", "--line-buffered", "--line-number", "--multiline", "--multiline-dotall",
+  "--max-columns-preview",
+  "--no-filename", "--no-heading", "--no-ignore", "--no-ignore-dot",
+  "--no-ignore-exclude", "--no-ignore-files", "--no-ignore-global", "--no-ignore-messages",
+  "--no-ignore-parent", "--no-ignore-vcs", "--no-line-number", "--no-messages",
+  "--no-require-git", "--no-unicode", "--null", "--null-data", "--one-file-system",
+  "--only-matching", "--passthru", "--pcre2", "--pretty", "--quiet",
+  "--smart-case", "--stats", "--stop-on-nonmatch", "--text", "--trim", "--unicode",
+  "--vimgrep", "--with-filename", "--word-regexp", "--line-regexp",
+  "--files-with-matches", "--files-without-match",
+]);
+const SEARCH_VALUE_OPTIONS = new Set([
+  "--after-context", "--before-context", "--context", "--context-separator",
+  "--dfa-size-limit", "--encoding", "--engine", "--field-context-separator",
+  "--field-match-separator", "--glob", "--iglob", "--max-columns",
+  "--max-count", "--max-depth", "--max-filesize",
+  "--path-separator", "--regex-size-limit", "--replace", "--sort", "--sortr",
+  "--type", "--type-not",
+]);
+const SEARCH_SHORT_BOOLEAN_OPTIONS = new Set(["a", "c", "F", "H", "I", "i", "l", "n", "N", "o", "p", "P", "q", "s", "S", "U", "u", "v", "w", "x"]);
+const SEARCH_SHORT_VALUE_OPTIONS = new Set(["A", "B", "C", "E", "g", "j", "m", "M", "r", "t", "T"]);
 const DEFAULT_DOCUMENT = String.raw`\documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
@@ -523,6 +550,182 @@ function run(command: string, args: string[], options: any): Promise<{ code: num
   });
 }
 
+function validatedSearchOptions(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 64) {
+    throw apiError("invalid_search_args", "args must be an array of at most 64 ripgrep options");
+  }
+  const args = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const argument = value[index];
+    if (typeof argument !== "string" || !argument || argument.length > 512 || argument.includes("\0")) {
+      throw apiError("invalid_search_args", `args[${index}] is invalid`);
+    }
+    if (argument === "--" || !argument.startsWith("-")) {
+      throw apiError("invalid_search_args", `args[${index}] must be a supported ripgrep option`);
+    }
+    if (argument.startsWith("--")) {
+      const equals = argument.indexOf("=");
+      const name = equals === -1 ? argument : argument.slice(0, equals);
+      if (SEARCH_BOOLEAN_OPTIONS.has(name) && equals === -1) {
+        args.push(argument);
+        continue;
+      }
+      if (SEARCH_VALUE_OPTIONS.has(name)) {
+        if (equals !== -1) {
+          if (equals === argument.length - 1) throw apiError("invalid_search_args", `${name} requires a value`);
+          args.push(argument);
+          continue;
+        }
+        const optionValue = value[index + 1];
+        if (typeof optionValue !== "string" || !optionValue || optionValue.length > 512 || optionValue.includes("\0")) {
+          throw apiError("invalid_search_args", `${name} requires a value`);
+        }
+        args.push(argument, optionValue);
+        index += 1;
+        continue;
+      }
+      throw apiError("unsupported_search_option", `${name} is not available through the search API`);
+    }
+    const option = argument[1];
+    if (argument.length === 2 && SEARCH_SHORT_VALUE_OPTIONS.has(option)) {
+      const optionValue = value[index + 1];
+      if (typeof optionValue !== "string" || !optionValue || optionValue.length > 512 || optionValue.includes("\0")) {
+        throw apiError("invalid_search_args", `${argument} requires a value`);
+      }
+      args.push(argument, optionValue);
+      index += 1;
+      continue;
+    }
+    if (SEARCH_SHORT_VALUE_OPTIONS.has(option) && argument.length > 2) {
+      args.push(argument);
+      continue;
+    }
+    if ([...argument.slice(1)].every(character => SEARCH_SHORT_BOOLEAN_OPTIONS.has(character))) {
+      args.push(argument);
+      continue;
+    }
+    throw apiError("unsupported_search_option", `${argument} is not available through the search API`);
+  }
+  return args;
+}
+
+async function validatedSearchPaths(projectDir, value) {
+  if (value === undefined) return ["."];
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
+    throw apiError("invalid_search_paths", "paths must contain 1 to 32 project-relative paths");
+  }
+  const paths = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const relativePath = value[index] === "." ? "." : safeRelativePath(value[index]);
+    if (relativePath.split("/").includes(".git")) {
+      throw apiError("invalid_search_paths", "Git metadata cannot be searched");
+    }
+    if (relativePath !== ".") {
+      let current = projectDir;
+      for (const component of relativePath.split("/")) {
+        current = path.join(current, component);
+        try {
+          if ((await lstat(current)).isSymbolicLink()) {
+            throw apiError("invalid_search_paths", "search paths cannot traverse symbolic links");
+          }
+        } catch (error) {
+          if (error.code === "ENOENT") break;
+          throw error;
+        }
+      }
+    }
+    paths.push(relativePath);
+  }
+  return paths;
+}
+
+async function executablePath(command) {
+  const candidates = command.includes(path.sep)
+    ? [command]
+    : (process.env.PATH || "").split(path.delimiter).filter(Boolean).map(directory => path.join(directory, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, 1);
+      return await realpath(candidate);
+    } catch {}
+  }
+  return null;
+}
+
+async function runRipgrep(projectDir, args, options: any = {}): Promise<{ code: number | null; stdout: Buffer; stderr: Buffer }> {
+  const bwrap = await executablePath(options.bwrap || process.env.LATEXCODER_BWRAP_BIN || "bwrap");
+  if (!bwrap) throw apiError("search_sandbox_unavailable", "bubblewrap is required for project search", 503);
+  const rg = await executablePath(options.rg || process.env.LATEXCODER_RG_BIN || "rg");
+  if (!rg) throw apiError("search_unavailable", "ripgrep is not installed", 503);
+  const sandboxArgs = [
+    "--die-with-parent",
+    "--new-session",
+    "--unshare-all",
+    "--cap-drop", "ALL",
+    "--clearenv",
+    "--setenv", "PATH", "/usr/bin",
+    "--setenv", "HOME", "/tmp",
+    "--dir", "/usr",
+    "--dir", "/usr/bin",
+    "--ro-bind", rg, "/usr/bin/rg",
+  ];
+  for (const runtimePath of ["/lib", "/lib64", "/usr/lib", "/usr/lib64"]) {
+    if (existsSync(runtimePath)) sandboxArgs.push("--ro-bind", runtimePath, runtimePath);
+  }
+  sandboxArgs.push(
+    "--proc", "/proc",
+    "--dev", "/dev",
+    "--tmpfs", "/tmp",
+    "--ro-bind", projectDir, "/project",
+    "--chdir", "/project",
+    "/usr/bin/rg",
+    ...args,
+  );
+  return new Promise((resolve, reject) => {
+    const child = spawn(bwrap, sandboxArgs, {
+      shell: false,
+      env: { PATH: process.env.PATH || "" },
+    });
+    const stdout = [];
+    const stderr = [];
+    let size = 0;
+    let settled = false;
+    let limitExceeded = false;
+    let timedOut = false;
+    const append = target => chunk => {
+      size += chunk.length;
+      if (size > MAX_SEARCH_OUTPUT_BYTES) {
+        limitExceeded = true;
+        child.kill("SIGKILL");
+      } else {
+        target.push(chunk);
+      }
+    };
+    child.stdout.on("data", append(stdout));
+    child.stderr.on("data", append(stderr));
+    child.on("error", error => {
+      if (!settled) reject(apiError("search_unavailable", error.message, 503));
+      settled = true;
+    });
+    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.min(options.timeoutMs, DEFAULT_SEARCH_TIMEOUT_MS)
+      : DEFAULT_SEARCH_TIMEOUT_MS;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.on("close", code => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (limitExceeded) return reject(apiError("search_output_too_large", "ripgrep output exceeded 4 MiB", 413));
+      if (timedOut) return reject(apiError("search_timeout", `ripgrep exceeded the ${timeoutMs}ms search limit`, 408));
+      resolve({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
+    });
+  });
+}
+
 function runBinary(command: string, args: string[], options: any = {}, input = Buffer.alloc(0)): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, shell: false });
@@ -982,6 +1185,11 @@ a ZIP, including uncommitted files.
 \`GET /v1/files?path=main.tex\` reads a file as bytes.
 The response includes the current \`X-Content-SHA256\` revision.
 
+\`POST /v1/search\` runs ripgrep inside the project. Send
+\`{"pattern":"citation","args":["--line-number","--glob","*.tex"],"paths":["."]}\`.
+The response body is native ripgrep output and \`X-Ripgrep-Exit-Code\` is 0 for
+matches or 1 for no matches.
+
 \`GET /v1/build/pdf\` downloads a PDF for the current project contents. The
 server compiles automatically when the inputs have changed and otherwise reuses
 its matching cached artifact.
@@ -1018,6 +1226,7 @@ function agentProjectManual(runtime, files, shareToken, origin) {
   const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
   const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
   const projectUrl = `/v1/project?${capability}`;
+  const searchUrl = `/v1/search?${capability}`;
   const pdfUrl = `/v1/build/pdf?${capability}`;
   const gitUrl = endpoint => `/v1/git${endpoint}?${capability}`;
   const cloneUrl = `${origin}/git/${encodeURIComponent(runtime.id)}/${encodeURIComponent(shareToken)}`;
@@ -1039,6 +1248,18 @@ GET ${fileUrl(main)}
 
 The file response includes X-Content-SHA256. Use that digest when submitting a
 checked edit so a concurrent human or Agent change cannot be overwritten.
+
+## Search The Project
+
+curl -fsS -X POST '${origin}${searchUrl}' \\
+  -H 'Content-Type: application/json' \\
+  --data '{"pattern":"citation","args":["--line-number","--glob","*.tex"],"paths":["."]}'
+
+The response is normal ripgrep output. Most search and output options are
+accepted in args; pattern and project-relative paths stay separate so the
+search cannot leave this project. Each search runs in a read-only bubblewrap
+sandbox with no network and a 15 second timeout. X-Ripgrep-Exit-Code is 0 for
+matches and 1 for no matches.
 
 ## Download The Current PDF
 
@@ -1830,6 +2051,39 @@ export async function createPaperServer(options: any = {}) {
       if (result.sync?.status) response.setHeader("X-LaTeX-Coder-Sync", result.sync.status);
       response.setHeader("Cache-Control", "no-store");
       response.type("application/x-git-receive-pack-result").send(result.output);
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/search", express.json({ limit: "32kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const pattern = request.body?.pattern;
+      if (typeof pattern !== "string" || pattern.length === 0 || pattern.length > 4096 || pattern.includes("\0")) {
+        throw apiError("invalid_search_pattern", "pattern must contain 1 to 4096 characters");
+      }
+      const searchOptions = validatedSearchOptions(request.body?.args);
+      const searchPaths = await validatedSearchPaths(runtime.projectDir, request.body?.paths);
+      runtime.collaboration.flush();
+      const result = await runRipgrep(runtime.projectDir, [
+        "--no-config",
+        ...searchOptions,
+        "--color=never",
+        "--threads=4",
+        "--one-file-system",
+        "--glob=!.git/**",
+        "--glob=!**/.git/**",
+        "--regexp", pattern,
+        "--",
+        ...searchPaths,
+      ], {
+        bwrap: options.bwrap,
+        rg: options.rg,
+        timeoutMs: options.searchTimeoutMs,
+      });
+      response.setHeader("Cache-Control", "no-store");
+      response.setHeader("X-Ripgrep-Exit-Code", String(result.code));
+      response.type("text/plain; charset=utf-8");
+      if (result.code === 0 || result.code === 1) return response.send(result.stdout);
+      response.status(422).send(result.stderr.length ? result.stderr : Buffer.from(`ripgrep exited with code ${result.code}\n`));
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {
