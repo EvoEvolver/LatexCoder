@@ -276,6 +276,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
     assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
+    assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
 
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
@@ -286,8 +288,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#new-file").click();
     await page.locator("#action-input").fill("delete-me.tex");
     await page.locator("#action-submit").click();
-    await page.locator("#file-menu > summary").click();
-    await page.locator("#delete-file").click();
+    const fileRow = page.locator(".file-item", { hasText: "delete-me.tex" });
+    await fileRow.locator("summary").click();
+    await fileRow.getByText("Delete file").click();
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => ![...document.querySelectorAll(".file-row")].some(row => row.textContent.includes("delete-me.tex")));
     await page.locator("#toast", { hasText: "File deleted." }).waitFor();

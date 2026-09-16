@@ -124,10 +124,10 @@ const elements: Record<string, any> = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
-  "build-log", "build-output", "clone-button", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "delete-file", "display-name", "download-project",
-  "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-menu", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
+  "build-log", "build-output", "clone-button", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "display-name", "download-project",
+  "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
-  "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "rename-file", "review-count", "review-dialog", "review-form",
+  "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-ref", "git-refresh", "git-resolve", "git-summary", "git-sync",
@@ -310,19 +310,58 @@ function fileIcon(file) {
 function renderFiles() {
   elements.file_list.replaceChildren();
   for (const file of state.files) {
+    const row = document.createElement("div");
+    row.className = "file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent";
     const button = document.createElement("button");
-    button.className = `file-row grid h-8 w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
+    button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
     button.title = file.path;
     button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
     button.querySelector("span").textContent = file.path;
     button.addEventListener("click", () => openFile(file.path));
-    elements.file_list.append(button);
+    const menu = document.createElement("details");
+    menu.className = "file-actions context-menu relative";
+    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5" title="File actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
+    const panel = menu.querySelector("div");
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      for (const openMenu of elements.file_list.querySelectorAll(".file-actions[open]")) {
+        if (openMenu !== menu) openMenu.removeAttribute("open");
+      }
+      const trigger = menu.querySelector("summary").getBoundingClientRect();
+      const width = panel.getBoundingClientRect().width || 160;
+      const height = panel.getBoundingClientRect().height || 72;
+      panel.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, trigger.right - width))}px`;
+      panel.style.top = `${trigger.bottom + height + 8 <= window.innerHeight ? trigger.bottom + 4 : Math.max(8, trigger.top - height - 4)}px`;
+    });
+    const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
+      ["pencil", "Rename", () => renameFile(file.path)],
+      ["trash-2", "Delete file", () => deleteFile(file.path), true],
+    ];
+    for (const [icon, label, action, danger] of actions) {
+      const actionButton = document.createElement("button");
+      actionButton.type = "button";
+      actionButton.className = `flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5${danger ? " text-destructive" : ""}`;
+      actionButton.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
+      actionButton.querySelector("span").textContent = label;
+      if (danger && file.path === state.main) {
+        actionButton.disabled = true;
+        actionButton.title = "The main document cannot be deleted";
+      }
+      actionButton.addEventListener("click", () => {
+        menu.open = false;
+        action();
+      });
+      panel.append(actionButton);
+    }
+    row.append(button, menu);
+    elements.file_list.append(row);
   }
-  elements.file_menu.hidden = !state.activeFile;
-  elements.delete_file.disabled = !state.activeFile || state.activeFile === state.main;
-  elements.delete_file.title = state.activeFile === state.main ? "The main document cannot be deleted" : "";
   createIcons({ icons: ICONS });
 }
+
+elements.file_list.addEventListener("scroll", () => {
+  for (const menu of elements.file_list.querySelectorAll(".file-actions[open]")) menu.removeAttribute("open");
+}, { passive: true });
 
 class RevisionDeletionWidget extends WidgetType {
   id: string;
@@ -1519,50 +1558,47 @@ elements.new_file.addEventListener("click", async () => {
     await openFile(name);
   } catch (error) { showToast(error.message); }
 });
-elements.rename_file.addEventListener("click", async () => {
-  if (!state.activeFile) return;
-  elements.file_menu.open = false;
+async function renameFile(target) {
   const name = await openActionDialog({
     title: "Rename file",
     label: "File path",
-    value: state.activeFile,
+    value: target,
     submitLabel: "Rename",
   });
-  if (!name || name === state.activeFile) return;
+  if (!name || name === target) return;
   try {
-    const old = state.activeFile;
-    disconnectEditor();
+    const wasActive = state.activeFile === target;
+    if (wasActive) disconnectEditor();
     await request("v1/files/move", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: old, to: name }),
+      body: JSON.stringify({ from: target, to: name }),
     });
-    state.activeFile = name;
-    await refreshProject(true);
+    if (wasActive) state.activeFile = name;
+    await refreshProject(wasActive);
   } catch (error) { showToast(error.message); }
-});
-elements.delete_file.addEventListener("click", async () => {
-  if (!state.activeFile) return;
-  elements.file_menu.open = false;
+}
+
+async function deleteFile(target) {
   const confirmed = await openActionDialog({
     title: "Delete file",
-    message: `Delete “${state.activeFile}”? This cannot be undone.`,
+    message: `Delete “${target}”? This cannot be undone.`,
     submitLabel: "Delete file",
     danger: true,
   });
   if (!confirmed) return;
   try {
-    const target = state.activeFile;
-    disconnectEditor();
+    const wasActive = state.activeFile === target;
+    if (wasActive) disconnectEditor();
     await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
-    state.activeFile = "";
-    await refreshProject(true);
+    if (wasActive) state.activeFile = "";
+    await refreshProject(wasActive);
     showToast("File deleted.");
   } catch (error) {
     showToast(error.message);
-    await refreshProject(true);
+    await refreshProject(state.activeFile === target);
   }
-});
+}
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
 document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
 window.addEventListener("beforeunload", disconnectEditor);

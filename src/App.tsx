@@ -138,10 +138,6 @@ export function AppShell() {
             <div className="pane-header flex h-11 items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex items-center gap-0.5">
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="upload-file" icon="upload" title="Upload" />
-              <details id="file-menu" className="context-menu relative"><summary className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "icon-button list-none")} title="File actions"><Icon name="more-horizontal" /></summary><div className="context-menu-panel absolute right-0 top-9 z-20 w-40 rounded-md border bg-card p-1 shadow-xl">
-                <Button id="rename-file" className="w-full justify-start" variant="ghost" size="sm"><Icon name="pencil" />Rename</Button>
-                <Button id="delete-file" className="danger w-full justify-start text-destructive" variant="ghost" size="sm"><Icon name="trash-2" />Delete file</Button>
-              </div></details>
               <input id="upload-input" type="file" multiple hidden />
             </div></div>
             <div id="file-list" className="file-list min-h-0 flex-1 overflow-auto p-1.5" />
