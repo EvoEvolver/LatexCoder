@@ -383,6 +383,28 @@ test("image and project PDF files render interactive previews", async () => {
   });
 });
 
+test("sidebar folders expand, collapse, and create nested files", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.locator("#new-file").click();
+    await page.locator("#action-input").fill("chapters/intro/section.tex");
+    await page.locator("#action-submit").click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro/section.tex");
+    const folder = page.locator('.file-folder[data-path="chapters"]');
+    const nested = page.locator('.file-folder[data-path="chapters/intro"]');
+    const file = page.locator('.file-row[title="chapters/intro/section.tex"]');
+    assert.equal(await file.locator("span").textContent(), "section.tex");
+    await folder.locator(":scope > summary").click();
+    assert.equal(await file.isVisible(), false);
+    await folder.locator(":scope > summary").click();
+    assert.equal(await file.isVisible(), true);
+    await nested.getByRole("button", { name: "New file in chapters/intro", exact: true }).click();
+    assert.equal(await page.locator("#action-input").inputValue(), "chapters/intro/chapter.tex");
+    await page.locator("#action-submit").click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro/chapter.tex");
+    assert.equal(await page.locator('.file-row[title="chapters/intro/chapter.tex"]').isVisible(), true);
+  });
+});
+
 test("new project and file upload accept ZIP archives", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/projects`);

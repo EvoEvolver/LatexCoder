@@ -31,12 +31,14 @@ import {
   ArrowLeft,
   createIcons,
   CheckCheck,
+  ChevronRight,
   Copy,
   Download,
   File,
   FileCheck2,
   FilePlus2,
   FileText,
+  Folder,
   FolderKanban,
   FolderPlus,
   GitBranch,
@@ -78,6 +80,8 @@ declare global {
 }
 
 const ICONS = {
+    ChevronRight,
+    Folder,
     Archive,
     ArrowLeft,
     CheckCheck,
@@ -345,16 +349,64 @@ function fileIcon(file) {
   return file.text ? "file-text" : "file";
 }
 
+const collapsedFolders = new Set<string>();
+
 function renderFiles() {
   elements.file_list.replaceChildren();
+  type FileTree = { folders: Map<string, FileTree>; files: typeof state.files };
+  const root: FileTree = { folders: new Map(), files: [] };
   for (const file of state.files) {
+    let node = root;
+    const parts = file.path.split("/");
+    for (const name of parts.slice(0, -1)) {
+      if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), files: [] });
+      node = node.folders.get(name)!;
+    }
+    node.files.push(file);
+  }
+  const renderTree = (node: FileTree, parent: HTMLElement, prefix = "") => {
+    for (const [name, child] of [...node.folders].sort(([left], [right]) => left.localeCompare(right))) {
+      const folderPath = prefix ? `${prefix}/${name}` : name;
+      const key = `${state.projectId}/${folderPath}`;
+      const folder = document.createElement("details");
+      folder.className = "file-folder [&[open]>summary_.folder-chevron]:rotate-90";
+      folder.dataset.path = folderPath;
+      folder.open = !collapsedFolders.has(key);
+      const header = document.createElement("summary");
+      header.className = "flex h-8 cursor-pointer list-none items-center gap-1.5 rounded px-2 text-xs hover:bg-accent [&_svg]:size-3.5 [&_.folder-chevron]:transition-transform";
+      header.title = folderPath;
+      header.innerHTML = '<i data-lucide="chevron-right" class="folder-chevron shrink-0"></i><i data-lucide="folder" class="shrink-0 text-muted-foreground"></i><span class="min-w-0 flex-1 truncate"></span>';
+      header.querySelector("span")!.textContent = name;
+      const create = document.createElement("button");
+      create.type = "button";
+      create.className = "grid size-7 shrink-0 place-items-center rounded hover:bg-muted";
+      create.title = `New file in ${folderPath}`;
+      create.setAttribute("aria-label", create.title);
+      create.innerHTML = '<i data-lucide="file-plus-2"></i>';
+      create.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        newFile(folderPath);
+      });
+      header.append(create);
+      const children = document.createElement("div");
+      children.className = "ml-3 border-l pl-1";
+      renderTree(child, children, folderPath);
+      folder.append(header, children);
+      folder.addEventListener("toggle", () => {
+        if (folder.open) collapsedFolders.delete(key);
+        else collapsedFolders.add(key);
+      });
+      parent.append(folder);
+    }
+    for (const file of [...node.files].sort((left, right) => left.path.localeCompare(right.path))) {
     const row = document.createElement("div");
     row.className = "file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent";
     const button = document.createElement("button");
     button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
     button.title = file.path;
     button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
-    button.querySelector("span").textContent = file.path;
+    button.querySelector("span").textContent = file.path.split("/").at(-1);
     button.addEventListener("click", () => openFile(file.path));
     const menu = document.createElement("details");
     menu.className = "file-actions context-menu relative";
@@ -392,8 +444,10 @@ function renderFiles() {
       panel.append(actionButton);
     }
     row.append(button, menu);
-    elements.file_list.append(row);
-  }
+    parent.append(row);
+    }
+  };
+  renderTree(root, elements.file_list);
   createIcons({ icons: ICONS });
 }
 
@@ -916,6 +970,10 @@ async function openFile(relativePath) {
   disconnectEditor();
   resetFilePreview();
   state.activeFile = relativePath;
+  const parts = relativePath.split("/");
+  for (let index = 1; index < parts.length; index += 1) {
+    collapsedFolders.delete(`${state.projectId}/${parts.slice(0, index).join("/")}`);
+  }
   elements.active_file_label.textContent = relativePath;
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
@@ -1876,11 +1934,12 @@ elements.upload_input.addEventListener("change", async () => {
   } catch (error) { showToast(error.message); }
   elements.upload_input.value = "";
 });
-elements.new_file.addEventListener("click", async () => {
+elements.new_file.addEventListener("click", () => newFile());
+async function newFile(folderPath = "") {
   const name = await openActionDialog({
     title: "New file",
     label: "File path",
-    value: "chapter.tex",
+    value: folderPath ? `${folderPath}/chapter.tex` : "chapter.tex",
     submitLabel: "Create file",
   });
   if (!name) return;
@@ -1893,7 +1952,7 @@ elements.new_file.addEventListener("click", async () => {
     await refreshProject();
     await openFile(name);
   } catch (error) { showToast(error.message); }
-});
+}
 async function renameFile(target) {
   const name = await openActionDialog({
     title: "Rename file",
