@@ -42,6 +42,24 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("selected file background covers its actions and follows file selection", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=other.tex`, { data: "Other", headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const main = page.locator(".file-item").filter({ has: page.locator('[title="main.tex"]') });
+    const other = page.locator(".file-item").filter({ has: page.locator('[title="other.tex"]') });
+    assert.ok((await main.getAttribute("class")).split(" ").includes("bg-accent"));
+    assert.notEqual(await main.evaluate(row => getComputedStyle(row).backgroundColor), "rgba(0, 0, 0, 0)");
+    await page.locator('[title="other.tex"]').click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "other.tex");
+    assert.ok((await other.getAttribute("class")).split(" ").includes("bg-accent"));
+    assert.equal((await main.getAttribute("class")).split(" ").includes("bg-accent"), false);
+    await page.screenshot({ path: "/tmp/latexcoder-file-selection.png" });
+  });
+});
+
 test("graphics references open project previews and URL references open a safe new tab", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();

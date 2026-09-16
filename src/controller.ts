@@ -439,9 +439,9 @@ function renderFiles() {
     }
     for (const file of [...node.files].sort((left, right) => left.path.localeCompare(right.path))) {
     const row = document.createElement("div");
-    row.className = "file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent";
+    row.className = `file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent${file.path === state.activeFile ? " bg-accent" : ""}`;
     const button = document.createElement("button");
-    button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
+    button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active font-semibold text-primary" : ""}`;
     button.title = file.path;
     button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
     button.querySelector("span").textContent = file.path.split("/").at(-1);
