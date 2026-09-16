@@ -184,6 +184,9 @@ export function AppShell() {
       </div>
 
       <div id="toast" className="toast fixed bottom-5 left-1/2 z-50 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-xl" role="status" hidden />
+      <div id="pdf-context-menu" role="menu" aria-label="PDF actions" className="fixed z-40 w-44 rounded-md border bg-card p-1 text-card-foreground shadow-xl" hidden>
+        <Button id="pdf-go-to-source" role="menuitem" variant="ghost" size="sm" className="w-full justify-start rounded-sm px-2 text-xs"><Icon name="file-check-2" />Go to source</Button>
+      </div>
       <div id="editor-context-menu" role="menu" aria-label="Edit selection" className="fixed z-40 w-52 max-h-[calc(100dvh-1rem)] overflow-auto rounded-md border bg-card p-1 text-card-foreground shadow-xl" hidden>
         {([
           ["undo", "undo-2", "Undo"], ["redo", "redo-2", "Redo"],

@@ -818,7 +818,8 @@ async function followReference(link: ReferenceLink) {
     const source = view.state.doc.toString();
     const current = link.kind === "file" ? { from: 0, to: 0 } : referenceDefinition(source, link.key, link.kind);
     if (!current) { showToast(`Definition not found: ${link.key}`); return; }
-    view.dispatch({ selection: { anchor: current.from, head: current.to }, scrollIntoView: true });
+    elements.output_pane.classList.remove("mobile-open");
+    view.dispatch({ selection: { anchor: current.from, head: current.to }, effects: EditorView.scrollIntoView(current.from, { y: "center" }) });
     view.focus();
   } catch (error) { showToast(error.message); }
 }
@@ -1427,7 +1428,7 @@ function drawReviews() {
       if (!await selectReviewFile(group.path)) return;
       const latest = parseReviews(state.view.state.doc.toString()).find(candidate => candidate.id === group.id);
       if (!latest) return;
-      state.view.dispatch({ selection: { anchor: latest.bodyFrom, head: latest.bodyTo }, scrollIntoView: true });
+      state.view.dispatch({ selection: { anchor: latest.bodyFrom, head: latest.bodyTo }, effects: EditorView.scrollIntoView(latest.bodyFrom, { y: "center" }) });
       state.view.focus();
     });
     elements.review_list.append(article);
@@ -1670,7 +1671,21 @@ async function openProjectPage(projectId, push = true) {
   await refreshProject(true);
 }
 
+const pdfContextMenu = document.getElementById("pdf-context-menu")!;
+let pdfContextAction: (() => Promise<void>) | null = null;
+function closePdfContextMenu() { pdfContextMenu.hidden = true; pdfContextAction = null; }
+document.getElementById("pdf-go-to-source")!.addEventListener("click", () => {
+  const action = pdfContextAction;
+  closePdfContextMenu();
+  void action?.();
+});
+document.addEventListener("pointerdown", event => { if (!pdfContextMenu.contains(event.target as Node)) closePdfContextMenu(); }, true);
+document.addEventListener("keydown", event => { if (event.key === "Escape") closePdfContextMenu(); });
+elements.pdf_view.addEventListener("scroll", closePdfContextMenu);
+window.addEventListener("resize", closePdfContextMenu);
+
 async function renderPdf(priorityPage?: number) {
+  closePdfContextMenu();
   const pdf = state.pdfDocument;
   if (!pdf) return;
   const version = ++state.pdfRenderVersion;
@@ -1697,17 +1712,36 @@ async function renderPdf(priorityPage?: number) {
     canvas.title = `${macReferences ? "Command" : "Ctrl"}+click to open source`;
     const revision = state.pdfSourceRevision;
     const projectId = state.projectId;
-    canvas.addEventListener("click", async event => {
-      if (!referenceModifierPressed(event) || event.button !== 0) return;
-      event.preventDefault();
-      const bounds = canvas.getBoundingClientRect();
+    const navigateSource = async (x: number, y: number) => {
+      if (state.projectId !== projectId || !canvas.isConnected) return;
       try {
         const destination = await request("v1/build/source", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page: pageNumber, x: (event.clientX - bounds.left) * viewport.width / bounds.width / scale, y: (event.clientY - bounds.top) * viewport.height / bounds.height / scale, revision }),
+          body: JSON.stringify({ page: pageNumber, x, y, revision }),
         });
         if (state.projectId === projectId) await revealSource(destination);
       } catch (error) { showToast(error.message); }
+    };
+    const sourcePoint = (event: MouseEvent) => {
+      const bounds = canvas.getBoundingClientRect();
+      return { x: (event.clientX - bounds.left) * viewport.width / bounds.width / scale, y: (event.clientY - bounds.top) * viewport.height / bounds.height / scale };
+    };
+    canvas.addEventListener("click", event => {
+      if (!referenceModifierPressed(event) || event.button !== 0) return;
+      event.preventDefault();
+      closePdfContextMenu();
+      const { x, y } = sourcePoint(event);
+      void navigateSource(x, y);
+    });
+    canvas.addEventListener("contextmenu", event => {
+      event.preventDefault();
+      closeEditorContextMenu();
+      const { x, y } = sourcePoint(event);
+      pdfContextAction = () => navigateSource(x, y);
+      pdfContextMenu.hidden = false;
+      pdfContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - pdfContextMenu.offsetWidth - 8))}px`;
+      pdfContextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - pdfContextMenu.offsetHeight - 8))}px`;
+      document.getElementById("pdf-go-to-source")!.focus({ preventScroll: true });
     });
     fragment.append(canvas);
     renders.push(async () => {
@@ -2604,8 +2638,9 @@ async function revealSource(destination: { path: string; line: number; from?: nu
   while (!provider.synced && state.view === view && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   if (state.projectId !== project || state.view !== view || !provider.synced) return;
   const line = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, destination.line)));
-  view.dispatch({ selection: { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) }, scrollIntoView: true });
   elements.output_pane.classList.remove("mobile-open");
+  const selection = { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) };
+  view.dispatch({ selection, effects: EditorView.scrollIntoView(selection.anchor, { y: "center" }) });
   view.focus();
 }
 

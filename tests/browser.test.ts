@@ -42,6 +42,75 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("within-file references scroll the definition to the editor center", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const lines = Array.from({ length: 100 }, (_, index) => index === 0 ? "See \\ref{middle}" : index === 49 ? "\\label{middle}" : `Line ${index + 1}`);
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: lines.join("\n"), headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const point = await page.evaluate(() => {
+      const { view } = globalThis.__paperE2E.state;
+      const coords = view.coordsAtPos(view.state.doc.toString().indexOf("middle") + 2);
+      return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
+    });
+    const modifier = await page.evaluate(() => /Mac/.test(navigator.platform) ? "Meta" : "Control");
+    await page.keyboard.down(modifier);
+    await page.mouse.click(point.x, point.y);
+    await page.keyboard.up(modifier);
+    await page.waitForFunction(() => {
+      const { view } = globalThis.__paperE2E.state;
+      if (view.state.doc.lineAt(view.state.selection.main.from).number !== 50) return false;
+      const coords = view.coordsAtPos(view.state.selection.main.from);
+      const bounds = view.scrollDOM.getBoundingClientRect();
+      return coords && Math.abs((coords.top + coords.bottom) / 2 - (bounds.top + bounds.bottom) / 2) < 20;
+    });
+  });
+});
+
+test("PDF navigation vertically centers the destination source line", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: Array.from({ length: 100 }, (_, index) => `Source line ${index + 1}`).join("\n"), headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.route("**/v1/compile*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "Done" } }) }));
+    await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf() }));
+    await page.route("**/v1/build/source*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ path: "main.tex", line: 50 }) }));
+    await page.locator("#compile-button").click();
+    await page.locator("#pdf-document canvas").waitFor();
+    await page.locator("#pdf-document canvas").dispatchEvent("click", { clientX: 50, clientY: 50, metaKey: true, ctrlKey: true, button: 0 });
+    await page.waitForFunction(() => {
+      const { view } = globalThis.__paperE2E.state;
+      if (view.state.doc.lineAt(view.state.selection.main.head).number !== 50) return false;
+      const coords = view.coordsAtPos(view.state.selection.main.head);
+      const bounds = view.scrollDOM.getBoundingClientRect();
+      return coords && Math.abs((coords.top + coords.bottom) / 2 - (bounds.top + bounds.bottom) / 2) < 20;
+    });
+    await page.evaluate(() => {
+      const { view } = globalThis.__paperE2E.state;
+      view.scrollDOM.scrollTop = 0;
+    });
+    const canvas = page.locator("#pdf-document canvas");
+    const bounds = await canvas.boundingBox();
+    await page.mouse.click(bounds.x + 50, bounds.y + 50, { button: "right" });
+    await page.locator("#pdf-context-menu").waitFor();
+    await page.screenshot({ path: "/tmp/latexcoder-pdf-context-menu.png" });
+    const sourceResponse = page.waitForResponse(response => response.url().includes("/v1/build/source"));
+    await page.locator("#pdf-go-to-source").click();
+    const position = (await (await sourceResponse).request().postDataJSON());
+    assert.equal(position.page, 1);
+    assert.ok(position.x > 0 && position.y > 0);
+    await page.waitForFunction(() => {
+      const { view } = globalThis.__paperE2E.state;
+      const coords = view.coordsAtPos(view.state.selection.main.head);
+      const bounds = view.scrollDOM.getBoundingClientRect();
+      return coords && Math.abs((coords.top + coords.bottom) / 2 - (bounds.top + bounds.bottom) / 2) < 20;
+    });
+    assert.equal(await page.locator("#pdf-context-menu").isVisible(), false);
+  });
+});
+
 test("source navigation loads a new PDF revision once and then reuses it", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
