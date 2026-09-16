@@ -2030,6 +2030,17 @@ export async function createPaperServer(options: any = {}) {
       } });
     } catch (error) { next(error); }
   });
+  app.get("/v1/reviews", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const files = await listFiles(runtime.projectDir);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ files: files.filter(file => file.text).map(file => ({
+        path: file.path,
+        reviews: parseReviews(runtime.collaboration.readText(file.path)),
+      })) });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/project/share", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);

@@ -351,6 +351,7 @@ function fileIcon(file) {
 }
 
 const collapsedFolders = new Set<string>();
+const expandedFolders = new Set<string>();
 
 function renderFiles() {
   elements.file_list.replaceChildren();
@@ -372,7 +373,7 @@ function renderFiles() {
       const folder = document.createElement("details");
       folder.className = "file-folder [&[open]>summary_.folder-chevron]:rotate-90";
       folder.dataset.path = folderPath;
-      folder.open = !collapsedFolders.has(key);
+      folder.open = expandedFolders.has(key) && !collapsedFolders.has(key);
       const header = document.createElement("summary");
       header.className = "flex h-8 cursor-pointer list-none items-center gap-1.5 rounded px-2 text-xs hover:bg-accent [&_svg]:size-3.5 [&_.folder-chevron]:transition-transform";
       header.title = folderPath;
@@ -395,8 +396,9 @@ function renderFiles() {
       renderTree(child, children, folderPath);
       folder.append(header, children);
       folder.addEventListener("toggle", () => {
-        if (folder.open) collapsedFolders.delete(key);
-        else collapsedFolders.add(key);
+        if (!folder.isConnected) return;
+        if (folder.open) { collapsedFolders.delete(key); expandedFolders.add(key); }
+        else { collapsedFolders.add(key); expandedFolders.delete(key); }
       });
       parent.append(folder);
     }
@@ -425,6 +427,12 @@ function renderFiles() {
       panel.style.top = `${trigger.bottom + height + 8 <= window.innerHeight ? trigger.bottom + 4 : Math.max(8, trigger.top - height - 4)}px`;
     });
     const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
+      ["download", "Download", () => {
+        const anchor = document.createElement("a");
+        anchor.href = String(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
+        anchor.download = file.path.split("/").at(-1);
+        anchor.click();
+      }],
       ["pencil", "Rename", () => renameFile(file.path)],
       ["trash-2", "Delete file", () => deleteFile(file.path), true],
     ];
@@ -1040,6 +1048,7 @@ async function openFile(relativePath) {
   const parts = relativePath.split("/");
   for (let index = 1; index < parts.length; index += 1) {
     collapsedFolders.delete(`${state.projectId}/${parts.slice(0, index).join("/")}`);
+    expandedFolders.add(`${state.projectId}/${parts.slice(0, index).join("/")}`);
   }
   elements.active_file_label.textContent = relativePath;
   elements.binary_view.hidden = file.text;
@@ -1119,7 +1128,7 @@ function openCommentThread(threadId, reply = false) {
   elements.output_pane.classList.add("mobile-open");
   renderReviews();
   const article = [...elements.review_list.querySelectorAll(".review-item")]
-    .find(candidate => candidate.dataset.reviewId === threadId);
+    .find(candidate => candidate.dataset.reviewId === threadId && candidate.dataset.filePath === state.activeFile);
   if (!article) return;
   article.scrollIntoView({ block: "nearest", behavior: "smooth" });
   article.classList.add("ring-2", "ring-primary");
@@ -1159,28 +1168,68 @@ function openReplyComposer(article, threadId) {
   form.addEventListener("click", event => event.stopPropagation());
   form.addEventListener("submit", event => {
     event.preventDefault();
+    if (state.activeFile !== article.dataset.filePath) { showToast("Open this comment's file before replying."); return; }
+    form.remove();
     if (appendCommentReply(threadId, input.value)) showToast("Reply added.");
   });
   article.querySelector(".review-buttons").before(form);
   input.focus();
 }
 
+let projectReviewFiles: Array<{ path: string; reviews: ReturnType<typeof parseReviews> }> = [];
+let reviewProjectId = "";
+let reviewRequestVersion = 0;
+
 function renderReviews() {
-  const source = state.view?.state.doc.toString() || "";
-  const reviews = parseReviews(source);
+  if (reviewProjectId !== state.projectId) {
+    reviewProjectId = state.projectId;
+    projectReviewFiles = [];
+    elements.review_list.replaceChildren();
+  }
+  drawReviews();
+  if (!state.projectId) return;
+  const projectId = state.projectId;
+  const version = ++reviewRequestVersion;
+  request("v1/reviews").then(result => {
+    if (state.projectId !== projectId || version !== reviewRequestVersion) return;
+    projectReviewFiles = result.files;
+    drawReviews();
+  }).catch(error => { if (version === reviewRequestVersion) showToast(error.message); });
+}
+
+async function selectReviewFile(filePath: string) {
+  if (state.activeFile === filePath && state.view) return true;
+  await openFile(filePath);
+  const view = state.view;
+  const provider = state.provider;
+  if (!view) return false;
+  const deadline = Date.now() + 5000;
+  while (provider && !provider.synced && state.view === view && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  return state.view === view && (!provider || provider.synced);
+}
+
+function drawReviews() {
+  const composer = elements.review_list.querySelector(".comment-reply-form");
+  if (composer && composer.closest(".review-item")?.dataset.filePath === state.activeFile) return;
+  const files = projectReviewFiles.filter(file => file.path !== state.activeFile);
+  if (state.view) files.unshift({ path: state.activeFile, reviews: parseReviews(state.view.state.doc.toString()) });
   const groups = [];
-  const revisions = new Map();
-  for (const item of reviews) {
+  for (const file of files) {
+    const revisions = new Map();
+    for (const item of file.reviews) {
     if (item.kind === "comment" || item.kind === "revision") {
-      groups.push({ id: item.id, kind: item.kind === "comment" ? "comment" : "revision", items: [item] });
+      groups.push({ id: item.id, path: file.path, kind: item.kind === "comment" ? "comment" : "revision", items: [item] });
     } else {
       let group = revisions.get(item.id);
       if (!group) {
-        group = { id: item.id, kind: "revision", items: [] };
+        group = { id: item.id, path: file.path, kind: "revision", items: [] };
         revisions.set(item.id, group);
         groups.push(group);
       }
       group.items.push(item);
+    }
     }
   }
   elements.review_count.textContent = String(groups.length);
@@ -1198,6 +1247,14 @@ function renderReviews() {
     const article = document.createElement("article");
     article.className = `review-item ${group.kind} mb-2 rounded-md border border-l-[3px] border-l-amber-700 bg-card p-3 [&.revision]:border-l-primary`;
     article.dataset.reviewId = group.id;
+    article.dataset.filePath = group.path;
+    const path = document.createElement("div");
+    path.className = "mb-2 truncate font-mono text-[11px] text-muted-foreground";
+    path.textContent = group.path;
+    path.title = group.path;
+    const decide = async (decision: string) => {
+      if (await selectReviewFile(group.path)) applyReviewDecision(group.id, decision);
+    };
     const meta = document.createElement("div");
     meta.className = "review-meta mb-2 flex items-center justify-between gap-2 text-xs [&_strong]:truncate [&_span]:uppercase [&_span]:text-[9px] [&_span]:text-muted-foreground";
     const author = document.createElement("strong");
@@ -1239,18 +1296,26 @@ function renderReviews() {
     const actions = document.createElement("div");
     actions.className = "review-buttons flex gap-1.5";
     if (group.kind === "comment") {
-      const reply = reviewButton("Reply", () => openReplyComposer(article, group.id));
+      const reply = reviewButton("Reply", async () => {
+        if (!await selectReviewFile(group.path)) return;
+        drawReviews();
+        const current = [...elements.review_list.querySelectorAll(".review-item")].find(candidate => candidate.dataset.reviewId === group.id && candidate.dataset.filePath === group.path);
+        if (current) openReplyComposer(current, group.id);
+      });
       reply.dataset.commentReply = "";
-      actions.append(reply, reviewButton("Resolve", () => applyReviewDecision(group.id, "resolve")));
+      actions.append(reply, reviewButton("Resolve", () => decide("resolve")));
     } else {
       actions.append(
-        reviewButton("Accept", () => applyReviewDecision(group.id, "accept")),
-        reviewButton("Reject", () => applyReviewDecision(group.id, "reject")),
+        reviewButton("Accept", () => decide("accept")),
+        reviewButton("Reject", () => decide("reject")),
       );
     }
-    article.append(meta, quote, note, actions);
-    article.addEventListener("click", () => {
-      state.view.dispatch({ selection: { anchor: item.bodyFrom, head: item.bodyTo }, scrollIntoView: true });
+    article.append(path, meta, quote, note, actions);
+    article.addEventListener("click", async () => {
+      if (!await selectReviewFile(group.path)) return;
+      const latest = parseReviews(state.view.state.doc.toString()).find(candidate => candidate.id === group.id);
+      if (!latest) return;
+      state.view.dispatch({ selection: { anchor: latest.bodyFrom, head: latest.bodyTo }, scrollIntoView: true });
       state.view.focus();
     });
     elements.review_list.append(article);
@@ -1593,6 +1658,10 @@ function selectOutput(name) {
   elements.review_pane.hidden = name !== "review";
   if (name === "review") renderReviews();
 }
+
+setInterval(() => {
+  if (state.projectId && !elements.review_pane.hidden && !document.hidden) renderReviews();
+}, 3000);
 
 function renderGitStatus(gitState) {
   state.git = gitState;

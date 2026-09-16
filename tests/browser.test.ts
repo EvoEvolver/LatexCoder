@@ -383,6 +383,39 @@ test("image and project PDF files render interactive previews", async () => {
   });
 });
 
+test("project reviews span files, folders default closed, and files download", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const content = String.raw`\cmtbg{same}{Ada}claim\cmted{Other file comment} \addbg{s1}{Ada}new text\added`;
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/other.tex`, { data: content, headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
+    const folder = page.locator('.file-folder[data-path="chapters"]');
+    assert.equal(await folder.getAttribute("open"), null);
+    assert.equal(await page.locator('.file-row[title="chapters/other.tex"]').isVisible(), false);
+    await folder.locator(":scope > summary").click();
+    const row = page.locator(".file-item", { has: page.locator('.file-row[title="chapters/other.tex"]') });
+    await row.locator("summary").click();
+    const downloading = page.waitForEvent("download");
+    await row.getByRole("button", { name: "Download", exact: true }).click();
+    const download = await downloading;
+    assert.equal(download.suggestedFilename(), "other.tex");
+    await page.locator('[data-output="review"]').click();
+    const comment = page.locator('.review-item.comment[data-file-path="chapters/other.tex"]');
+    const suggestion = page.locator('.review-item.revision[data-file-path="chapters/other.tex"]');
+    await comment.waitFor();
+    await suggestion.getByRole("button", { name: "Accept", exact: true }).click();
+    await suggestion.waitFor({ state: "detached" });
+    await comment.getByRole("button", { name: "Reply", exact: true }).click();
+    await comment.locator("textarea").fill("Reply from project review");
+    await comment.locator("form").getByRole("button", { name: "Reply", exact: true }).click();
+    await comment.getByText("Reply from project review", { exact: true }).waitFor();
+    await comment.getByRole("button", { name: "Resolve", exact: true }).click();
+    await comment.waitFor({ state: "detached" });
+    assert.equal(await page.locator("#active-file-label").textContent(), "chapters/other.tex");
+  });
+});
+
 test("Ctrl-click follows includes, citations, and label references", async () => {
   await withEditor(async ({ page, base }) => {
     const projects = await (await page.request.get(`${base}/v1/projects`)).json();
