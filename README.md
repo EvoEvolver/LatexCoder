@@ -9,7 +9,7 @@ projects without requiring an account or database.
 
 ## Features
 
-- A multi-project dashboard with stable, shareable editor URLs.
+- A user-scoped project dashboard with stable, shareable editor URLs.
 - Invite-only core-team accounts for project creation and management, plus
   password-bearing share links that establish scoped guest sessions.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
@@ -31,7 +31,7 @@ projects without requiring an account or database.
 | LaTeX Coder | Overleaf |
 | --- | --- |
 | **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
-| **Access:** Invite-only members manage all projects. Guests exchange a high-entropy project link for a scoped HttpOnly session and never see the project dashboard. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
+| **Access:** Invite-only members manage only their own projects. Guests exchange a high-entropy project link for a scoped HttpOnly session and never see the owner's project dashboard. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
 | **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
@@ -72,13 +72,14 @@ additional team members; invitations expire after seven days.
 
 ## Projects
 
-Signed-in users open on a dedicated project dashboard and can create projects.
+Signed-in users open on a dedicated dashboard containing only projects they own
+and can create new projects under their account. Being signed in does not grant
+access to another user's projects.
 Guests enter through `/share/<project-id>/<secret>`; the server exchanges that
 secret for a 24-hour, project-scoped HttpOnly session and redirects to the clean
 editor URL `/projects/<project-id>`. Guests can edit that project but cannot list
-or create projects. Rename, download, and delete actions live in each project's
-overflow menu so destructive actions are not primary controls. Project state is
-stored beneath:
+or create projects. Only the owner can rename or delete a project and retrieve
+its share and clone URLs. Project state is stored beneath:
 
 ```text
 .latexcoder/projects/<project-id>/

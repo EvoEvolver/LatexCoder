@@ -352,6 +352,16 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.locator("#projects-page").waitFor();
     assert.equal(await invited.locator("#current-user").textContent(), "browser.member");
     assert.equal(await invited.locator("#new-project").isVisible(), true);
+    assert.equal(await invited.locator(".project-row").count(), 0);
+
+    await invited.goto(shareLink);
+    await invited.waitForURL(/\/projects\/paper$/);
+    await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    assert.equal(await invited.locator("#back-projects").isVisible(), true);
+    assert.equal(await invited.locator("#share-project").isHidden(), true);
+    await invited.locator("#git-button").click();
+    await invited.locator("#git-dialog").waitFor();
+    assert.equal(await invited.locator("#clone-button").isHidden(), true);
   }, { authDisabled: false, adminPassword: "browser admin password" });
 });
 

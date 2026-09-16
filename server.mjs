@@ -859,9 +859,10 @@ LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams.
 seven-day registration link; invited users register through
 \`POST /v1/auth/register\`.
 
-Member authentication is required for \`GET /v1/projects\`, project creation,
-rename, and deletion. \`POST /v1/projects\` with \`{"name":"My paper"}\` creates
-one. Rename or delete one with
+Member authentication is required for \`GET /v1/projects\` and project creation.
+The list contains only projects owned by the current member. \`POST /v1/projects\`
+with \`{"name":"My paper"}\` creates an owned project. Only its owner can rename,
+delete, or retrieve its share secret. Rename or delete one with
 \`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
@@ -870,7 +871,8 @@ the first project is used for backwards compatibility.
 Browser routes \`/projects\` and \`/projects/:id\` provide the member dashboard
 and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
 establish a project-scoped session. That session authorizes only the selected
-project and does not expose the dashboard.
+project and does not expose the owner's dashboard. Signing in alone never grants
+access to another member's projects.
 
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
@@ -1018,15 +1020,25 @@ export async function createPaperServer(options = {}) {
     return user;
   }
 
-  function hasProjectAccess(request, projectId) {
-    if (currentUser(request)) return true;
-    const session = sessionRecord(request, "lc_access", projectSessions);
-    return Boolean(session?.record.projects.has(projectId));
+  function isProjectOwner(request, runtime) {
+    return currentUser(request)?.username === runtime.metadata.ownerUsername;
   }
 
-  function requireProjectAccess(request, projectId) {
-    if (!hasProjectAccess(request, projectId)) {
-      throw apiError("project_access_required", "open a valid project share link or sign in", 401);
+  function hasProjectAccess(request, runtime) {
+    if (isProjectOwner(request, runtime)) return true;
+    const session = sessionRecord(request, "lc_access", projectSessions);
+    return Boolean(session?.record.projects.has(runtime.id));
+  }
+
+  function requireProjectAccess(request, runtime) {
+    if (!hasProjectAccess(request, runtime)) {
+      throw apiError("project_access_required", "open a valid project share link or sign in as the project owner", 401);
+    }
+  }
+
+  function requireProjectOwner(request, runtime) {
+    if (!isProjectOwner(request, runtime)) {
+      throw apiError("project_owner_required", "only the project owner can manage this project", 403);
     }
   }
 
@@ -1069,9 +1081,15 @@ export async function createPaperServer(options = {}) {
   await mkdir(projectsDir, { recursive: true });
 
   const projects = new Map();
+  const legacyOwnerUsername = authDisabled
+    ? "test-user"
+    : Object.hasOwn(authState.users, "admin")
+      ? "admin"
+      : Object.keys(authState.users)[0] || null;
   function publicProjectMetadata(metadata) {
     const result = { ...metadata };
     delete result.shareToken;
+    delete result.ownerUsername;
     return result;
   }
 
@@ -1081,8 +1099,16 @@ export async function createPaperServer(options = {}) {
     const projectRoot = path.join(projectsDir, id);
     if (!existsSync(projectRoot)) throw apiError("project_not_found", "project does not exist", 404);
     let metadata = await readProjectMetadata(projectRoot, id);
+    let metadataChanged = false;
     if (typeof metadata.shareToken !== "string" || metadata.shareToken.length < 32) {
       metadata = { ...metadata, shareToken: randomToken() };
+      metadataChanged = true;
+    }
+    if (!metadata.ownerUsername && legacyOwnerUsername) {
+      metadata = { ...metadata, ownerUsername: legacyOwnerUsername };
+      metadataChanged = true;
+    }
+    if (metadataChanged) {
       await writeProjectMetadata(projectRoot, metadata);
     }
     const projectDir = path.join(projectRoot, "project");
@@ -1111,25 +1137,26 @@ export async function createPaperServer(options = {}) {
     return runtime;
   }
 
-  async function projectSummaries() {
+  async function projectSummaries(ownerUsername = null) {
     const entries = await readdir(projectsDir, { withFileTypes: true });
     const summaries = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(entry.name)) continue;
       const runtime = await loadProject(entry.name);
+      if (ownerUsername && runtime.metadata.ownerUsername !== ownerUsername) continue;
       summaries.push({ ...publicProjectMetadata(runtime.metadata), build: { status: runtime.build.status, pdf: runtime.build.pdf } });
     }
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async function createProject(name) {
+  async function createProject(name, ownerUsername) {
     name = cleanProjectName(name);
     const base = projectSlug(name);
     let id = base;
     let suffix = 2;
     while (existsSync(path.join(projectsDir, id))) id = `${base.slice(0, 58)}-${suffix++}`;
     const projectRoot = path.join(projectsDir, id);
-    const metadata = { id, name, createdAt: new Date().toISOString(), shareToken: randomToken() };
+    const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
     await writeProjectMetadata(projectRoot, metadata);
     return loadProject(id);
@@ -1137,18 +1164,32 @@ export async function createPaperServer(options = {}) {
 
   let existing = await projectSummaries();
   if (!existing.length) {
-    await createProject("Paper");
+    await createProject("Paper", legacyOwnerUsername);
     existing = await projectSummaries();
   }
   let defaultProjectId = existing[0].id;
+  const defaultProjectForRequest = async request => {
+    const user = currentUser(request);
+    if (user) {
+      const owned = await projectSummaries(user.username);
+      if (owned.length) return owned[0].id;
+    }
+    const access = sessionRecord(request, "lc_access", projectSessions);
+    if (access) {
+      for (const projectId of access.record.projects) {
+        if (existsSync(path.join(projectsDir, projectId))) return projectId;
+      }
+    }
+    throw apiError("project_not_found", "no accessible project was selected", 404);
+  };
   const resolveProject = async request => {
-    const runtime = await loadProject(request.query.project || defaultProjectId);
-    requireProjectAccess(request, runtime.id);
+    const runtime = await loadProject(request.query.project || await defaultProjectForRequest(request));
+    requireProjectAccess(request, runtime);
     return runtime;
   };
   const resolveGitProject = async request => {
     const runtime = await loadProject(request.params.projectId);
-    if (hasProjectAccess(request, runtime.id)) return runtime;
+    if (hasProjectAccess(request, runtime)) return runtime;
     const supplied = String(request.params.shareToken || "");
     const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
     const actual = Buffer.from(sha256(supplied), "hex");
@@ -1293,22 +1334,23 @@ export async function createPaperServer(options = {}) {
   });
   app.get("/v1/projects", async (request, response, next) => {
     try {
-      requireUser(request);
-      response.json({ projects: await projectSummaries(), defaultProjectId });
+      const user = requireUser(request);
+      const owned = await projectSummaries(user.username);
+      response.json({ projects: owned, defaultProjectId: owned[0]?.id || null });
     }
     catch (error) { next(error); }
   });
   app.post("/v1/projects", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
-      requireUser(request);
-      const runtime = await createProject(request.body?.name);
+      const user = requireUser(request);
+      const runtime = await createProject(request.body?.name, user.username);
       response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
     } catch (error) { next(error); }
   });
   app.patch("/v1/projects/:projectId", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
-      requireUser(request);
       const runtime = await loadProject(request.params.projectId);
+      requireProjectOwner(request, runtime);
       runtime.metadata = { ...runtime.metadata, name: cleanProjectName(request.body?.name) };
       await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
       response.json({ project: publicProjectMetadata(runtime.metadata) });
@@ -1316,31 +1358,34 @@ export async function createPaperServer(options = {}) {
   });
   app.delete("/v1/projects/:projectId", async (request, response, next) => {
     try {
-      requireUser(request);
       const runtime = await loadProject(request.params.projectId);
+      requireProjectOwner(request, runtime);
+      const ownerUsername = runtime.metadata.ownerUsername;
       await waitForGitReaders(runtime);
       runtime.collaboration.shutdown();
       projects.delete(runtime.id);
       await rm(runtime.projectRoot, { recursive: true, force: false });
-      const remaining = await projectSummaries();
-      if (!remaining.length) {
-        const replacement = await createProject("Paper");
-        defaultProjectId = replacement.id;
-      } else if (defaultProjectId === runtime.id) {
-        defaultProjectId = remaining[0].id;
-      }
-      response.json({ deleted: { id: runtime.id }, defaultProjectId });
+      const remaining = await projectSummaries(ownerUsername);
+      if (defaultProjectId === runtime.id) defaultProjectId = (await projectSummaries())[0]?.id || null;
+      response.json({ deleted: { id: runtime.id }, defaultProjectId: remaining[0]?.id || null });
     } catch (error) { next(error); }
   });
   app.get("/v1/project", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      response.json({ project: { ...publicProjectMetadata(runtime.metadata), main: runtime.build.main, files: await listFiles(runtime.projectDir), build: runtime.build } });
+      response.json({ project: {
+        ...publicProjectMetadata(runtime.metadata),
+        main: runtime.build.main,
+        files: await listFiles(runtime.projectDir),
+        build: runtime.build,
+        permissions: { manage: isProjectOwner(request, runtime) },
+      } });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/share", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      requireProjectOwner(request, runtime);
       response.json({ share: {
         path: `/share/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
         clonePath: `/git/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
@@ -1605,8 +1650,8 @@ export async function createPaperServer(options = {}) {
       if (!url.pathname.startsWith(prefix)) throw apiError("route_not_found", "websocket route not found", 404);
       const parts = url.pathname.slice(prefix.length).split("/").map(decodeURIComponent);
       const scoped = parts.length > 1;
-      const runtime = await loadProject(scoped ? parts[0] : defaultProjectId);
-      requireProjectAccess(request, runtime.id);
+      const runtime = await loadProject(scoped ? parts[0] : await defaultProjectForRequest(request));
+      requireProjectAccess(request, runtime);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
       sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath));
     })().catch(() => {

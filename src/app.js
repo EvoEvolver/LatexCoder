@@ -141,6 +141,7 @@ const state = {
   projects: [],
   user: null,
   bootstrapReady: true,
+  projectCanManage: false,
   git: null,
   main: "main.tex",
   files: [],
@@ -873,7 +874,12 @@ async function refreshProject(open = false) {
   const data = await request("v1/project");
   const known = state.projects.find(project => project.id === data.project.id);
   if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt });
-  else state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt });
+  else if (data.project.permissions?.manage) {
+    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt });
+  }
+  state.projectCanManage = Boolean(data.project.permissions?.manage);
+  elements.share_project.hidden = !state.projectCanManage;
+  elements.clone_button.hidden = !state.projectCanManage;
   elements.project_name.textContent = data.project.name;
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
@@ -1006,7 +1012,7 @@ function showProjectsPage(push = true) {
 
 async function openProjectPage(projectId, push = true) {
   const project = state.projects.find(candidate => candidate.id === projectId)
-    || (!state.user ? { id: projectId, name: projectId } : null);
+    || { id: projectId, name: projectId };
   if (!project) {
     showProjectsPage(false);
     throw new Error("Project does not exist");
@@ -1020,6 +1026,9 @@ async function openProjectPage(projectId, push = true) {
   elements.project_name.textContent = project.name;
   elements.download_project.href = projectApiUrl("v1/project/archive");
   elements.download_project.download = `${project.id}.zip`;
+  state.projectCanManage = false;
+  elements.share_project.hidden = true;
+  elements.clone_button.hidden = true;
   elements.back_projects.hidden = !state.user;
   elements.editor_login.hidden = Boolean(state.user);
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
