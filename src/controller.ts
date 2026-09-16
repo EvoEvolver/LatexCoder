@@ -839,8 +839,12 @@ function editorExtensions(ytext, provider) {
     referenceHighlights,
     EditorView.domEventHandlers({
       mousedown(event, view) {
-        if (event.button === 2 && !view.state.selection.main.empty) {
+        if (event.button === 2) {
           event.preventDefault();
+          if (view.state.selection.main.empty) {
+            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (position !== null) view.dispatch({ selection: { anchor: position } });
+          }
           return true;
         }
         if (!referenceModifierPressed(event) || event.button !== 0) return false;
@@ -859,7 +863,6 @@ function editorExtensions(ytext, provider) {
       },
       keyup(event, view) { if (event.key === referenceModifier) view.contentDOM.style.cursor = ""; },
       contextmenu(event, view) {
-        if (view.state.selection.main.empty) return false;
         event.preventDefault();
         openEditorContextMenu(event, view);
         return true;
@@ -905,8 +908,8 @@ function editorExtensions(ytext, provider) {
       // CodeMirror normally puts this layer behind the content. Review marks
       // have their own backgrounds, so selected text inside a mark would hide
       // the selection unless the translucent layer is drawn above it.
-      "&.cm-focused .cm-selectionLayer": { zIndex: "3 !important", pointerEvents: "none" },
-      "&.cm-focused .cm-selectionBackground": {
+      "&.cm-focused .cm-selectionLayer, &[data-context-menu] .cm-selectionLayer": { zIndex: "3 !important", pointerEvents: "none" },
+      "&.cm-focused .cm-selectionBackground, &[data-context-menu] .cm-selectionBackground": {
         backgroundColor: "rgb(63 153 220 / 18%) !important",
         boxShadow: "inset 0 0 0 1px rgb(38 120 181 / 85%)",
       },
@@ -1688,6 +1691,8 @@ async function showPdf(force = false) {
 
 async function compile() {
   elements.compile_button.disabled = true;
+  elements.compile_button.querySelector("span").textContent = "Compiling";
+  elements.compile_button.setAttribute("aria-busy", "true");
   elements.sync_state.textContent = "Compiling";
   try {
     const result = await request("v1/compile", {
@@ -1707,6 +1712,8 @@ async function compile() {
     showToast(error.message);
   } finally {
     elements.compile_button.disabled = false;
+    elements.compile_button.querySelector("span").textContent = "Compile";
+    elements.compile_button.removeAttribute("aria-busy");
     elements.sync_state.textContent = state.provider ? "Saved live" : "Stored";
   }
 }
@@ -2194,18 +2201,22 @@ let contextView: EditorView | null = null;
 
 function closeEditorContextMenu() {
   editorContextMenu.hidden = true;
+  if (contextView) delete contextView.dom.dataset.contextMenu;
   contextView = null;
 }
 
 function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   contextView = view;
+  view.dom.dataset.contextMenu = "open";
   const selection = view.state.selection.main;
   const overlapsReview = parseReviews(view.state.doc.toString()).some(item => selection.from < item.to && selection.to > item.from);
   editorContextMenu.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach(button => {
     const action = button.dataset.editorAction;
     button.disabled = action === "undo" ? !undoDepth(view.state)
       : action === "redo" ? !redoDepth(view.state)
-      : action === "comment" ? overlapsReview
+      : action === "comment" ? selection.empty || overlapsReview
+      : action === "copy" || action === "cut" || action === "delete" ? selection.empty
+      : action === "select-all" ? !view.state.doc.length
       : action === "pdf" ? !state.activeFile.endsWith(".tex") || !state.projectId
       : action === "paste" ? !navigator.clipboard?.readText
       : false;
@@ -2213,11 +2224,13 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   editorContextMenu.hidden = false;
   elements.selection_actions.hidden = true;
   const bounds = editorContextMenu.getBoundingClientRect();
-  const caret = view.coordsAtPos(selection.head);
+  const clicked = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  const caret = view.coordsAtPos(clicked ?? selection.head);
   const x = event.clientX || caret?.left || 8;
-  const y = event.clientY || caret?.bottom || 8;
+  const y = Math.max(event.clientY, (caret?.bottom || 4) + 4);
   editorContextMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
-  editorContextMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+  const top = y + bounds.height <= window.innerHeight - 8 ? y : (caret?.top || event.clientY) - bounds.height - 4;
+  editorContextMenu.style.top = `${Math.max(8, top)}px`;
   editorContextMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 }
 

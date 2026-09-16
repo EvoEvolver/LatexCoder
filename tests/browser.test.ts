@@ -42,6 +42,31 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("compile button shows Compiling until completion and resets on success or failure", async () => {
+  for (const status of [200, 422]) {
+    await withEditor(async ({ page }) => {
+      let finish: () => void;
+      const pending = new Promise<void>(resolve => { finish = resolve; });
+      await page.route("**/v1/compile*", async route => {
+        await pending;
+        await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(status === 200 ? { build: { log: "Done" } } : { error: { message: "Compilation failed" } }) });
+      });
+      await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf() }));
+      const button = page.locator("#compile-button");
+      const width = (await button.boundingBox()).width;
+      await button.click();
+      await page.waitForFunction(() => document.querySelector("#compile-button span")?.textContent === "Compiling");
+      assert.equal(await button.isDisabled(), true);
+      assert.equal(await button.getAttribute("aria-busy"), "true");
+      assert.equal((await button.boundingBox()).width, width);
+      finish();
+      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#compile-button").disabled);
+      assert.equal(await button.locator("span").textContent(), "Compile");
+      assert.equal(await button.getAttribute("aria-busy"), null);
+    });
+  }
+});
+
 async function selectionContextMenu(page, needle, testMode = true) {
   const point = await page.evaluate(({ needle, testMode }) => {
     const view = (testMode ? globalThis.__paperTest : globalThis.__paperE2E).state.view;
@@ -61,6 +86,9 @@ test("selected text context menu preserves selection and offers editing commands
     await createEditor(page, LIPSUM);
     await page.evaluate(() => { globalThis.__paperTest.state.suggesting = false; });
     await selectionContextMenu(page, "brave");
+    assert.equal(await page.locator(".cm-editor").getAttribute("data-context-menu"), "open");
+    assert.equal(await page.locator(".cm-selectionBackground").first().evaluate(element => getComputedStyle(element).backgroundColor), "rgba(63, 153, 220, 0.18)");
+    assert.equal(await page.locator(".cm-selectionLayer").evaluate(element => getComputedStyle(element).zIndex), "3");
     assert.equal(await page.locator("#editor-context-menu [role=menuitem]").count(), 9);
     await page.screenshot({ path: "/tmp/latexcoder-editor-context-menu.png" });
     await page.locator('[data-editor-action="copy"]').click();
@@ -87,6 +115,7 @@ test("selected text context menu preserves selection and offers editing commands
     await selectionContextMenu(page, "world");
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#editor-context-menu").isVisible(), false);
+    assert.equal(await page.locator(".cm-editor").getAttribute("data-context-menu"), null);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.waitForFunction(() => document.querySelector("#files-pane").getBoundingClientRect().right <= 0);
@@ -94,6 +123,28 @@ test("selected text context menu preserves selection and offers editing commands
     const menu = await page.locator("#editor-context-menu").boundingBox();
     assert.ok(menu.x >= 0 && menu.x + menu.width <= 390 && menu.y + menu.height <= 844);
     await page.screenshot({ path: "/tmp/latexcoder-editor-context-mobile.png" });
+  });
+});
+
+test("empty selection uses the custom context menu and pastes at the clicked caret", async () => {
+  await withEditor(async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await createEditor(page, LIPSUM);
+    const point = await page.evaluate(() => {
+      const { view } = globalThis.__paperTest.state;
+      globalThis.__paperTest.state.suggesting = false;
+      view.dispatch({ selection: { anchor: 0 } });
+      const coords = view.coordsAtPos(12);
+      return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
+    });
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    await page.locator("#editor-context-menu").waitFor();
+    for (const action of ["copy", "cut", "delete", "comment"]) assert.equal(await page.locator(`[data-editor-action="${action}"]`).isDisabled(), true);
+    const caret = await page.evaluate(() => globalThis.__paperTest.state.view.state.selection.main.head);
+    assert.ok(caret >= 12 && caret <= 13);
+    await page.evaluate(() => navigator.clipboard.writeText("INSERT "));
+    await page.locator('[data-editor-action="paste"]').click();
+    await page.waitForFunction(expected => globalThis.__paperTest.state.view.state.doc.toString() === expected, LIPSUM.slice(0, caret) + "INSERT " + LIPSUM.slice(caret));
   });
 });
 
@@ -108,6 +159,8 @@ test("selection context menu adds comments and blocks overlapping comments", asy
     await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString().includes("Context comment"));
     await selectionContextMenu(page, "brave");
     assert.equal(await page.locator('[data-editor-action="comment"]').isDisabled(), true);
+    assert.equal(await page.locator(".cm-selectionBackground").first().evaluate(element => getComputedStyle(element).backgroundColor), "rgba(63, 153, 220, 0.18)");
+    await page.screenshot({ path: "/tmp/latexcoder-review-context-selection.png" });
   });
 });
 
