@@ -1,5 +1,7 @@
 # LaTeX Coder
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/latexcoder?referralCode=4KUZ4o&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
 LaTeX Coder is a small, collaborative, filesystem-backed LaTeX editor. One
 Node process serves the browser editor, project APIs, and Yjs WebSocket rooms.
 Each project keeps ordinary source files and build artifacts in an isolated
