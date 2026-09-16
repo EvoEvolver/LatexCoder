@@ -124,7 +124,7 @@ const elements: Record<string, any> = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
-  "build-log", "build-output", "clone-button", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
@@ -943,7 +943,6 @@ async function refreshProject(open = false) {
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
   elements.share_project.hidden = !state.projectCanManage;
-  elements.clone_button.hidden = !state.projectCanManage;
   elements.project_name.textContent = data.project.name;
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
@@ -1092,7 +1091,6 @@ async function openProjectPage(projectId, push = true) {
   elements.download_project.download = `${project.id}.zip`;
   state.projectCanManage = false;
   elements.share_project.hidden = true;
-  elements.clone_button.hidden = true;
   elements.back_projects.hidden = !state.user;
   elements.editor_login.hidden = Boolean(state.user);
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
@@ -1360,7 +1358,7 @@ async function copyText(value, message) {
   showToast(message);
 }
 
-async function openAccessDialog(focusClone = false) {
+async function openAccessDialog() {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
   const result = await request("v1/project/share");
@@ -1372,7 +1370,7 @@ async function openAccessDialog(focusClone = false) {
   elements.access_download.href = projectApiUrl("v1/project/archive");
   elements.access_download.download = `${project.id}.zip`;
   elements.access_dialog.showModal();
-  (focusClone ? elements.clone_command : elements.share_link).select();
+  elements.share_link.select();
 }
 
 async function enterProjectDashboard(replace = false) {
@@ -1426,8 +1424,7 @@ elements.editor_login.addEventListener("click", () => {
   window.history.pushState({}, "", "/login");
   showAuthPage();
 });
-elements.share_project.addEventListener("click", () => openAccessDialog(false).catch(error => showToast(error.message)));
-elements.clone_button.addEventListener("click", () => openAccessDialog(true).catch(error => showToast(error.message)));
+elements.share_project.addEventListener("click", () => openAccessDialog().catch(error => showToast(error.message)));
 elements.download_project.addEventListener("click", event => {
   event.preventDefault();
   downloadProject(state.projectId);

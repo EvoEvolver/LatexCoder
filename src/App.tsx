@@ -129,6 +129,7 @@ export function AppShell() {
           <label className="name-field flex h-9 w-36 items-center gap-2 rounded-md border bg-background px-2 max-lg:hidden"><Icon name="user-round" /><Input id="display-name" className="h-7 border-0 p-0 text-xs shadow-none focus-visible:ring-0" maxLength={28} aria-label="Display name" /></label>
           <Button id="editor-login" variant="outline" size="sm" hidden><Icon name="log-in" /><span className="max-sm:hidden">Sign in</span></Button>
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Share</span></Button>
+          <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
           <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
           <Button id="compile-button" size="sm"><Icon name="play" /><span className="max-sm:hidden">Compile</span></Button>
         </header>
@@ -146,7 +147,7 @@ export function AppShell() {
           <section className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] border-r">
             <div className="editor-toolbar flex items-center justify-between border-b bg-muted/20 px-2">
               <div className="review-actions flex items-center gap-1"><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
-              <div className="editor-actions flex items-center gap-1"><Button id="clone-button" className={toolButton} variant="ghost" size="sm"><Icon name="copy" /><span>Clone</span></Button><Button id="git-button" className={toolButton} variant="ghost" size="sm"><Icon name="git-branch" /><span>Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button><IconButton id="toggle-files" icon="panel-left" title="Files" className="mobile-files lg:hidden" /></div>
+              <div className="editor-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Files" className="mobile-files lg:hidden" /></div>
             </div>
             <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
             <div id="binary-view" className="binary-view absolute inset-x-0 bottom-0 top-11 flex flex-col items-center justify-center gap-3 bg-background text-sm text-muted-foreground" hidden><Icon name="file" /><strong id="binary-name" /><Button id="binary-download" variant="outline" asChild><a>Download</a></Button></div>
