@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,58 @@ function isTextFile(relativePath) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function randomToken(bytes = 32) {
+  return randomBytes(bytes).toString("base64url");
+}
+
+function cleanUsername(value) {
+  const username = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) {
+    throw apiError("invalid_username", "username must be 3 to 32 lowercase letters, numbers, dots, dashes, or underscores");
+  }
+  return username;
+}
+
+function validatePassword(value) {
+  if (typeof value !== "string" || value.length < 10 || value.length > 256) {
+    throw apiError("invalid_password", "password must contain 10 to 256 characters");
+  }
+  return value;
+}
+
+function passwordRecord(password) {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 64);
+  return { salt: salt.toString("base64"), hash: hash.toString("base64") };
+}
+
+function passwordMatches(password, record) {
+  try {
+    const expected = Buffer.from(record.hash, "base64");
+    const actual = scryptSync(password, Buffer.from(record.salt, "base64"), expected.length);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+function parseCookies(request) {
+  const result = {};
+  for (const part of String(request.headers.cookie || "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0) continue;
+    const name = part.slice(0, separator).trim();
+    if (!name) continue;
+    try { result[name] = decodeURIComponent(part.slice(separator + 1).trim()); } catch {}
+  }
+  return result;
+}
+
+function sessionCookie(request, name, value, maxAge) {
+  const secure = request.secure || request.get("x-forwarded-proto") === "https";
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 
 function isUnicodeBoundary(source, offset) {
@@ -802,16 +854,23 @@ LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams.
 
 ## Projects
 
-\`GET /v1/projects\` lists projects. \`POST /v1/projects\` with
-\`{"name":"My paper"}\` creates one. Rename or delete one with
+\`GET /v1/auth/me\` returns the current member. Members sign in through
+\`POST /v1/auth/login\`. \`POST /v1/invitations\` creates a single-use,
+seven-day registration link; invited users register through
+\`POST /v1/auth/register\`.
+
+Member authentication is required for \`GET /v1/projects\`, project creation,
+rename, and deletion. \`POST /v1/projects\` with \`{"name":"My paper"}\` creates
+one. Rename or delete one with
 \`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
 the first project is used for backwards compatibility.
 
-Browser routes \`/projects\` and \`/projects/:id\` provide the project list and
-shareable editor URLs. There is no account gate: anyone who can reach a project
-URL can edit it.
+Browser routes \`/projects\` and \`/projects/:id\` provide the member dashboard
+and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
+establish a project-scoped session. That session authorizes only the selected
+project and does not expose the dashboard.
 
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
@@ -824,7 +883,7 @@ two-parent merge commit.
 
 \`GET /v1/project/archive?project=<id>\` downloads the current working tree as
 a ZIP, including uncommitted files. Clone committed history over read-only
-smart HTTP with \`git clone <origin>/git/<project-id>\`.
+smart HTTP with \`git clone <origin>/git/<project-id>/<share-secret>\`.
 
 ## Inspect
 
@@ -853,7 +912,11 @@ Text files are synchronized through Yjs. Writing through the API updates connect
 
 ## Trust
 
-There is no application login. Any caller that can reach this service can read and modify every project file. LaTeX compilation is not a security sandbox; do not expose this App to untrusted users or store secrets in its project directory.
+Passwords are scrypt-hashed and share URLs are bearer secrets exchanged for
+24-hour, project-scoped sessions. Anyone holding a share URL can edit and
+reshare that project. Sessions are in memory and are cleared on restart. LaTeX
+compilation is not a security sandbox; use this service with trusted teams and
+do not store unrelated secrets in project directories.
 `;
 }
 
@@ -898,6 +961,100 @@ export async function createPaperServer(options = {}) {
   const projectsDir = path.join(stateDir, "projects");
   await mkdir(stateDir, { recursive: true });
 
+  const authDisabled = options.authDisabled === true;
+  const authPath = path.join(stateDir, "auth.json");
+  let authState = { version: 1, users: {}, invitations: {} };
+  try {
+    const stored = JSON.parse(await readFile(authPath, "utf8"));
+    authState = {
+      version: 1,
+      users: stored.users && typeof stored.users === "object" ? stored.users : {},
+      invitations: stored.invitations && typeof stored.invitations === "object" ? stored.invitations : {},
+    };
+  } catch {}
+  const saveAuth = () => {
+    atomicWriteSync(authPath, `${JSON.stringify(authState, null, 2)}\n`);
+    chmodSync(authPath, 0o600);
+  };
+  const configuredAdminPassword = options.adminPassword ?? process.env.LATEXCODER_ADMIN_PASSWORD;
+  if (!authDisabled && !Object.keys(authState.users).length && configuredAdminPassword) {
+    const password = validatePassword(configuredAdminPassword);
+    authState.users.admin = {
+      username: "admin",
+      ...passwordRecord(password),
+      createdAt: new Date().toISOString(),
+      invitedBy: null,
+    };
+    saveAuth();
+  }
+
+  const userSessions = new Map();
+  const projectSessions = new Map();
+  const loginAttempts = new Map();
+  const USER_SESSION_SECONDS = 7 * 24 * 60 * 60;
+  const PROJECT_SESSION_SECONDS = 24 * 60 * 60;
+  const INVITATION_SECONDS = 7 * 24 * 60 * 60;
+
+  function sessionRecord(request, cookieName, sessions) {
+    const token = parseCookies(request)[cookieName];
+    if (!token) return null;
+    const key = sha256(token);
+    const record = sessions.get(key);
+    if (!record || record.expiresAt <= Date.now()) {
+      sessions.delete(key);
+      return null;
+    }
+    return { key, token, record };
+  }
+
+  function currentUser(request) {
+    if (authDisabled) return { username: "test-user" };
+    return sessionRecord(request, "lc_user", userSessions)?.record.user || null;
+  }
+
+  function requireUser(request) {
+    const user = currentUser(request);
+    if (!user) throw apiError("authentication_required", "sign in to continue", 401);
+    return user;
+  }
+
+  function hasProjectAccess(request, projectId) {
+    if (currentUser(request)) return true;
+    const session = sessionRecord(request, "lc_access", projectSessions);
+    return Boolean(session?.record.projects.has(projectId));
+  }
+
+  function requireProjectAccess(request, projectId) {
+    if (!hasProjectAccess(request, projectId)) {
+      throw apiError("project_access_required", "open a valid project share link or sign in", 401);
+    }
+  }
+
+  function issueUserSession(request, response, username) {
+    const token = randomToken();
+    userSessions.set(sha256(token), {
+      user: { username },
+      expiresAt: Date.now() + USER_SESSION_SECONDS * 1000,
+    });
+    response.append("Set-Cookie", sessionCookie(request, "lc_user", token, USER_SESSION_SECONDS));
+  }
+
+  function issueProjectSession(request, response, projectId) {
+    const existing = sessionRecord(request, "lc_access", projectSessions);
+    if (existing) {
+      existing.record.projects.add(projectId);
+      existing.record.expiresAt = Date.now() + PROJECT_SESSION_SECONDS * 1000;
+      response.append("Set-Cookie", sessionCookie(request, "lc_access", existing.token, PROJECT_SESSION_SECONDS));
+      return;
+    }
+    const token = randomToken();
+    projectSessions.set(sha256(token), {
+      projects: new Set([projectId]),
+      expiresAt: Date.now() + PROJECT_SESSION_SECONDS * 1000,
+    });
+    response.append("Set-Cookie", sessionCookie(request, "lc_access", token, PROJECT_SESSION_SECONDS));
+  }
+
   // Move the original single-project layout in place on first startup.
   const legacyProjectDir = path.join(stateDir, "project");
   if (existsSync(legacyProjectDir) && !existsSync(projectsDir)) {
@@ -912,12 +1069,22 @@ export async function createPaperServer(options = {}) {
   await mkdir(projectsDir, { recursive: true });
 
   const projects = new Map();
+  function publicProjectMetadata(metadata) {
+    const result = { ...metadata };
+    delete result.shareToken;
+    return result;
+  }
+
   async function loadProject(id) {
     id = safeProjectId(id);
     if (projects.has(id)) return projects.get(id);
     const projectRoot = path.join(projectsDir, id);
     if (!existsSync(projectRoot)) throw apiError("project_not_found", "project does not exist", 404);
-    const metadata = await readProjectMetadata(projectRoot, id);
+    let metadata = await readProjectMetadata(projectRoot, id);
+    if (typeof metadata.shareToken !== "string" || metadata.shareToken.length < 32) {
+      metadata = { ...metadata, shareToken: randomToken() };
+      await writeProjectMetadata(projectRoot, metadata);
+    }
     const projectDir = path.join(projectRoot, "project");
     const buildDir = path.join(projectRoot, "build");
     await mkdir(projectDir, { recursive: true });
@@ -950,7 +1117,7 @@ export async function createPaperServer(options = {}) {
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(entry.name)) continue;
       const runtime = await loadProject(entry.name);
-      summaries.push({ ...runtime.metadata, build: { status: runtime.build.status, pdf: runtime.build.pdf } });
+      summaries.push({ ...publicProjectMetadata(runtime.metadata), build: { status: runtime.build.status, pdf: runtime.build.pdf } });
     }
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
   }
@@ -962,7 +1129,7 @@ export async function createPaperServer(options = {}) {
     let suffix = 2;
     while (existsSync(path.join(projectsDir, id))) id = `${base.slice(0, 58)}-${suffix++}`;
     const projectRoot = path.join(projectsDir, id);
-    const metadata = { id, name, createdAt: new Date().toISOString() };
+    const metadata = { id, name, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
     await writeProjectMetadata(projectRoot, metadata);
     return loadProject(id);
@@ -974,7 +1141,20 @@ export async function createPaperServer(options = {}) {
     existing = await projectSummaries();
   }
   let defaultProjectId = existing[0].id;
-  const resolveProject = request => loadProject(request.query.project || defaultProjectId);
+  const resolveProject = async request => {
+    const runtime = await loadProject(request.query.project || defaultProjectId);
+    requireProjectAccess(request, runtime.id);
+    return runtime;
+  };
+  const resolveGitProject = async request => {
+    const runtime = await loadProject(request.params.projectId);
+    if (hasProjectAccess(request, runtime.id)) return runtime;
+    const supplied = String(request.params.shareToken || "");
+    const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
+    const actual = Buffer.from(sha256(supplied), "hex");
+    if (!timingSafeEqual(expected, actual)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
+    return runtime;
+  };
 
   const expressModule = await import("express");
   const express = expressModule.default;
@@ -987,6 +1167,12 @@ export async function createPaperServer(options = {}) {
       "Content-Security-Policy",
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
     );
+    if (
+      request.path.startsWith("/v1/auth")
+      || request.path.startsWith("/v1/invitations")
+      || request.path === "/v1/project/share"
+      || request.path.startsWith("/share/")
+    ) response.setHeader("Cache-Control", "no-store");
     next();
   });
   app.get("/", (request, response) => {
@@ -1011,31 +1197,126 @@ export async function createPaperServer(options = {}) {
     }
     return response.type("text/markdown; charset=utf-8").send(manual());
   });
-  app.get(["/projects", "/projects/:projectId"], (_request, response) => {
+  app.get(["/login", "/projects", "/projects/:projectId", "/register/:token"], (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.sendFile(path.join(APP_DIR, "public", "index.html"));
   });
+  app.get("/share/:projectId/:token", async (request, response, next) => {
+    try {
+      const runtime = await loadProject(request.params.projectId);
+      const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
+      const actual = Buffer.from(sha256(String(request.params.token || "")), "hex");
+      if (!timingSafeEqual(expected, actual)) throw apiError("share_link_invalid", "project share link is invalid", 403);
+      issueProjectSession(request, response, runtime.id);
+      response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
+    } catch (error) { next(error); }
+  });
   app.get("/health", (_request, response) => response.json({ ok: true, name: "latexcoder" }));
-  app.get("/v1/projects", async (_request, response, next) => {
-    try { response.json({ projects: await projectSummaries(), defaultProjectId }); }
+  app.get("/v1/auth/me", (request, response) => {
+    response.json({
+      user: currentUser(request),
+      invitationOnly: true,
+      bootstrapReady: Object.keys(authState.users).length > 0,
+    });
+  });
+  app.post("/v1/auth/login", express.json({ limit: "16kb" }), (request, response, next) => {
+    try {
+      const attemptKey = request.ip || request.socket.remoteAddress || "unknown";
+      let attempts = loginAttempts.get(attemptKey);
+      if (!attempts || attempts.resetAt <= Date.now()) {
+        attempts = { count: 0, resetAt: Date.now() + 15 * 60 * 1000 };
+        loginAttempts.set(attemptKey, attempts);
+      }
+      if (attempts.count >= 10) throw apiError("login_rate_limited", "too many login attempts; try again later", 429);
+      const username = cleanUsername(request.body?.username);
+      const user = Object.hasOwn(authState.users, username) ? authState.users[username] : null;
+      if (!user || !passwordMatches(request.body?.password, user)) {
+        attempts.count += 1;
+        throw apiError("invalid_credentials", "username or password is incorrect", 401);
+      }
+      loginAttempts.delete(attemptKey);
+      issueUserSession(request, response, username);
+      response.json({ user: { username } });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/auth/logout", (request, response) => {
+    const session = sessionRecord(request, "lc_user", userSessions);
+    if (session) userSessions.delete(session.key);
+    response.append("Set-Cookie", sessionCookie(request, "lc_user", "", 0));
+    response.json({ user: null });
+  });
+  app.get("/v1/invitations/:token", (request, response, next) => {
+    try {
+      const invitation = authState.invitations[sha256(String(request.params.token || ""))];
+      const valid = invitation && !invitation.usedAt && Date.parse(invitation.expiresAt) > Date.now();
+      if (!valid) throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
+      response.json({ invitation: { invitedBy: invitation.createdBy, expiresAt: invitation.expiresAt } });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/invitations", (request, response, next) => {
+    try {
+      const user = requireUser(request);
+      const token = randomToken();
+      const createdAt = new Date();
+      authState.invitations[sha256(token)] = {
+        createdBy: user.username,
+        createdAt: createdAt.toISOString(),
+        expiresAt: new Date(createdAt.getTime() + INVITATION_SECONDS * 1000).toISOString(),
+        usedAt: null,
+      };
+      saveAuth();
+      response.status(201).json({ invitation: { token, path: `/register/${token}` } });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/auth/register", express.json({ limit: "16kb" }), (request, response, next) => {
+    try {
+      const token = String(request.body?.token || "");
+      const invitation = authState.invitations[sha256(token)];
+      if (!invitation || invitation.usedAt || Date.parse(invitation.expiresAt) <= Date.now()) {
+        throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
+      }
+      const username = cleanUsername(request.body?.username);
+      if (Object.hasOwn(authState.users, username)) throw apiError("username_taken", "username is already registered", 409);
+      const password = validatePassword(request.body?.password);
+      authState.users[username] = {
+        username,
+        ...passwordRecord(password),
+        createdAt: new Date().toISOString(),
+        invitedBy: invitation.createdBy,
+      };
+      invitation.usedAt = new Date().toISOString();
+      invitation.usedBy = username;
+      saveAuth();
+      issueUserSession(request, response, username);
+      response.status(201).json({ user: { username } });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/projects", async (request, response, next) => {
+    try {
+      requireUser(request);
+      response.json({ projects: await projectSummaries(), defaultProjectId });
+    }
     catch (error) { next(error); }
   });
   app.post("/v1/projects", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
+      requireUser(request);
       const runtime = await createProject(request.body?.name);
-      response.status(201).json({ project: { ...runtime.metadata, build: runtime.build } });
+      response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
     } catch (error) { next(error); }
   });
   app.patch("/v1/projects/:projectId", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
+      requireUser(request);
       const runtime = await loadProject(request.params.projectId);
       runtime.metadata = { ...runtime.metadata, name: cleanProjectName(request.body?.name) };
       await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
-      response.json({ project: runtime.metadata });
+      response.json({ project: publicProjectMetadata(runtime.metadata) });
     } catch (error) { next(error); }
   });
   app.delete("/v1/projects/:projectId", async (request, response, next) => {
     try {
+      requireUser(request);
       const runtime = await loadProject(request.params.projectId);
       await waitForGitReaders(runtime);
       runtime.collaboration.shutdown();
@@ -1054,7 +1335,16 @@ export async function createPaperServer(options = {}) {
   app.get("/v1/project", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      response.json({ project: { ...runtime.metadata, main: runtime.build.main, files: await listFiles(runtime.projectDir), build: runtime.build } });
+      response.json({ project: { ...publicProjectMetadata(runtime.metadata), main: runtime.build.main, files: await listFiles(runtime.projectDir), build: runtime.build } });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/project/share", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      response.json({ share: {
+        path: `/share/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
+        clonePath: `/git/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
+      } });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/archive", async (request, response, next) => {
@@ -1104,10 +1394,10 @@ export async function createPaperServer(options = {}) {
       response.json({ git: payload });
     } catch (error) { next(error); }
   });
-  app.get("/git/:projectId/info/refs", async (request, response, next) => {
+  app.get(["/git/:projectId/info/refs", "/git/:projectId/:shareToken/info/refs"], async (request, response, next) => {
     try {
       if (request.query.service !== "git-upload-pack") throw apiError("git_service_invalid", "only git-upload-pack is available", 400);
-      const runtime = await loadProject(request.params.projectId);
+      const runtime = await resolveGitProject(request);
       const advertised = await withGitReader(runtime, () => gitUploadPack(
         runtime,
         ["--advertise-refs"],
@@ -1119,9 +1409,9 @@ export async function createPaperServer(options = {}) {
       response.send(Buffer.concat([Buffer.from("001e# service=git-upload-pack\n0000"), advertised]));
     } catch (error) { next(error); }
   });
-  app.post("/git/:projectId/git-upload-pack", express.raw({ type: () => true, limit: "2mb" }), async (request, response, next) => {
+  app.post(["/git/:projectId/git-upload-pack", "/git/:projectId/:shareToken/git-upload-pack"], express.raw({ type: () => true, limit: "2mb" }), async (request, response, next) => {
     try {
-      const runtime = await loadProject(request.params.projectId);
+      const runtime = await resolveGitProject(request);
       const result = await withGitReader(runtime, () => gitUploadPack(
         runtime,
         [],
@@ -1316,6 +1606,7 @@ export async function createPaperServer(options = {}) {
       const parts = url.pathname.slice(prefix.length).split("/").map(decodeURIComponent);
       const scoped = parts.length > 1;
       const runtime = await loadProject(scoped ? parts[0] : defaultProjectId);
+      requireProjectAccess(request, runtime.id);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
       sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath));
     })().catch(() => {

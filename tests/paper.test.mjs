@@ -38,9 +38,9 @@ async function createIncomingBranch(projectDir, branch, mutate) {
   }
 }
 
-async function withServer(run) {
+async function withServer(run, options = {}) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-test-"));
-  const paper = await createPaperServer({ stateDir });
+  const paper = await createPaperServer({ stateDir, authDisabled: true, ...options });
   await new Promise((resolve, reject) => {
     paper.server.once("error", reject);
     paper.server.listen(0, "127.0.0.1", resolve);
@@ -180,6 +180,87 @@ test("projects isolate files and support lifecycle operations", async () => {
     const remaining = await (await fetch(`${base}/v1/projects`)).json();
     assert.deepEqual(remaining.projects.map(project => project.id), [originalId]);
   });
+});
+
+test("invite-only users and project capability sessions enforce access boundaries", async () => {
+  const adminPassword = "correct horse battery staple";
+  await withServer(async ({ base, stateDir }) => {
+    assert.equal((await fetch(`${base}/v1/projects`)).status, 401);
+    const badLogin = await fetch(`${base}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "wrong password" }),
+    });
+    assert.equal(badLogin.status, 401);
+
+    const login = await fetch(`${base}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: adminPassword }),
+    });
+    assert.equal(login.status, 200);
+    const adminCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    assert.equal((await login.json()).user.username, "admin");
+
+    const listed = await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } });
+    assert.equal(listed.status, 200);
+    const initialProject = (await listed.json()).defaultProjectId;
+    assert.equal((await fetch(`${base}/v1/invitations`, { method: "POST" })).status, 401);
+    const invitationResponse = await fetch(`${base}/v1/invitations`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(invitationResponse.status, 201);
+    const invitation = (await invitationResponse.json()).invitation;
+    assert.match(invitation.path, /^\/register\/[A-Za-z0-9_-]+$/);
+
+    const registration = await fetch(`${base}/v1/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: invitation.token, username: "member.one", password: "another secure password" }),
+    });
+    assert.equal(registration.status, 201);
+    const memberCookie = registration.headers.get("set-cookie").split(";", 1)[0];
+    const reused = await fetch(`${base}/v1/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: invitation.token, username: "member.two", password: "another secure password" }),
+    });
+    assert.equal(reused.status, 404);
+
+    const createdResponse = await fetch(`${base}/v1/projects`, {
+      method: "POST",
+      headers: { Cookie: memberCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Shared Capability" }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const project = (await createdResponse.json()).project;
+    assert.equal((await fetch(`${base}/v1/project?project=${project.id}`)).status, 401);
+
+    const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { headers: { Cookie: memberCookie } });
+    const share = (await shareResponse.json()).share;
+    const exchange = await fetch(`${base}${share.path}`, { redirect: "manual" });
+    assert.equal(exchange.status, 303);
+    assert.equal(exchange.headers.get("location"), `/projects/${project.id}`);
+    const projectCookie = exchange.headers.get("set-cookie").split(";", 1)[0];
+    assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: projectCookie } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/projects`, { headers: { Cookie: projectCookie } })).status, 401);
+
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-private-clone-"));
+    try {
+      assert.notEqual((await fetch(`${base}/git/${project.id}/info/refs?service=git-upload-pack`)).status, 200);
+      await execFileAsync("git", ["clone", `${base}${share.clonePath}`, temporary]);
+      assert.equal(await testGit(temporary, ["branch", "--show-current"]), "main");
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+
+    const storedAuth = await readFile(path.join(stateDir, "auth.json"), "utf8");
+    assert.doesNotMatch(storedAuth, new RegExp(adminPassword));
+    assert.doesNotMatch(storedAuth, /another secure password/);
+    assert.match(storedAuth, /"hash"/);
+    assert.ok(initialProject);
+  }, { authDisabled: false, adminPassword });
 });
 
 test("project ZIP includes live files and Git HTTP serves cloneable history", async () => {
@@ -355,7 +436,7 @@ test("legacy single-project state migrates without changing source files", async
   const legacyProject = path.join(stateDir, "project");
   await mkdir(legacyProject, { recursive: true });
   await writeFile(path.join(legacyProject, "main.tex"), "legacy source\n", "utf8");
-  const paper = await createPaperServer({ stateDir });
+  const paper = await createPaperServer({ stateDir, authDisabled: true });
   try {
     assert.equal(await readFile(path.join(stateDir, "projects", "paper", "project", "main.tex"), "utf8"), "legacy source\n");
     assert.equal(paper.projectDir, path.join(stateDir, "projects", "paper", "project"));

@@ -45,6 +45,8 @@ import {
   GitPullRequestCreateArrow,
   Image,
   Link,
+  LogIn,
+  LogOut,
   MessageSquarePlus,
   MoreHorizontal,
   PanelLeft,
@@ -54,6 +56,7 @@ import {
   TerminalSquare,
   Trash2,
   Upload,
+  UserPlus,
   UserRound,
   X,
   ZoomIn,
@@ -84,6 +87,8 @@ const ICONS = {
     GitPullRequestCreateArrow,
     Image,
     Link,
+    LogIn,
+    LogOut,
     MessageSquarePlus,
     MoreHorizontal,
     PanelLeft,
@@ -93,6 +98,7 @@ const ICONS = {
     TerminalSquare,
     Trash2,
     Upload,
+    UserPlus,
     UserRound,
     X,
     ZoomIn,
@@ -108,9 +114,11 @@ const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 const elements = Object.fromEntries([
   "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "back-projects",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
+  "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
   "build-log", "build-output", "clone-button", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "delete-file", "display-name", "download-project",
-  "editor-page", "editor", "empty-output", "file-list", "file-menu", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
+  "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-menu", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
+  "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "rename-file", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
@@ -131,6 +139,8 @@ const state = {
   activeFile: "main.tex",
   projectId: "",
   projects: [],
+  user: null,
+  bootstrapReady: true,
   git: null,
   main: "main.tex",
   files: [],
@@ -268,7 +278,12 @@ async function request(relative, options = {}) {
   const response = await fetch(url, options);
   const type = response.headers.get("content-type") || "";
   const body = type.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(body?.error?.message || body || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || body || `Request failed (${response.status})`);
+    error.code = body?.error?.code || "request_failed";
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -856,6 +871,11 @@ function randomId() {
 
 async function refreshProject(open = false) {
   const data = await request("v1/project");
+  const known = state.projects.find(project => project.id === data.project.id);
+  if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt });
+  else state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt });
+  elements.project_name.textContent = data.project.name;
+  document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
   state.files = data.project.files;
   renderFiles();
@@ -941,18 +961,52 @@ function routeProjectId() {
   return new URLSearchParams(window.location.search).get("project") || "";
 }
 
+function routeInvitationToken() {
+  const match = window.location.pathname.match(/^\/register\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function showAuthPage(mode = "login", description = "") {
+  disconnectEditor();
+  elements.projects_page.hidden = true;
+  elements.editor_page.hidden = true;
+  elements.auth_page.hidden = false;
+  elements.auth_error.hidden = true;
+  elements.auth_error.textContent = "";
+  elements.auth_submit.disabled = false;
+  elements.auth_password.value = "";
+  const registering = mode === "register";
+  elements.auth_title.textContent = registering ? "Join the team" : "Sign in";
+  elements.auth_description.textContent = description || (registering
+    ? "Choose an account for this invitation."
+    : state.bootstrapReady
+      ? "Core team members can sign in to manage projects."
+      : "Set LATEXCODER_ADMIN_PASSWORD and restart the service to create the initial admin account.");
+  elements.auth_submit.querySelector("span").textContent = registering ? "Create account" : "Sign in";
+  elements.auth_password.autocomplete = registering ? "new-password" : "current-password";
+  document.title = `${registering ? "Join" : "Sign in"} · LaTeX Coder`;
+  elements.auth_username.focus();
+}
+
 function showProjectsPage(push = true) {
+  if (!state.user) {
+    if (push) window.history.pushState({}, "", "/login");
+    showAuthPage();
+    return;
+  }
   disconnectEditor();
   if (elements.git_dialog.open) elements.git_dialog.close();
   if (elements.access_dialog.open) elements.access_dialog.close();
   elements.editor_page.hidden = true;
   elements.projects_page.hidden = false;
+  elements.auth_page.hidden = true;
   if (push && window.location.pathname !== "/projects") window.history.pushState({}, "", "/projects");
   document.title = "Projects · LaTeX Coder";
 }
 
 async function openProjectPage(projectId, push = true) {
-  const project = state.projects.find(candidate => candidate.id === projectId);
+  const project = state.projects.find(candidate => candidate.id === projectId)
+    || (!state.user ? { id: projectId, name: projectId } : null);
   if (!project) {
     showProjectsPage(false);
     throw new Error("Project does not exist");
@@ -960,11 +1014,14 @@ async function openProjectPage(projectId, push = true) {
   const changed = projectId !== state.projectId;
   if (changed) disconnectEditor();
   elements.projects_page.hidden = true;
+  elements.auth_page.hidden = true;
   elements.editor_page.hidden = false;
   state.projectId = projectId;
   elements.project_name.textContent = project.name;
   elements.download_project.href = projectApiUrl("v1/project/archive");
   elements.download_project.download = `${project.id}.zip`;
+  elements.back_projects.hidden = !state.user;
+  elements.editor_login.hidden = Boolean(state.user);
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
   document.title = `${project.name} · LaTeX Coder`;
   if (!changed && state.view) return;
@@ -1230,11 +1287,12 @@ async function copyText(value, message) {
   showToast(message);
 }
 
-function openAccessDialog(focusClone = false) {
+async function openAccessDialog(focusClone = false) {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
-  const shareUrl = `${window.location.origin}${projectPageUrl(project.id)}`;
-  const cloneUrl = `${window.location.origin}/git/${encodeURIComponent(project.id)}`;
+  const result = await request("v1/project/share");
+  const shareUrl = `${window.location.origin}${result.share.path}`;
+  const cloneUrl = `${window.location.origin}${result.share.clonePath}`;
   elements.access_project_name.textContent = project.name;
   elements.share_link.value = shareUrl;
   elements.clone_command.value = `git clone ${cloneUrl}`;
@@ -1244,15 +1302,59 @@ function openAccessDialog(focusClone = false) {
   (focusClone ? elements.clone_command : elements.share_link).select();
 }
 
+async function enterProjectDashboard(replace = false) {
+  await refreshProjects();
+  elements.current_user.textContent = state.user?.username || "";
+  if (replace) window.history.replaceState({}, "", "/projects");
+  showProjectsPage(false);
+}
+
+async function createInvitation() {
+  try {
+    const result = await request("v1/invitations", { method: "POST" });
+    elements.invite_link.value = `${window.location.origin}${result.invitation.path}`;
+    if (!elements.invite_dialog.open) elements.invite_dialog.showModal();
+    elements.invite_link.select();
+  } catch (error) { showToast(error.message); }
+}
+
 elements.display_name.value = localStorage.getItem("paper-display-name") || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
 elements.display_name.addEventListener("change", () => {
   elements.display_name.value = cleanMetadata(displayName()).slice(0, 28) || "Guest";
   localStorage.setItem("paper-display-name", elements.display_name.value);
   setAwareness();
 });
+elements.auth_form.addEventListener("submit", async event => {
+  event.preventDefault();
+  elements.auth_submit.disabled = true;
+  elements.auth_error.hidden = true;
+  try {
+    const token = routeInvitationToken();
+    const result = await request(token ? "v1/auth/register" : "v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: token || undefined,
+        username: elements.auth_username.value,
+        password: elements.auth_password.value,
+      }),
+    });
+    state.user = result.user;
+    await enterProjectDashboard(true);
+  } catch (error) {
+    elements.auth_error.textContent = error.message;
+    elements.auth_error.hidden = false;
+  } finally {
+    elements.auth_submit.disabled = false;
+  }
+});
 elements.back_projects.addEventListener("click", () => showProjectsPage());
-elements.share_project.addEventListener("click", () => openAccessDialog(false));
-elements.clone_button.addEventListener("click", () => openAccessDialog(true));
+elements.editor_login.addEventListener("click", () => {
+  window.history.pushState({}, "", "/login");
+  showAuthPage();
+});
+elements.share_project.addEventListener("click", () => openAccessDialog(false).catch(error => showToast(error.message)));
+elements.clone_button.addEventListener("click", () => openAccessDialog(true).catch(error => showToast(error.message)));
 elements.download_project.addEventListener("click", event => {
   event.preventDefault();
   downloadProject(state.projectId);
@@ -1265,6 +1367,22 @@ elements.access_dialog.addEventListener("cancel", event => {
 });
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
+elements.invite_user.addEventListener("click", createInvitation);
+elements.invite_regenerate.addEventListener("click", createInvitation);
+elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());
+elements.invite_done.addEventListener("click", () => elements.invite_dialog.close());
+elements.invite_dialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  elements.invite_dialog.close();
+});
+elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, "Invitation link copied."));
+elements.logout_button.addEventListener("click", async () => {
+  await request("v1/auth/logout", { method: "POST" }).catch(() => null);
+  state.user = null;
+  state.projects = [];
+  window.history.replaceState({}, "", "/login");
+  showAuthPage();
+});
 elements.git_button.addEventListener("click", async () => {
   elements.git_dialog.showModal();
   await refreshGit();
@@ -1414,11 +1532,35 @@ elements.delete_file.addEventListener("click", async () => {
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
 document.querySelectorAll("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
 window.addEventListener("beforeunload", disconnectEditor);
-window.addEventListener("popstate", () => {
+async function routeApp() {
+  const invitationToken = routeInvitationToken();
+  if (invitationToken) {
+    try {
+      const result = await request(`v1/invitations/${encodeURIComponent(invitationToken)}`);
+      showAuthPage("register", `Invited by ${result.invitation.invitedBy}. Choose an account to join the core team.`);
+    } catch (error) {
+      showAuthPage("register", error.message);
+      elements.auth_submit.disabled = true;
+    }
+    return;
+  }
   const projectId = routeProjectId();
-  if (projectId) openProjectPage(projectId, false).catch(error => showToast(error.message));
-  else showProjectsPage(false);
-});
+  if (projectId) {
+    if (state.user && !state.projects.length) await refreshProjects();
+    await openProjectPage(projectId, false);
+    return;
+  }
+  if (state.user) {
+    await enterProjectDashboard(false);
+    return;
+  }
+  showAuthPage();
+}
+
+window.addEventListener("popstate", () => routeApp().catch(error => {
+  showAuthPage();
+  showToast(error.message);
+}));
 
 if (testMode) {
   elements.editor_page.hidden = false;
@@ -1444,11 +1586,16 @@ if (testMode) {
   };
 } else {
   if (e2eMode) window.__paperE2E = { state };
-  refreshProjects().then(data => {
-    const requested = routeProjectId();
-    if (requested) return openProjectPage(requested, false);
-    if (e2eMode) return openProjectPage(data.defaultProjectId || state.projects[0]?.id, false);
-    showProjectsPage(false);
-    if (window.location.pathname !== "/projects") window.history.replaceState({}, "", "/projects");
-  }).catch(error => showToast(error.message));
+  request("v1/auth/me").then(async auth => {
+    state.user = auth.user;
+    state.bootstrapReady = auth.bootstrapReady;
+    if (e2eMode && state.user && !routeProjectId()) {
+      const data = await refreshProjects();
+      return openProjectPage(data.defaultProjectId || state.projects[0]?.id, false);
+    }
+    return routeApp();
+  }).catch(error => {
+    showAuthPage();
+    showToast(error.message);
+  });
 }

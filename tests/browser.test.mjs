@@ -11,9 +11,9 @@ import { createPaperServer } from "../server.mjs";
 // Drives the real bundled LaTeX Coder editor in headless Chromium against the real
 // server, so these tests exercise the exact suggesting-mode transaction
 // filter, keymap, and DOM that users hit in the browser.
-async function withEditor(run) {
+async function withEditor(run, options = {}) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-e2e-"));
-  const paper = await createPaperServer({ stateDir });
+  const paper = await createPaperServer({ stateDir, authDisabled: true, ...options });
   await new Promise((resolve, reject) => {
     paper.server.once("error", reject);
     paper.server.listen(0, "127.0.0.1", resolve);
@@ -25,7 +25,7 @@ async function withEditor(run) {
     page.setDefaultTimeout(5000);
     await page.goto(`${base}/?test=1`);
     await page.waitForFunction(() => globalThis.__paperTest);
-    await run({ page, base });
+    await run({ page, base, browser });
     await page.close();
   } finally {
     await browser.close();
@@ -275,8 +275,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(page.url(), /\/projects\/compact-project$/);
 
     await page.locator("#share-project").click();
-    assert.equal(await page.locator("#share-link").inputValue(), `${base}/projects/compact-project`);
-    assert.equal(await page.locator("#clone-command").inputValue(), `git clone ${base}/git/compact-project`);
+    await page.locator("#access-dialog").waitFor();
+    assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/compact-project/[A-Za-z0-9_-]+$`));
+    assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/compact-project/[A-Za-z0-9_-]+$`));
     await page.locator("#access-close").click();
 
     await page.locator("#new-file").click();
@@ -304,6 +305,54 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForFunction(() => ![...document.querySelectorAll(".project-row")].some(item => item.textContent.includes("Compact Project")));
     await page.locator("#toast", { hasText: "Project deleted." }).waitFor();
   });
+});
+
+test("login, invitations, and capability links separate members from guests", async () => {
+  await withEditor(async ({ page, base, browser }) => {
+    await page.goto(`${base}/`);
+    await page.locator("#auth-page").waitFor();
+    await page.locator("#auth-username").fill("admin");
+    await page.locator("#auth-password").fill("browser admin password");
+    await page.locator("#auth-submit").click();
+    await page.locator("#projects-page").waitFor();
+    assert.equal(await page.locator("#current-user").textContent(), "admin");
+    assert.equal(await page.locator("#new-project").isVisible(), true);
+
+    await page.locator("#invite-user").click();
+    await page.locator("#invite-dialog").waitFor();
+    const invitationLink = await page.locator("#invite-link").inputValue();
+    assert.match(invitationLink, new RegExp(`^${base}/register/[A-Za-z0-9_-]+$`));
+    await page.locator("#invite-close").click();
+
+    await page.locator(".project-row-main button").first().click();
+    await page.locator("#share-project").click();
+    await page.locator("#access-dialog").waitFor();
+    const shareLink = await page.locator("#share-link").inputValue();
+
+    const guest = await browser.newPage();
+    await guest.goto(shareLink);
+    await guest.waitForURL(/\/projects\/paper$/);
+    await guest.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    assert.equal(await guest.locator("#back-projects").isHidden(), true);
+    assert.equal(await guest.locator("#editor-login").isVisible(), true);
+    assert.equal(await guest.evaluate(() => fetch("/v1/projects").then(response => response.status)), 401);
+
+    const uninvited = await browser.newPage();
+    await uninvited.goto(`${base}/projects/paper`);
+    await uninvited.locator("#auth-page").waitFor();
+    assert.equal(await uninvited.locator("#auth-title").textContent(), "Sign in");
+
+    const invited = await browser.newPage();
+    await invited.goto(invitationLink);
+    await invited.locator("#auth-page").waitFor();
+    assert.equal(await invited.locator("#auth-title").textContent(), "Join the team");
+    await invited.locator("#auth-username").fill("browser.member");
+    await invited.locator("#auth-password").fill("browser member password");
+    await invited.locator("#auth-submit").click();
+    await invited.locator("#projects-page").waitFor();
+    assert.equal(await invited.locator("#current-user").textContent(), "browser.member");
+    assert.equal(await invited.locator("#new-project").isVisible(), true);
+  }, { authDisabled: false, adminPassword: "browser admin password" });
 });
 
 test("suggesting keeps the caret before a Backspace deletion", async () => {

@@ -10,8 +10,20 @@
 body { margin: 0; overflow: hidden; }
 button, input, textarea { font: inherit; color: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
+.auth-page { display: grid; min-height: 100dvh; place-items: center; padding: 24px; background: #eef0ec; }
+.auth-panel { width: min(390px, 100%); }
+.auth-panel > .brand { justify-content: center; margin-bottom: 22px; }
+.auth-panel form { display: flex; flex-direction: column; padding: 24px; border: 1px solid #d9ddd6; border-radius: 8px; background: #fff; box-shadow: 0 12px 36px rgb(25 30 24 / 8%); }
+.auth-panel h1 { margin: 0; font: 600 25px/1.2 Georgia, "Times New Roman", serif; }
+.auth-panel form > p { margin: 7px 0 20px; color: #737970; font-size: 12px; line-height: 1.5; }
+.auth-panel label { margin: 0 0 6px; color: #626860; font-size: 11px; font-weight: 650; }
+.auth-panel .dialog-input { margin-bottom: 14px; }
+.auth-panel .primary-button { margin-top: 4px; }
+.auth-panel .auth-error { margin: -3px 0 12px; color: #a73535; }
 .projects-page { min-height: 100dvh; overflow: auto; background: #f4f5f2; }
 .projects-header { display: flex; height: 58px; align-items: center; justify-content: space-between; padding: 0 max(20px, calc((100vw - 1040px) / 2)); border-bottom: 1px solid #dfe1dc; background: #fff; }
+.projects-account { display: flex; align-items: center; gap: 7px; }
+.projects-account > span { max-width: 140px; overflow: hidden; color: #646a62; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .projects-main { width: min(100% - 32px, 1040px); margin: 0 auto; padding: 44px 0 72px; }
 .projects-title { margin-bottom: 22px; }
 .projects-title h1 { margin: 0; font: 600 27px/1.2 Georgia, "Times New Roman", serif; }
@@ -215,6 +227,9 @@ dialog footer { justify-content: flex-end; gap: 7px; margin-top: 14px; }
   .topbar-action { width: 34px; padding: 0; }
   .topbar-action span { display: none; }
   .projects-main { width: min(100% - 20px, 1040px); padding-top: 26px; }
+  .projects-header { padding: 0 10px; }
+  .projects-account > span, .projects-account .secondary-button span { display: none; }
+  .projects-account .secondary-button { width: 34px; padding: 0; }
   .project-row { grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; padding-left: 10px; }
   .project-row > .secondary-button { display: none; }
   .copy-row { grid-template-columns: minmax(0, 1fr); }

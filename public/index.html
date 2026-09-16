@@ -6,13 +6,34 @@
     <meta name="color-scheme" content="light">
     <title>LaTeX Coder</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/styles.css?v=20260915-3">
+    <link rel="stylesheet" href="/styles.css?v=20260915-4">
   </head>
   <body>
+    <div class="auth-page" id="auth-page" hidden>
+      <main class="auth-panel">
+        <div class="brand"><i data-lucide="file-text"></i><strong>LaTeX Coder</strong></div>
+        <form id="auth-form">
+          <h1 id="auth-title">Sign in</h1>
+          <p id="auth-description">Core team members can sign in to manage projects.</p>
+          <label for="auth-username">Username</label>
+          <input class="dialog-input" id="auth-username" autocomplete="username" required>
+          <label for="auth-password">Password</label>
+          <input class="dialog-input" id="auth-password" type="password" autocomplete="current-password" minlength="10" required>
+          <p class="auth-error" id="auth-error" hidden></p>
+          <button class="primary-button" id="auth-submit" type="submit"><i data-lucide="log-in"></i><span>Sign in</span></button>
+        </form>
+      </main>
+    </div>
+
     <div class="projects-page" id="projects-page" hidden>
       <header class="projects-header">
         <div class="brand"><i data-lucide="file-text"></i><strong>LaTeX Coder</strong></div>
-        <button class="primary-button" id="new-project"><i data-lucide="folder-plus"></i><span>New project</span></button>
+        <div class="projects-account">
+          <span id="current-user"></span>
+          <button class="secondary-button" id="invite-user"><i data-lucide="user-plus"></i><span>Invite</span></button>
+          <button class="primary-button" id="new-project"><i data-lucide="folder-plus"></i><span>New project</span></button>
+          <button class="icon-button" id="logout-button" title="Sign out"><i data-lucide="log-out"></i></button>
+        </div>
       </header>
       <main class="projects-main">
         <div class="projects-title"><div><h1>Projects</h1><p>Open a paper or start a new one.</p></div></div>
@@ -30,6 +51,7 @@
         <div class="document-name"><span id="active-file-label">main.tex</span><span id="sync-state">Connecting</span></div>
         <div class="presence" id="presence" aria-label="Active collaborators"></div>
         <label class="name-field"><i data-lucide="user-round"></i><input id="display-name" maxlength="28" aria-label="Display name"></label>
+        <button class="secondary-button topbar-action" id="editor-login" hidden><i data-lucide="log-in"></i><span>Sign in</span></button>
         <button class="secondary-button topbar-action" id="share-project"><i data-lucide="link"></i><span>Share</span></button>
         <a class="icon-button" id="download-project" title="Download project ZIP"><i data-lucide="archive"></i></a>
         <button class="primary-button" id="compile-button"><i data-lucide="play"></i><span>Compile</span></button>
@@ -161,6 +183,17 @@
         <footer><a class="secondary-button" id="access-download"><i data-lucide="archive"></i>Download ZIP</a><button class="primary-button" id="access-done" type="button">Done</button></footer>
       </div>
     </dialog>
-    <script type="module" src="/app.js?v=20260915-3"></script>
+    <dialog class="access-dialog" id="invite-dialog">
+      <div class="access-dialog-body">
+        <header><div><strong>Invite a team member</strong></div><button class="icon-button" id="invite-close" type="button" title="Close"><i data-lucide="x"></i></button></header>
+        <section>
+          <label for="invite-link">Registration link</label>
+          <p>This single-use link expires in seven days. The new user can manage projects and invite others.</p>
+          <div class="copy-row"><input class="dialog-input" id="invite-link" readonly><button class="secondary-button" id="copy-invite-link" type="button"><i data-lucide="copy"></i>Copy</button></div>
+        </section>
+        <footer><button class="secondary-button" id="invite-regenerate" type="button"><i data-lucide="refresh-cw"></i>New link</button><button class="primary-button" id="invite-done" type="button">Done</button></footer>
+      </div>
+    </dialog>
+    <script type="module" src="/app.js?v=20260915-4"></script>
   </body>
 </html>

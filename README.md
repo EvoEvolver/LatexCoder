@@ -3,11 +3,15 @@
 LaTeX Coder is a small, collaborative, filesystem-backed LaTeX editor. One
 Node process serves the browser editor, project APIs, and Yjs WebSocket rooms.
 Each project keeps ordinary source files, collaboration snapshots, and build
-artifacts in an isolated directory. There is no account system or database.
+artifacts in an isolated directory. A small invite-only user system protects
+the project dashboard, while capability links give guests access to individual
+projects without requiring an account or database.
 
 ## Features
 
 - A multi-project dashboard with stable, shareable editor URLs.
+- Invite-only core-team accounts for project creation and management, plus
+  password-bearing share links that establish scoped guest sessions.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Inline comments and tracked suggestions encoded as explicit LaTeX macros.
   Humans and agents see and edit the same review state through ordinary source
@@ -27,7 +31,7 @@ artifacts in an isolated directory. There is no account system or database.
 | LaTeX Coder | Overleaf |
 | --- | --- |
 | **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
-| **Access:** A project link grants edit access to anyone who can reach the server. There are currently no accounts, roles, or private share tokens. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
+| **Access:** Invite-only members manage all projects. Guests exchange a high-entropy project link for a scoped HttpOnly session and never see the project dashboard. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
 | **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
@@ -51,7 +55,7 @@ and [project downloads][overleaf-download].
 ```sh
 npm install
 npm test
-npm start
+LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' npm start
 ```
 
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
@@ -60,13 +64,21 @@ change the listener. State defaults to `.latexcoder/`; set
 or `latexmk`. The older `PAPER_*` names remain supported as fallbacks. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
 
+On an empty state directory, `LATEXCODER_ADMIN_PASSWORD` creates the initial
+`admin` user. The password must contain at least 10 characters. It is hashed
+with `scrypt` in `.latexcoder/auth.json` and is ignored after the first user has
+been created. Signed-in users can generate single-use registration links for
+additional team members; invitations expire after seven days.
+
 ## Projects
 
-The browser opens on a dedicated project page. Opening a project uses the
-shareable URL `/projects/<project-id>`; anyone who can reach the server can use
-that URL to edit. Rename, download, and delete actions live in each project's
-overflow menu so destructive actions are not primary controls. Project state
-is stored beneath:
+Signed-in users open on a dedicated project dashboard and can create projects.
+Guests enter through `/share/<project-id>/<secret>`; the server exchanges that
+secret for a 24-hour, project-scoped HttpOnly session and redirects to the clean
+editor URL `/projects/<project-id>`. Guests can edit that project but cannot list
+or create projects. Rename, download, and delete actions live in each project's
+overflow menu so destructive actions are not primary controls. Project state is
+stored beneath:
 
 ```text
 .latexcoder/projects/<project-id>/
@@ -98,7 +110,7 @@ commit and remove the quarantine branch.
 The editor's **Clone** action exposes a read-only smart HTTP endpoint:
 
 ```sh
-git clone http://127.0.0.1:8090/git/<project-id>
+git clone http://127.0.0.1:8090/git/<project-id>/<share-secret>
 ```
 
 Cloning returns committed history. **Download ZIP** instead packages the live
@@ -108,11 +120,12 @@ index or creating a commit.
 ## Agent API
 
 `GET /` with `Accept: text/markdown` returns the live API manual. Project file
-and build routes take a `project=<id>` query parameter. For example:
+and build routes take a `project=<id>` query parameter. Agents must provide a
+member session or exchange a project share link for a scoped cookie. For example:
 
 ```sh
-curl http://127.0.0.1:8090/v1/projects
-curl 'http://127.0.0.1:8090/v1/project?project=my-paper'
+curl -c session.txt -L 'http://127.0.0.1:8090/share/my-paper/<share-secret>'
+curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=my-paper'
 ```
 
 Agents can submit checked UTF-16 edits through
@@ -121,6 +134,10 @@ edit as inline review storage; direct mode bypasses review creation.
 
 ## Trust Boundary
 
-LaTeX Coder has no application authentication. Any caller able to reach it can
-read or modify every project. Compilation is not a security sandbox. Run it
-only for trusted users and do not place secrets in project directories.
+Member passwords are hashed, invitation tokens are single-use, and share links
+are high-entropy bearer secrets exchanged for project-scoped sessions. This is
+basic access control, not a hardened multi-tenant security boundary: anyone who
+has a share link can edit and reshare that project. Sessions are kept in memory
+and expire or are lost on restart. LaTeX compilation is not a security sandbox;
+run the service for trusted teams and do not place unrelated secrets in project
+directories.
