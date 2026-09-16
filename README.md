@@ -193,7 +193,9 @@ curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=<project-id>'
 
 Agents can submit checked UTF-16 edits through
 `POST /v1/files/patch?project=<id>&path=main.tex`. Suggesting mode records the
-edit as inline review storage; direct mode bypasses review creation.
+edit as inline review storage; direct mode bypasses review creation. The Agent
+workspace instructs agents to write raw LaTeX to a temporary file and serialize
+it with `jq --rawfile`, avoiding hand-written JSON escaping errors.
 
 Registered project members can copy their own capability-bearing Agent workspace URL from the
 **Collaborate** dialog. Opening `/agent/<project-id>/<share-secret>` returns a

@@ -373,6 +373,13 @@ test("invite-only users and project capability sessions enforce access boundarie
     const agentInstructions = await agentWorkspace.text();
     assert.match(agentInstructions, /^# Shared Capability/m);
     assert.match(agentInstructions, /Submit A Yjs Edit/);
+    assert.match(agentInstructions, /Never construct patch JSON by hand/);
+    assert.match(agentInstructions, /jq -n/);
+    assert.match(agentInstructions, /--rawfile insert \/tmp\/latexcoder-insert\.tex/);
+    assert.match(agentInstructions, /--data-binary @\/tmp\/latexcoder-patch\.json/);
+    assert.ok(agentInstructions.includes("\\section{Introduction}"));
+    assert.ok(!agentInstructions.includes("\\\\section{Introduction}"));
+    assert.ok(agentInstructions.includes("jq -n \\\n  --arg sha"));
     assert.match(agentInstructions, /Search The Project/);
     assert.match(agentInstructions, /curl -fsS -X POST '.*\/v1\/search\?project=/);
     assert.match(agentInstructions, /X-Ripgrep-Exit-Code/);

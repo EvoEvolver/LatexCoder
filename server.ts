@@ -1290,17 +1290,45 @@ handles compilation and caching; do not call the compile API first.
 
 ## Submit A Yjs Edit
 
-POST ${patchUrl(main)}
-Content-Type: application/json
+Never construct patch JSON by hand. LaTeX backslashes such as \\section,
+\\begin, \\text, and \\newcommand are JSON escapes or invalid JSON when pasted
+directly into a JSON string. Write the exact LaTeX to a file, then use a JSON
+encoder so it is escaped correctly.
 
-{"baseSha256":"<digest from X-Content-SHA256>","mode":"direct","changes":[{"from":0,"to":0,"insert":"text"}]}
+curl -fsS -D /tmp/latexcoder-headers '${origin}${fileUrl(main)}' \\
+  -o /tmp/latexcoder-current.tex
+SHA=$(awk 'tolower($1) == "x-content-sha256:" { gsub("\\r", "", $2); print $2 }' \\
+  /tmp/latexcoder-headers)
+
+cat > /tmp/latexcoder-insert.tex <<'LATEX'
+\\section{Introduction}
+Write the exact LaTeX here. Backslashes, quotes, and newlines stay unchanged.
+LATEX
+
+FROM=0
+TO=0
+jq -n \\
+  --arg sha "$SHA" \\
+  --argjson from "$FROM" \\
+  --argjson to "$TO" \\
+  --rawfile insert /tmp/latexcoder-insert.tex \\
+  '{baseSha256: $sha, mode: "direct", changes: [{from: $from, to: $to, insert: $insert}]}' \\
+  > /tmp/latexcoder-patch.json
+
+curl -fsS -X POST '${origin}${patchUrl(main)}' \\
+  -H 'Content-Type: application/json' \\
+  --data-binary @/tmp/latexcoder-patch.json
+
+If jq is unavailable, use another real JSON serializer. Never interpolate raw
+LaTeX into JSON with shell string concatenation. Set FROM and TO to UTF-16
+code-unit offsets into /tmp/latexcoder-current.tex.
 
 Patch ranges use UTF-16 code-unit offsets into the version identified by
 baseSha256. All ranges are checked against that original version, then applied
-together in one Yjs transaction. Ranges must be non-overlapping, and inserted
-strings must be valid JSON strings (escape newlines as \\n when constructing
-JSON manually). A stale digest is rejected with HTTP 409 and the response
-includes error.details.currentSha256; read the file again and retry.
+together in one Yjs transaction. Ranges must be non-overlapping. A stale digest
+is rejected with HTTP 409 and the response includes
+error.details.currentSha256; read the file again, recalculate the offsets, and
+retry.
 
 To create a reviewable suggestion instead of a direct edit, omit mode or use
 "mode":"suggesting" and include:
