@@ -7,6 +7,11 @@ artifacts in an isolated directory. A small invite-only user system protects
 the project dashboard, while capability links give guests access to individual
 projects without requiring an account or database.
 
+The application is TypeScript end to end. The browser UI is React built by
+Vite, with shadcn-style components and Tailwind CSS v4 utilities. The Node
+server is executed with `tsx` and serves the Vite production build alongside
+the JSON, Git HTTP, and WebSocket endpoints.
+
 ## Features
 
 - A user-scoped project dashboard with stable, shareable editor URLs.
@@ -53,10 +58,15 @@ and [project downloads][overleaf-download].
 ## Development
 
 ```sh
-npm install
-npm test
-LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' npm start
+pnpm install
+pnpm check
+pnpm test
+LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' pnpm start
 ```
+
+For development, `pnpm dev` starts the TypeScript server on port 8090 and
+the Vite development server on `http://127.0.0.1:5173/`; Vite proxies API, Git,
+share-link, and collaboration traffic to the backend.
 
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
 change the listener. State defaults to `.latexcoder/`; set

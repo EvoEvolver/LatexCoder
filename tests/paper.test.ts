@@ -5,14 +5,15 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import type { AddressInfo } from "node:net";
 import { promisify } from "node:util";
 
 import { WebSocket } from "ws";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
-import { createPaperServer, safeRelativePath } from "../server.mjs";
-import { parseReviews, stripReviewStorage } from "../src/review.js";
+import { createPaperServer, safeRelativePath } from "../server.ts";
+import { parseReviews, stripReviewStorage } from "../src/review.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -38,14 +39,14 @@ async function createIncomingBranch(projectDir, branch, mutate) {
   }
 }
 
-async function withServer(run, options = {}) {
+async function withServer(run: (context: any) => Promise<void>, options: any = {}) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-test-"));
   const paper = await createPaperServer({ stateDir, authDisabled: true, ...options });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     paper.server.once("error", reject);
-    paper.server.listen(0, "127.0.0.1", resolve);
+    paper.server.listen(0, "127.0.0.1", () => resolve());
   });
-  const address = paper.server.address();
+  const address = paper.server.address() as AddressInfo;
   try {
     await run({ ...paper, base: `http://127.0.0.1:${address.port}`, ws: `ws://127.0.0.1:${address.port}` });
   } finally {
@@ -56,8 +57,8 @@ async function withServer(run, options = {}) {
   }
 }
 
-function waitFor(testValue, timeout = 3000) {
-  return new Promise((resolve, reject) => {
+function waitFor(testValue: () => boolean, timeout = 3000) {
+  return new Promise<void>((resolve, reject) => {
     const started = Date.now();
     const timer = setInterval(() => {
       if (testValue()) {
@@ -115,13 +116,14 @@ test("root negotiates Agent and human representations", async () => {
     assert.match(human.headers.get("vary"), /Accept/);
     assert.match(human.headers.get("vary"), /User-Agent/);
     assert.match(human.headers.get("content-security-policy"), /object-src 'none'/);
-    assert.match(await human.text(), /<title>LaTeX Coder<\/title>/);
+    const humanHtml = await human.text();
+    assert.match(humanHtml, /<title>LaTeX Coder<\/title>/);
 
     const browser = await fetch(`${base}/`, { headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" } });
     assert.match(browser.headers.get("content-type"), /^text\/html/);
     const sharedProject = await fetch(`${base}/projects/paper`);
     assert.match(sharedProject.headers.get("content-type"), /^text\/html/);
-    assert.match(await sharedProject.text(), /id="editor-page"/);
+    assert.match(await sharedProject.text(), /id="root"/);
     const agentOverride = await fetch(`${base}/`, {
       headers: { "User-Agent": "Mozilla/5.0", Accept: "text/markdown" },
     });
@@ -129,7 +131,9 @@ test("root negotiates Agent and human representations", async () => {
     const removedHumanPrefix = await fetch(`${base}/_human/`);
     assert.equal(removedHumanPrefix.status, 404);
 
-    const asset = await fetch(`${base}/app.js`);
+    const assetPath = humanHtml.match(/<script[^>]+src="([^"]+)"/)?.[1];
+    assert.ok(assetPath);
+    const asset = await fetch(`${base}${assetPath}`);
     assert.match(asset.headers.get("content-type"), /javascript/);
     await asset.arrayBuffer();
 
@@ -378,7 +382,7 @@ test("Git sync creates a clean merge without checking Yjs off main", async () =>
       body: JSON.stringify({ message: "Local side" }),
     });
     const doc = new Y.Doc();
-    const provider = new WebsocketProvider(`${ws}/v1/collab`, Buffer.from("main.tex").toString("base64url"), doc, { WebSocketPolyfill: WebSocket });
+    const provider = new WebsocketProvider(`${ws}/v1/collab`, Buffer.from("main.tex").toString("base64url"), doc, { WebSocketPolyfill: WebSocket as any });
     await waitFor(() => provider.synced);
 
     const response = await fetch(`${base}/v1/git/sync`, {
@@ -497,8 +501,8 @@ test("patch API applies one checked Yjs transaction and rejects stale edits", as
     const room = Buffer.from("main.tex").toString("base64url");
     const firstDoc = new Y.Doc();
     const secondDoc = new Y.Doc();
-    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket });
-    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket });
+    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket as any });
+    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket as any });
     await waitFor(() => first.synced && second.synced);
 
     const beforeResponse = await fetch(`${base}/v1/files?path=main.tex`);
@@ -609,8 +613,8 @@ test("two Yjs clients collaborate and persist plain LaTeX", async () => {
     const room = Buffer.from("main.tex").toString("base64url");
     const firstDoc = new Y.Doc();
     const secondDoc = new Y.Doc();
-    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket });
-    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket });
+    const first = new WebsocketProvider(`${ws}/v1/collab`, room, firstDoc, { WebSocketPolyfill: WebSocket as any });
+    const second = new WebsocketProvider(`${ws}/v1/collab`, room, secondDoc, { WebSocketPolyfill: WebSocket as any });
     await waitFor(() => first.synced && second.synced);
     firstDoc.getText("content").insert(firstDoc.getText("content").length, "\n% collaborative edit\n");
     await waitFor(() => secondDoc.getText("content").toString().endsWith("% collaborative edit\n"));

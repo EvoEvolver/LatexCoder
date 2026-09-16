@@ -63,11 +63,19 @@ import {
   ZoomOut,
 } from "lucide";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/build/pdf.mjs";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { yCollab, ySyncAnnotation } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
-import { parseReviews, stripReviewStorage } from "./review.js";
+import { parseReviews, stripReviewStorage } from "./review.ts";
+
+declare global {
+  interface Window {
+    __paperTest?: unknown;
+    __paperE2E?: unknown;
+  }
+}
 
 const ICONS = {
     Archive,
@@ -111,7 +119,7 @@ createIcons({ icons: ICONS });
 const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
-const elements = Object.fromEntries([
+const elements: Record<string, any> = Object.fromEntries([
   "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "back-projects",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
@@ -127,7 +135,7 @@ const elements = Object.fromEntries([
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
 const apiUrl = relative => new URL(`/${String(relative).replace(/^\//, "")}`, window.location.origin);
-GlobalWorkerOptions.workerSrc = apiUrl("pdf.worker.min.mjs").toString();
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 const socketUrl = relative => {
   const url = apiUrl(relative);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -135,7 +143,7 @@ const socketUrl = relative => {
 };
 
 const palette = ["#236b59", "#98602b", "#7455a5", "#2c6e9d", "#a14960", "#55713a", "#855b43", "#39716e"];
-const state = {
+const state: any = {
   activeFile: "main.tex",
   projectId: "",
   projects: [],
@@ -271,7 +279,7 @@ function renderSelectionActions() {
   menu.style.top = `${top}px`;
 }
 
-async function request(relative, options = {}) {
+async function request(relative, options = {}): Promise<any> {
   const url = apiUrl(relative);
   if (state.projectId && url.pathname.startsWith("/v1/") && !url.pathname.startsWith("/v1/projects")) {
     url.searchParams.set("project", state.projectId);
@@ -280,7 +288,7 @@ async function request(relative, options = {}) {
   const type = response.headers.get("content-type") || "";
   const body = type.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
-    const error = new Error(body?.error?.message || body || `Request failed (${response.status})`);
+    const error: any = new Error(body?.error?.message || body || `Request failed (${response.status})`);
     error.code = body?.error?.code || "request_failed";
     error.status = response.status;
     throw error;
@@ -303,7 +311,7 @@ function renderFiles() {
   elements.file_list.replaceChildren();
   for (const file of state.files) {
     const button = document.createElement("button");
-    button.className = `file-row${file.path === state.activeFile ? " active" : ""}`;
+    button.className = `file-row grid h-8 w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
     button.title = file.path;
     button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
     button.querySelector("span").textContent = file.path;
@@ -317,6 +325,10 @@ function renderFiles() {
 }
 
 class RevisionDeletionWidget extends WidgetType {
+  id: string;
+  author: string;
+  text: string;
+
   constructor(id, author, text) {
     super();
     this.id = id;
@@ -617,10 +629,22 @@ function editorExtensions(ytext, provider) {
       }
     }),
     EditorView.theme({
-      "&": { backgroundColor: "#ffffff", color: "#292b27" },
-      ".cm-content": { padding: "12px 0", caretColor: "#1d6b55" },
+      "&": { width: "100%", maxWidth: "100%", minWidth: "0", height: "100%", overflow: "hidden", backgroundColor: "#ffffff", color: "#292b27", fontSize: "13px" },
+      ".cm-scroller": { minWidth: "0", overflow: "auto", fontFamily: "SFMono-Regular, Consolas, Liberation Mono, monospace", lineHeight: "1.55" },
+      ".cm-gutters": { borderRight: "1px solid #eceeea", color: "#a0a49d", backgroundColor: "#fafbf9" },
+      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f4f7f3" },
+      ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "#1d6b55" },
       ".cm-line": { padding: "0 14px" },
       "&.cm-focused .cm-cursor": { borderLeftColor: "#1d6b55" },
+      ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "#fff0aa", cursor: "help" },
+      ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "#dcefe7", color: "#115b48", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
+      ".cm-review-deletion": { marginLeft: "4px", padding: "1px 3px", borderRadius: "3px", backgroundColor: "#f8dddd", color: "#a1373d", textDecoration: "line-through", textDecorationThickness: "1.5px", cursor: "help", whiteSpace: "pre-wrap" },
+      ".cm-review-tooltip": { width: "min(320px, calc(100vw - 32px))", padding: "11px", border: "1px solid #d8dbd5", borderLeft: "3px solid #d28a16", borderRadius: "6px", backgroundColor: "#fff", boxShadow: "0 10px 28px rgb(21 25 20 / 18%)", color: "#292b27", fontFamily: "ui-sans-serif, sans-serif" },
+      ".cm-review-tooltip.revision": { borderLeftColor: "#188064" },
+      ".cm-review-tooltip strong": { display: "block", marginBottom: "6px", fontSize: "11px" },
+      ".cm-review-tooltip p": { maxHeight: "120px", margin: "0", overflow: "auto", fontSize: "12px", lineHeight: "1.45", whiteSpace: "pre-wrap" },
+      ".cm-review-tooltip-actions": { display: "flex", justifyContent: "flex-end", gap: "5px", marginTop: "9px" },
+      ".cm-review-tooltip-actions button": { height: "27px", padding: "0 9px", border: "1px solid #d6dad3", borderRadius: "4px", backgroundColor: "#fff", fontSize: "10px", fontWeight: "650" },
       // Keep local selections unmistakable next to comment and revision marks.
       // CodeMirror's default theme is loaded at the same precedence, so the
       // drawn selection layer needs an explicit override.
@@ -658,7 +682,7 @@ function updatePresence() {
     .slice(0, 10);
   for (const user of users) {
     const avatar = document.createElement("span");
-    avatar.className = "presence-avatar";
+    avatar.className = "presence-avatar -ml-1.5 grid size-7 place-items-center rounded-full border-2 border-background text-[9px] font-bold text-white";
     avatar.title = user.name;
     avatar.style.backgroundColor = user.color;
     avatar.textContent = user.name.slice(0, 2).toUpperCase();
@@ -738,6 +762,7 @@ function applyReviewDecision(id, decision) {
 
 function reviewButton(label, action) {
   const button = document.createElement("button");
+  button.className = "h-7 rounded-md border bg-background px-2.5 text-[11px] font-medium hover:bg-accent";
   button.textContent = label;
   button.addEventListener("click", event => {
     event.stopPropagation();
@@ -768,7 +793,7 @@ function renderReviews() {
   elements.review_list.replaceChildren();
   if (!groups.length) {
     const empty = document.createElement("div");
-    empty.className = "empty-output";
+    empty.className = "empty-output flex min-h-52 flex-col items-center justify-center gap-3 text-sm text-muted-foreground [&_svg]:size-8";
     empty.innerHTML = '<i data-lucide="file-check-2"></i><span>No open reviews</span>';
     elements.review_list.append(empty);
     createIcons({ icons: ICONS });
@@ -777,16 +802,16 @@ function renderReviews() {
   for (const group of groups) {
     const item = group.items[0];
     const article = document.createElement("article");
-    article.className = `review-item ${group.kind}`;
+    article.className = `review-item ${group.kind} mb-2 rounded-md border border-l-[3px] border-l-amber-700 bg-card p-3 [&.revision]:border-l-primary`;
     const meta = document.createElement("div");
-    meta.className = "review-meta";
+    meta.className = "review-meta mb-2 flex items-center justify-between gap-2 text-xs [&_strong]:truncate [&_span]:uppercase [&_span]:text-[9px] [&_span]:text-muted-foreground";
     const author = document.createElement("strong");
     author.textContent = item.author || "Guest";
     const type = document.createElement("span");
     type.textContent = group.kind;
     meta.append(author, type);
     const quote = document.createElement("pre");
-    quote.className = "review-quote";
+    quote.className = "review-quote mb-2 overflow-hidden whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground";
     if (group.kind === "comment" || item.kind === "revision") {
       quote.textContent = item.body.trim().slice(0, 240) || "Empty selection";
     } else {
@@ -798,12 +823,12 @@ function renderReviews() {
       ].filter(Boolean).join("\n");
     }
     const note = document.createElement("p");
-    note.className = "review-note";
+    note.className = "review-note mb-2 text-sm leading-relaxed";
     note.textContent = group.kind === "comment"
       ? item.note
       : item.kind === "revision" ? `Before: ${item.note}` : "Tracked change";
     const actions = document.createElement("div");
-    actions.className = "review-buttons";
+    actions.className = "review-buttons flex gap-1.5";
     if (group.kind === "comment") {
       actions.append(reviewButton("Resolve", () => applyReviewDecision(group.id, "resolve")));
     } else {
@@ -904,10 +929,10 @@ function renderProjects() {
   elements.project_list.replaceChildren();
   for (const project of state.projects) {
     const row = document.createElement("article");
-    row.className = "project-row";
+    row.className = "project-row grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto_auto] items-center gap-3 border-b px-4 py-2 last:border-b-0 [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
     row.innerHTML = '<i data-lucide="folder-kanban"></i>';
     const main = document.createElement("div");
-    main.className = "project-row-main";
+    main.className = "project-row-main min-w-0 [&>button]:block [&>button]:max-w-full [&>button]:truncate [&>button]:text-left [&>button]:text-sm [&>button]:font-semibold [&>button:hover]:text-primary [&>span]:mt-1 [&>span]:block [&>span]:text-[10px] [&>span]:text-muted-foreground";
     const name = document.createElement("button");
     name.type = "button";
     name.textContent = project.name;
@@ -919,14 +944,14 @@ function renderProjects() {
     main.append(name, details);
     const open = document.createElement("button");
     open.type = "button";
-    open.className = "secondary-button";
+    open.className = "secondary-button h-8 rounded-md border bg-background px-3 text-xs font-medium shadow-sm hover:bg-accent max-sm:hidden";
     open.textContent = "Open";
     open.addEventListener("click", () => openProjectPage(project.id));
     const menu = document.createElement("details");
-    menu.className = "context-menu";
-    menu.innerHTML = '<summary class="icon-button" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel"></div>';
+    menu.className = "context-menu relative";
+    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
     const panel = menu.querySelector("div");
-    const actions = [
+    const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
       ["pencil", "Rename", () => renameProject(project)],
       ["archive", "Download ZIP", () => downloadProject(project.id)],
       ["trash-2", "Delete project", () => deleteProject(project), true],
@@ -934,7 +959,7 @@ function renderProjects() {
     for (const [icon, label, action, danger] of actions) {
       const button = document.createElement("button");
       button.type = "button";
-      if (danger) button.className = "danger";
+      button.className = `flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent [&_svg]:size-3.5${danger ? " danger text-destructive" : ""}`;
       button.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
       button.querySelector("span").textContent = label;
       button.addEventListener("click", () => {
@@ -1087,7 +1112,7 @@ async function renderPdf() {
 async function showPdf(force = false) {
   const requestVersion = ++state.pdfRequestVersion;
   const downloadUrl = projectApiUrl("v1/build/pdf");
-  downloadUrl.searchParams.set("v", Date.now());
+  downloadUrl.searchParams.set("v", String(Date.now()));
   elements.pdf_download.href = downloadUrl;
   elements.pdf_status.textContent = "Loading PDF";
   elements.empty_output.hidden = false;
@@ -1146,7 +1171,7 @@ async function compile() {
 }
 
 function selectOutput(name) {
-  document.querySelectorAll("[data-output]").forEach(button => button.classList.toggle("active", button.dataset.output === name));
+  document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.classList.toggle("active", button.dataset.output === name));
   elements.pdf_view.hidden = name !== "pdf";
   elements.review_pane.hidden = name !== "review";
   if (name === "review") renderReviews();
@@ -1163,13 +1188,13 @@ function renderGitStatus(gitState) {
   elements.git_file_list.replaceChildren();
   if (!gitState.files.length) {
     const empty = document.createElement("div");
-    empty.className = "git-empty";
+    empty.className = "git-empty py-4 text-center text-xs text-muted-foreground";
     empty.textContent = "Working tree clean";
     elements.git_file_list.append(empty);
   } else {
     for (const file of gitState.files) {
       const row = document.createElement("div");
-      row.className = "git-file-row";
+      row.className = "git-file-row grid min-h-7 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2 border-b text-xs [&_code]:text-amber-700 [&_span]:truncate";
       const status = document.createElement("code");
       status.textContent = `${file.index}${file.worktree}`.trim() || "M";
       const name = document.createElement("span");
@@ -1181,7 +1206,7 @@ function renderGitStatus(gitState) {
   elements.git_history.replaceChildren();
   for (const commit of gitState.history) {
     const row = document.createElement("div");
-    row.className = "git-history-row";
+    row.className = "git-history-row grid min-h-7 grid-cols-[4rem_minmax(0,1fr)_6rem] items-center gap-2 border-b text-xs [&_code]:text-primary [&_span]:truncate [&_time]:text-right [&_time]:text-[9px] [&_time]:text-muted-foreground";
     const id = document.createElement("code");
     id.textContent = commit.shortId;
     const subject = document.createElement("span");
@@ -1485,7 +1510,7 @@ elements.new_file.addEventListener("click", async () => {
   });
   if (!name) return;
   try {
-    await request(`v1/files?path=${encodeURIComponent(name)}`, {
+    await request(`v1/files?path=${encodeURIComponent(String(name))}`, {
       method: "PUT",
       headers: { "Content-Type": "text/plain; charset=utf-8" },
       body: "",
@@ -1539,7 +1564,7 @@ elements.delete_file.addEventListener("click", async () => {
   }
 });
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
-document.querySelectorAll("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
+document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
 window.addEventListener("beforeunload", disconnectEditor);
 async function routeApp() {
   const invitationToken = routeInvitationToken();

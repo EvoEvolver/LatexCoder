@@ -3,24 +3,26 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import type { AddressInfo } from "node:net";
 
 import { chromium } from "playwright";
 
-import { createPaperServer } from "../server.mjs";
+import { createPaperServer } from "../server.ts";
 
 // Drives the real bundled LaTeX Coder editor in headless Chromium against the real
 // server, so these tests exercise the exact suggesting-mode transaction
 // filter, keymap, and DOM that users hit in the browser.
-async function withEditor(run, options = {}) {
+async function withEditor(run: (context: any) => Promise<void>, options: any = {}) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-e2e-"));
   const paper = await createPaperServer({ stateDir, authDisabled: true, ...options });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     paper.server.once("error", reject);
-    paper.server.listen(0, "127.0.0.1", resolve);
+    paper.server.listen(0, "127.0.0.1", () => resolve());
   });
-  const base = `http://127.0.0.1:${paper.server.address().port}`;
-  const browser = await chromium.launch();
+  const base = `http://127.0.0.1:${(paper.server.address() as AddressInfo).port}`;
+  let browser;
   try {
+    browser = await chromium.launch();
     const page = await browser.newPage();
     page.setDefaultTimeout(5000);
     await page.goto(`${base}/?test=1`);
@@ -28,7 +30,7 @@ async function withEditor(run, options = {}) {
     await run({ page, base, browser });
     await page.close();
   } finally {
-    await browser.close();
+    await browser?.close();
     paper.shutdown();
     paper.sockets.close();
     await new Promise(resolve => paper.server.close(resolve));

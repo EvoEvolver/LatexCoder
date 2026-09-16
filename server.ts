@@ -14,7 +14,7 @@ import * as syncProtocol from "y-protocols/sync";
 import { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
 
-import { parseReviews, stripReviewStorage } from "./src/review.js";
+import { parseReviews, stripReviewStorage } from "./src/review.ts";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TEXT_EXTENSIONS = new Set([".bib", ".cls", ".csv", ".json", ".md", ".sty", ".tex", ".txt", ".yaml", ".yml"]);
@@ -45,11 +45,8 @@ The canonical source is persisted as ordinary files and can be edited by agents 
 \end{document}
 `;
 
-function apiError(code, message, status = 400) {
-  const error = new Error(message);
-  error.code = code;
-  error.status = status;
-  return error;
+function apiError(code: string, message: string, status = 400) {
+  return Object.assign(new Error(message), { code, status });
 }
 
 export function safeRelativePath(value) {
@@ -326,7 +323,7 @@ function createCollaborationStore(projectDir, stateDir) {
     return load(relativePath).doc.getText("content").toString();
   }
 
-  function patchText(relativePath, baseSha256, requestedChanges, options = {}) {
+  function patchText(relativePath, baseSha256, requestedChanges, options: any = {}) {
     if (typeof baseSha256 !== "string" || !/^[a-f0-9]{64}$/.test(baseSha256)) {
       throw apiError("invalid_base_sha256", "baseSha256 must be a lowercase SHA-256 hex digest");
     }
@@ -468,7 +465,7 @@ async function listFiles(projectDir) {
   return result;
 }
 
-function run(command, args, options) {
+function run(command: string, args: string[], options: any): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, shell: false });
     let output = "";
@@ -484,11 +481,11 @@ function run(command, args, options) {
   });
 }
 
-function runBinary(command, args, options = {}, input = Buffer.alloc(0)) {
+function runBinary(command: string, args: string[], options: any = {}, input = Buffer.alloc(0)): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, shell: false });
-    const stdout = [];
-    const stderr = [];
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
     let settled = false;
     child.stdout.on("data", chunk => stdout.push(chunk));
     child.stderr.on("data", chunk => stderr.push(chunk));
@@ -515,7 +512,7 @@ const GIT_IDENTITY_ENV = {
   GIT_COMMITTER_EMAIL: "editor@localhost",
 };
 
-async function git(projectDir, args, options = {}) {
+async function git(projectDir: string, args: string[], options: any = {}) {
   const result = await run("git", ["-c", "core.hooksPath=/dev/null", ...args], {
     cwd: projectDir,
     env: { ...process.env, ...GIT_IDENTITY_ENV, ...(options.env || {}) },
@@ -822,7 +819,7 @@ async function createProjectArchive(runtime) {
 }
 
 async function gitUploadPack(runtime, args, input, protocol) {
-  const env = { ...process.env, ...GIT_IDENTITY_ENV };
+  const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
   if (protocol) env.GIT_PROTOCOL = protocol;
   return runBinary("git", ["-c", "core.hooksPath=/dev/null", "upload-pack", "--stateless-rpc", ...args, runtime.projectDir], {
     cwd: runtime.projectDir,
@@ -958,14 +955,14 @@ async function writeProjectMetadata(projectRoot, metadata) {
   await writeFile(path.join(projectRoot, "project.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }
 
-export async function createPaperServer(options = {}) {
+export async function createPaperServer(options: any = {}) {
   const stateDir = path.resolve(options.stateDir || process.env.LATEXCODER_STATE_DIR || process.env.PAPER_STATE_DIR || path.join(process.cwd(), ".latexcoder"));
   const projectsDir = path.join(stateDir, "projects");
   await mkdir(stateDir, { recursive: true });
 
   const authDisabled = options.authDisabled === true;
   const authPath = path.join(stateDir, "auth.json");
-  let authState = { version: 1, users: {}, invitations: {} };
+  let authState: any = { version: 1, users: {}, invitations: {} };
   try {
     const stored = JSON.parse(await readFile(authPath, "utf8"));
     authState = {
@@ -1234,13 +1231,13 @@ export async function createPaperServer(options = {}) {
       || (/Mozilla\//i.test(request.get("user-agent") || "") ? "text/html" : "text/markdown");
     if (representation === "text/html") {
       response.setHeader("Cache-Control", "no-store");
-      return response.sendFile(path.join(APP_DIR, "public", "index.html"));
+      return response.sendFile(path.join(APP_DIR, "dist", "index.html"));
     }
     return response.type("text/markdown; charset=utf-8").send(manual());
   });
   app.get(["/login", "/projects", "/projects/:projectId", "/register/:token"], (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    response.sendFile(path.join(APP_DIR, "public", "index.html"));
+    response.sendFile(path.join(APP_DIR, "dist", "index.html"));
   });
   app.get("/share/:projectId/:token", async (request, response, next) => {
     try {
@@ -1629,10 +1626,7 @@ export async function createPaperServer(options = {}) {
     }
   });
 
-  app.get(/^\/(app\.js|styles\.css|pdf\.worker\.min\.mjs)$/, (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    response.sendFile(path.join(APP_DIR, "public", request.params[0]));
-  });
+  app.use(express.static(path.join(APP_DIR, "dist"), { index: false, maxAge: "1y", immutable: true }));
   app.use((request, _response, next) => next(apiError("route_not_found", `route ${request.method} ${request.path} does not exist`, 404)));
   app.use((error, _request, response, _next) => {
     const status = Number.isInteger(error.status) ? error.status : 500;
@@ -1672,15 +1666,16 @@ export async function createPaperServer(options = {}) {
   };
 }
 
-export async function startPaperServer(options = {}) {
+export async function startPaperServer(options: any = {}) {
   const paper = await createPaperServer(options);
   const host = options.host || process.env.LATEXCODER_HOST || process.env.PAPER_HOST || "0.0.0.0";
   const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PAPER_PORT || 8090);
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     paper.server.once("error", reject);
-    paper.server.listen(port, host, resolve);
+    paper.server.listen(port, host, () => resolve());
   });
-  console.log(`LaTeX Coder listening on http://${host}:${paper.server.address().port}`);
+  const address = paper.server.address();
+  console.log(`LaTeX Coder listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
   return paper;
 }
 
