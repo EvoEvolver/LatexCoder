@@ -2660,14 +2660,14 @@ export async function createPaperServer(options: any = {}) {
       for (let index = 0; index < map.lines.length; index++) {
         if (Math.abs(map.lines[index] - line) < Math.abs(map.lines[projectedLine - 1] - line)) projectedLine = index + 1;
       }
-      let result;
       const start = Number.isSafeInteger(from) && from >= 0 && from <= source.length ? projectedPosition(source, from) : { line: projectedLine, column: 0 };
       const end = Number.isSafeInteger(to) && to >= (from || 0) && to <= source.length ? projectedPosition(source, to) : start;
       const boxes = [];
       try {
-        for (let targetLine = start.line; targetLine <= Math.min(end.line, start.line + 19); targetLine++) {
-          result = await run(options.synctex || "synctex", ["view", "-i", `${targetLine}:${targetLine === start.line ? start.column : 0}:${path.join(snapshot.root, file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 1000, env: { ...process.env, SYNCTEX_VIEWER: "" } });
-          boxes.push(...syncTexPositions(result.output));
+        for (let batch = start.line; batch <= Math.min(end.line, start.line + 19); batch += 4) {
+          const lines = Array.from({ length: Math.min(4, Math.min(end.line, start.line + 19) - batch + 1) }, (_, index) => batch + index);
+          const results = await Promise.all(lines.map(targetLine => run(options.synctex || "synctex", ["view", "-i", `${targetLine}:${targetLine === start.line ? start.column : 0}:${path.join(snapshot.root, file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 1000, env: { ...process.env, SYNCTEX_VIEWER: "" } })));
+          for (const result of results) boxes.push(...syncTexPositions(result.output));
         }
       } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
       if (runtime.compilePromise || snapshot.revision !== runtime.build.sourceRevision || runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source or PDF changed. Try navigating again.", 409);

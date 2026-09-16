@@ -42,6 +42,35 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("source navigation loads a new PDF revision once and then reuses it", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.evaluate(() => {
+      const { view } = globalThis.__paperE2E.state;
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " TARGET" } });
+    });
+    await page.route("**/v1/build/position*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ page: 2, x: 50, y: 50, revision: "navigation-revision", boxes: [{ page: 2, left: 40, top: 40, width: 60, height: 20 }] }) }));
+    let downloads = 0;
+    await page.route("**/v1/build/pdf*", route => {
+      downloads++;
+      return route.fulfill({ contentType: "application/pdf", headers: { "X-LaTeX-Coder-Source-Revision": "navigation-revision" }, body: previewPdf(2) });
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await selectionContextMenu(page, "TARGET", false);
+      await page.locator('[data-editor-action="pdf"]').click();
+      await page.locator("#pdf-source-marker").waitFor();
+      assert.equal(downloads, 1);
+      assert.equal(await page.locator("#pdf-document canvas").count(), 2);
+    }
+    assert.ok(await page.locator('#pdf-document canvas[data-page="2"]').evaluate((canvas: HTMLCanvasElement) => {
+      const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+      return pixels.some((value, index) => index % 4 !== 3 && value < 200 && pixels[index - index % 4 + 3] > 0);
+    }));
+    await page.screenshot({ path: "/tmp/latexcoder-fast-pdf-navigation.png" });
+  });
+});
+
 test("collaborative undo preserves remote edits and offline changes recover after reload", async () => {
   await withEditor(async ({ page, base, browser }) => {
     await page.goto(`${base}/?e2e=1`);
@@ -380,11 +409,18 @@ test(`${platform} real SyncTeX PDF modifier-click opens included source and reje
     });
     await page.screenshot({ path: "/tmp/latexcoder-pdf-source.png" });
     await selectionContextMenu(page, "Unique source", false);
+    const beforeNavigation = await page.evaluate(() => globalThis.__paperE2E.state.pdfRenderVersion);
+    let navigationDownloads = 0;
+    const trackDownload = request => { if (request.url().includes("/v1/build/pdf")) navigationDownloads++; };
+    page.on("request", trackDownload);
     const positionResponse = page.waitForResponse(response => response.url().includes("/v1/build/position"));
     await page.locator('[data-editor-action="pdf"]').click();
     const forward = await positionResponse;
     assert.equal(forward.status(), 200, await forward.text());
     await page.locator("#pdf-source-marker").waitFor();
+    page.off("request", trackDownload);
+    assert.equal(navigationDownloads, 0, "same-revision navigation must not download the PDF again");
+    assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.pdfRenderVersion), beforeNavigation, "same-revision navigation must not rerender the PDF");
     const boxes = (await forward.json()).boxes;
     assert.ok(boxes.length > 0 && boxes.every(box => box.width > 0 && box.height > 0));
     const width = (await page.locator("#pdf-source-marker").boundingBox()).width;
@@ -441,15 +477,16 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
   });
 });
 
-function previewPdf() {
+function previewPdf(pageCount = 1) {
   const stream = "BT /F1 20 Tf 48 110 Td (Project PDF preview) Tj ET\n";
   const objects = [
     "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    `2 0 obj\n<< /Type /Pages /Kids [3 0 R ${Array.from({ length: pageCount - 1 }, (_, index) => `${index + 6} 0 R`).join(" ")}] /Count ${pageCount} >>\nendobj\n`,
     "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
     `4 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream\nendobj\n`,
     "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
   ];
+  for (let index = 0; index < pageCount - 1; index++) objects.push(`${index + 6} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n`);
   let source = "%PDF-1.4\n";
   const offsets = [0];
   for (const object of objects) {

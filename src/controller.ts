@@ -1670,7 +1670,7 @@ async function openProjectPage(projectId, push = true) {
   await refreshProject(true);
 }
 
-async function renderPdf() {
+async function renderPdf(priorityPage?: number) {
   const pdf = state.pdfDocument;
   if (!pdf) return;
   const version = ++state.pdfRenderVersion;
@@ -1679,6 +1679,7 @@ async function renderPdf() {
   const fit = Math.min(1.25, Math.max(0.35, (elements.pdf_view.clientWidth - 32) / base.width));
   const scale = fit * state.pdfZoom;
   const fragment = document.createDocumentFragment();
+  const renders: Array<() => Promise<void>> = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     if (version !== state.pdfRenderVersion) return;
@@ -1709,23 +1710,39 @@ async function renderPdf() {
       } catch (error) { showToast(error.message); }
     });
     fragment.append(canvas);
-    await page.render({
-      canvas,
-      canvasContext: canvas.getContext("2d"),
-      viewport,
-      transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-    }).promise;
+    renders.push(async () => {
+      if (version !== state.pdfRenderVersion) return;
+      await page.render({
+        canvas,
+        canvasContext: canvas.getContext("2d"),
+        viewport,
+        transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+      }).promise;
+    });
   }
   if (version !== state.pdfRenderVersion) return;
   elements.pdf_document.replaceChildren(fragment);
   elements.pdf_document.hidden = false;
   elements.empty_output.hidden = true;
+  if (priorityPage && renders[priorityPage - 1]) {
+    await renders[priorityPage - 1]();
+    // Reserve every page's layout, but do not make navigation wait for other pages.
+    void (async () => {
+      for (let index = 0; index < renders.length; index++) {
+        if (version !== state.pdfRenderVersion) return;
+        if (index !== priorityPage - 1) await renders[index]();
+      }
+    })().catch(error => { if (version === state.pdfRenderVersion) console.error("PDF background render failed", error); });
+  } else {
+    for (const render of renders) await render();
+  }
+  if (version !== state.pdfRenderVersion) return;
   elements.pdf_status.textContent = "PDF ready";
   renderPdfHighlights();
   refreshPdfStatus();
 }
 
-async function showPdf(force = false) {
+async function showPdf(force = false, priorityPage?: number) {
   const requestVersion = ++state.pdfRequestVersion;
   const downloadUrl = projectApiUrl("v1/build/pdf");
   downloadUrl.searchParams.set("v", String(Date.now()));
@@ -1743,6 +1760,7 @@ async function showPdf(force = false) {
     }
     if (!state.pdfDocument) {
       const response = await fetch(elements.pdf_download.href);
+      if (requestVersion !== state.pdfRequestVersion) return;
       if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
       state.pdfSourceRevision = response.headers.get("X-LaTeX-Coder-Source-Revision");
       const loadingTask = getDocument({ data: await response.arrayBuffer() });
@@ -1754,7 +1772,7 @@ async function showPdf(force = false) {
       }
       state.pdfDocument = pdf;
     }
-    await renderPdf();
+    await renderPdf(priorityPage);
   } catch (error) {
     if (requestVersion !== state.pdfRequestVersion) return;
     console.error("paper PDF preview failed", error);
@@ -2473,12 +2491,25 @@ async function goToPdf(view: EditorView) {
   const source = view.state.doc.toString();
   const { from, to } = view.state.selection.main;
   const line = view.state.doc.lineAt(from).number;
-  const position = await request("v1/build/position", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
-  });
+  selectOutput("pdf");
+  elements.pdf_status.textContent = "Locating source; updating PDF if needed...";
+  let position;
+  try {
+    position = await request("v1/build/position", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
+    });
+  } finally {
+    if (state.projectId === project && elements.pdf_status.textContent === "Locating source; updating PDF if needed...") {
+      elements.pdf_status.textContent = state.pdfDocument ? "PDF ready" : "No compiled PDF";
+    }
+  }
   if (state.projectId !== project || state.view !== view) return;
   selectOutput("pdf");
-  await showPdf(true);
+  if (!state.pdfDocument || state.pdfSourceRevision !== position.revision) {
+    await showPdf(true, position.page);
+  } else if (!elements.pdf_document.querySelector(`canvas[data-page="${position.page}"]`)) {
+    await renderPdf(position.page);
+  }
   if (state.projectId !== project || state.pdfSourceRevision !== position.revision) throw new Error("The PDF changed. Try navigating again.");
   const canvas = (elements.pdf_document as HTMLElement).querySelector<HTMLCanvasElement>(`canvas[data-page="${position.page}"]`);
   if (!canvas) throw new Error("PDF page not found");
