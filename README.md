@@ -30,6 +30,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - Local LaTeX compilation with PDF preview, build logs, and PDF download.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
+- Project-scoped plain-text Agent workspace links that can submit checked edits
+  directly into the same Yjs documents used by browser collaborators.
 
 ## LaTeX Coder vs. Overleaf
 
@@ -144,6 +146,12 @@ curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=<project-id>'
 Agents can submit checked UTF-16 edits through
 `POST /v1/files/patch?project=<id>&path=main.tex`. Suggesting mode records the
 edit as inline review storage; direct mode bypasses review creation.
+
+Project owners can copy a capability-bearing Agent workspace URL from the
+**Collaborate** dialog. Opening `/agent/<project-id>/<share-secret>` returns a
+plain-text project file listing and project-specific read and checked-patch
+URLs. These URLs do not require an account or cookie; possession of the link
+grants edit access to that project.
 
 ## Trust Boundary
 

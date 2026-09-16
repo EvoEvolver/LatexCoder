@@ -282,10 +282,13 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator(".topbar #download-project").count(), 0);
     assert.equal(await page.locator("#clone-button").count(), 0);
     assert.equal(await page.locator("#share-project + #git-button").count(), 1);
+    assert.equal((await page.locator("#share-project").textContent())?.trim(), "Collaborate");
 
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
+    assert.equal(await page.locator("#access-dialog header strong").textContent(), "Collaborate");
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
+    assert.match(await page.locator("#agent-link").inputValue(), new RegExp(`^${base}/agent/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
     await page.locator("#access-close").click();
 

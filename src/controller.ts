@@ -120,11 +120,11 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements: Record<string, any> = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "back-projects",
+  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-link", "back-projects",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-clone-command", "copy-share-link", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
@@ -1363,9 +1363,11 @@ async function openAccessDialog() {
   if (!project) return;
   const result = await request("v1/project/share");
   const shareUrl = `${window.location.origin}${result.share.path}`;
+  const agentUrl = `${window.location.origin}${result.share.agentPath}`;
   const cloneUrl = `${window.location.origin}${result.share.clonePath}`;
   elements.access_project_name.textContent = project.name;
   elements.share_link.value = shareUrl;
+  elements.agent_link.value = agentUrl;
   elements.clone_command.value = `git clone ${cloneUrl}`;
   elements.access_download.href = projectApiUrl("v1/project/archive");
   elements.access_download.download = `${project.id}.zip`;
@@ -1436,6 +1438,7 @@ elements.access_dialog.addEventListener("cancel", event => {
   elements.access_dialog.close();
 });
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
+elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent workspace link copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.invite_user.addEventListener("click", createInvitation);
 elements.invite_regenerate.addEventListener("click", createInvitation);

@@ -268,6 +268,34 @@ test("invite-only users and project capability sessions enforce access boundarie
     const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { headers: { Cookie: memberCookie } });
     assert.equal(shareResponse.status, 200);
     const share = (await shareResponse.json()).share;
+    assert.match(share.agentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+$`));
+    const agentWorkspace = await fetch(`${base}${share.agentPath}`);
+    assert.match(agentWorkspace.headers.get("content-type"), /^text\/plain/);
+    const agentInstructions = await agentWorkspace.text();
+    assert.match(agentInstructions, /^# Shared Capability/m);
+    assert.match(agentInstructions, /Submit A Yjs Edit/);
+    assert.match(agentInstructions, /\/v1\/files\/patch\?project=/);
+
+    const shareToken = share.agentPath.split("/").at(-1);
+    const agentFileUrl = `${base}/v1/files?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
+    const agentRead = await fetch(agentFileUrl);
+    assert.equal(agentRead.status, 200);
+    assert.equal(agentRead.headers.get("cache-control"), "no-store");
+    const agentSource = await agentRead.text();
+    const agentPatchUrl = `${base}/v1/files/patch?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
+    const agentPatch = await fetch(agentPatchUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseSha256: agentRead.headers.get("x-content-sha256"),
+        mode: "direct",
+        changes: [{ from: agentSource.length, to: agentSource.length, insert: "\n% edited from Agent workspace\n" }],
+      }),
+    });
+    assert.equal(agentPatch.status, 200);
+    assert.match(await (await fetch(agentFileUrl)).text(), /% edited from Agent workspace\n$/);
+    assert.equal((await fetch(`${base}/v1/files?project=${project.id}&access=wrong&path=main.tex`)).status, 401);
+
     const exchange = await fetch(`${base}${share.path}`, { redirect: "manual" });
     assert.equal(exchange.status, 303);
     assert.equal(exchange.headers.get("location"), `/projects/${project.id}`);

@@ -916,6 +916,56 @@ do not store unrelated secrets in project directories.
 `;
 }
 
+function agentProjectManual(runtime, files, shareToken) {
+  const capability = new URLSearchParams({ project: runtime.id, access: shareToken });
+  const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const projectUrl = `/v1/project?${capability}`;
+  const main = runtime.build.main || "main.tex";
+  const fileList = files.map(file => `- ${JSON.stringify(file.path)}${file.text ? " (text)" : " (binary)"}`).join("\n");
+  return `# ${runtime.metadata.name}
+
+This is the plain-text Agent workspace for project ${runtime.id}. The secret in
+this URL grants edit access to this project. Keep it private.
+
+## Files
+
+${fileList || "(empty project)"}
+
+## Inspect
+
+GET ${projectUrl}
+GET ${fileUrl(main)}
+
+The file response includes X-Content-SHA256. Use that digest when submitting a
+checked edit so a concurrent human or Agent change cannot be overwritten.
+
+## Submit A Yjs Edit
+
+POST ${patchUrl(main)}
+Content-Type: application/json
+
+{"baseSha256":"<digest from X-Content-SHA256>","mode":"direct","changes":[{"from":0,"to":0,"insert":"text"}]}
+
+Patch offsets are UTF-16 offsets. The entire patch is applied in one Yjs
+transaction and is immediately visible to connected editors. A stale digest is
+rejected with HTTP 409; read the file again and retry.
+
+To create a reviewable suggestion instead of a direct edit, omit mode or use
+"mode":"suggesting" and include:
+
+{"agent":{"id":"ag_uniqueid","name":"Agent Name"}}
+
+## Replace Or Create A File
+
+PUT ${fileUrl(main)}
+Content-Type: text/plain; charset=utf-8
+
+The raw request body becomes the file content. Prefer the checked patch API for
+existing text because it detects concurrent edits.
+`;
+}
+
 function safeProjectId(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{12}$/.test(value)) {
     throw apiError("invalid_project", "project id is invalid");
@@ -997,7 +1047,8 @@ export async function createPaperServer(options: any = {}) {
   function hasProjectAccess(request, runtime) {
     if (isProjectOwner(request, runtime)) return true;
     const session = projectSession(request);
-    return Boolean(session?.record.projects.has(runtime.id));
+    if (session?.record.projects.has(runtime.id)) return true;
+    return hasValidShareToken(runtime, request.query?.access);
   }
 
   function requireProjectAccess(request, runtime) {
@@ -1036,6 +1087,13 @@ export async function createPaperServer(options: any = {}) {
     delete result.shareToken;
     delete result.ownerUsername;
     return result;
+  }
+
+  function hasValidShareToken(runtime, supplied) {
+    if (typeof supplied !== "string") return false;
+    const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
+    const actual = Buffer.from(sha256(supplied), "hex");
+    return timingSafeEqual(expected, actual);
   }
 
   async function loadProject(id) {
@@ -1123,10 +1181,7 @@ export async function createPaperServer(options: any = {}) {
   const resolveGitProject = async request => {
     const runtime = await loadProject(request.params.projectId);
     if (hasProjectAccess(request, runtime)) return runtime;
-    const supplied = String(request.params.shareToken || "");
-    const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
-    const actual = Buffer.from(sha256(supplied), "hex");
-    if (!timingSafeEqual(expected, actual)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
+    if (!hasValidShareToken(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
     return runtime;
   };
 
@@ -1146,6 +1201,8 @@ export async function createPaperServer(options: any = {}) {
       || request.path.startsWith("/v1/invitations")
       || request.path === "/v1/project/share"
       || request.path.startsWith("/share/")
+      || request.path.startsWith("/agent/")
+      || request.query?.access
     ) response.setHeader("Cache-Control", "no-store");
     next();
   });
@@ -1178,11 +1235,21 @@ export async function createPaperServer(options: any = {}) {
   app.get("/share/:projectId/:token", async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
-      const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
-      const actual = Buffer.from(sha256(String(request.params.token || "")), "hex");
-      if (!timingSafeEqual(expected, actual)) throw apiError("share_link_invalid", "project share link is invalid", 403);
+      if (!hasValidShareToken(runtime, request.params.token)) throw apiError("share_link_invalid", "project share link is invalid", 403);
       issueProjectSession(request, response, runtime.id);
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
+    } catch (error) { next(error); }
+  });
+  app.get("/agent/:projectId/:token", async (request, response, next) => {
+    try {
+      const runtime = await loadProject(request.params.projectId);
+      if (!hasValidShareToken(runtime, request.params.token)) throw apiError("agent_link_invalid", "Agent link is invalid", 403);
+      response.setHeader("Cache-Control", "no-store");
+      response.type("text/plain; charset=utf-8").send(agentProjectManual(
+        runtime,
+        await listFiles(runtime.projectDir),
+        request.params.token,
+      ));
     } catch (error) { next(error); }
   });
   app.get("/health", (_request, response) => response.json({ ok: true, name: "latexcoder" }));
@@ -1331,6 +1398,7 @@ export async function createPaperServer(options: any = {}) {
       requireProjectOwner(request, runtime);
       response.json({ share: {
         path: `/share/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
+        agentPath: `/agent/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
         clonePath: `/git/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
       } });
     } catch (error) { next(error); }
