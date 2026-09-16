@@ -14,6 +14,8 @@ Vite, with shadcn-style components and Tailwind CSS v4 utilities. The Node
 server is executed with `tsx` and serves the Vite production build alongside
 the JSON, Git HTTP, and WebSocket endpoints.
 
+![LaTeX Coder workspace with project files, collaborative source editing, and PDF preview](docs/images/workspace.png)
+
 ## Features
 
 - A user-scoped project dashboard with stable, shareable editor URLs.
