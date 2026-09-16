@@ -210,7 +210,18 @@ test("invite-only users and project capability sessions enforce access boundarie
     });
     assert.equal(login.status, 200);
     const adminCookie = login.headers.get("set-cookie").split(";", 1)[0];
-    assert.equal((await login.json()).user.username, "admin");
+    assert.deepEqual((await login.json()).user, { username: "admin", displayName: "admin" });
+    const profileResponse = await fetch(`${base}/v1/users/me`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: "Admin Editor" }),
+    });
+    assert.equal(profileResponse.status, 200);
+    assert.deepEqual((await profileResponse.json()).user, { username: "admin", displayName: "Admin Editor" });
+    assert.deepEqual((await (await fetch(`${base}/v1/auth/me`, { headers: { Cookie: adminCookie } })).json()).user, {
+      username: "admin",
+      displayName: "Admin Editor",
+    });
 
     const listed = await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } });
     assert.equal(listed.status, 200);
@@ -266,7 +277,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     })).status, 403);
 
     const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST", headers: { Cookie: memberCookie } });
-    assert.equal(shareResponse.status, 201);
+    assert.equal(shareResponse.status, 200);
     const share = (await shareResponse.json()).share;
     assert.match(share.agentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+$`));
     const agentWorkspace = await fetch(`${base}${share.agentPath}`);
@@ -313,10 +324,27 @@ test("invite-only users and project capability sessions enforce access boundarie
     });
     assert.equal(signedCollaboratorProject.status, 200);
     assert.equal((await signedCollaboratorProject.json()).project.permissions.manage, false);
-    assert.equal((await fetch(`${base}/v1/project/share?project=${project.id}`, {
+    assert.equal((await fetch(`${base}/v1/project/share/rotate?project=${project.id}`, {
       method: "POST",
-      headers: { Cookie: signedCollaboratorCookies },
-    })).status, 403);
+      headers: { Cookie: adminCookie },
+    })).status, 401);
+
+    const joinResponse = await fetch(`${base}${share.path}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
+    assert.equal(joinResponse.status, 303);
+    const adminProjectsAfterJoin = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json();
+    assert.deepEqual(adminProjectsAfterJoin.projects.map(item => item.id).sort(), [initialProject, project.id].sort());
+    const registeredCollaboratorProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
+    assert.equal(registeredCollaboratorProject.status, 200);
+    assert.deepEqual((await registeredCollaboratorProject.json()).project.permissions, { manage: false, collaborate: true });
+    const adminShareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(adminShareResponse.status, 200);
+    const adminShare = (await adminShareResponse.json()).share;
+    assert.notEqual(adminShare.path, share.path);
+    const members = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: adminCookie } })).json();
+    assert.deepEqual(members.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "collaborator"]]);
 
     const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-private-clone-"));
     try {
@@ -327,18 +355,13 @@ test("invite-only users and project capability sessions enforce access boundarie
       await rm(temporary, { recursive: true, force: true });
     }
 
-    assert.equal((await fetch(`${base}/v1/project/share/${share.id}/rotate?project=${project.id}`, {
-      method: "POST",
-      headers: { Cookie: adminCookie },
-    })).status, 401);
-    const independentShareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, {
+    const sameOwnerShareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, {
       method: "POST",
       headers: { Cookie: memberCookie },
     });
-    assert.equal(independentShareResponse.status, 201);
-    const independentShare = (await independentShareResponse.json()).share;
-    assert.notEqual(independentShare.path, share.path);
-    const rotateResponse = await fetch(`${base}/v1/project/share/${share.id}/rotate?project=${project.id}`, {
+    assert.equal(sameOwnerShareResponse.status, 200);
+    assert.equal((await sameOwnerShareResponse.json()).share.path, share.path);
+    const rotateResponse = await fetch(`${base}/v1/project/share/rotate?project=${project.id}`, {
       method: "POST",
       headers: { Cookie: memberCookie },
     });
@@ -350,11 +373,13 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.notEqual((await fetch(`${base}${share.clonePath}/info/refs?service=git-upload-pack`)).status, 200);
     assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: projectCookie } })).status, 401);
     assert.equal((await fetch(`${base}${rotatedShare.path}`, { redirect: "manual" })).status, 303);
-    assert.equal((await fetch(`${base}${independentShare.path}`, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${base}${adminShare.path}`, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } })).status, 200);
 
     const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
-    const users = database.prepare("SELECT username, password_hash FROM users ORDER BY username").all() as any[];
+    const users = database.prepare("SELECT username, display_name, password_hash FROM users ORDER BY username").all() as any[];
     assert.deepEqual(users.map(user => user.username), ["admin", "member.one"]);
+    assert.deepEqual(users.map(user => user.display_name), ["Admin Editor", "member.one"]);
     assert.ok(users.every(user => user.password_hash && user.password_hash !== adminPassword && user.password_hash !== "another secure password"));
     const storedProject = database.prepare("SELECT owner_username FROM projects WHERE id = ?").get(project.id) as any;
     assert.equal(storedProject.owner_username, "member.one");

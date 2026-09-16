@@ -292,20 +292,16 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-link").inputValue(), new RegExp(`^${base}/agent/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
-    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other collaborators keep access/);
-    const firstCollaboratorLink = await page.locator("#share-link").inputValue();
-    await page.locator("#new-share-secret").click();
-    await page.waitForFunction(previous => document.querySelector<HTMLInputElement>("#share-link")?.value !== previous, firstCollaboratorLink);
+    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);
+    assert.match(await page.locator("#collaborator-list").textContent(), /test-userowner/);
     const previousShareLink = await page.locator("#share-link").inputValue();
-    assert.equal((await page.request.get(firstCollaboratorLink, { maxRedirects: 0 })).status(), 303);
     await page.locator("#rotate-share-secret").click();
     assert.equal(await page.locator("#action-title").textContent(), "Rotate access secret?");
-    assert.match(await page.locator("#action-message").textContent(), /Existing guest sessions for this link/);
+    assert.match(await page.locator("#action-message").textContent(), /Other registered collaborators and their links keep working/);
     await page.locator("#action-submit").click();
     await page.locator("#access-dialog").waitFor();
     assert.notEqual(await page.locator("#share-link").inputValue(), previousShareLink);
     assert.equal((await page.request.get(previousShareLink, { maxRedirects: 0 })).status(), 403);
-    assert.equal((await page.request.get(firstCollaboratorLink, { maxRedirects: 0 })).status(), 303);
     await page.locator("#access-close").click();
 
     await page.locator("#new-file").click();
@@ -348,6 +344,13 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#projects-page").waitFor();
     assert.equal(await page.locator("#current-user").textContent(), "admin");
     assert.equal(await page.locator("#new-project").isVisible(), true);
+    await page.locator("#account-button").click();
+    await page.locator("#account-dialog").waitFor();
+    assert.equal(await page.locator("#account-username").inputValue(), "admin");
+    await page.locator("#account-display-name").fill("Lead Editor");
+    await page.locator("#account-save").click();
+    await page.locator("#account-dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#current-user").textContent(), "Lead Editor");
 
     await page.locator("#invite-user").click();
     await page.locator("#invite-dialog").waitFor();
@@ -356,6 +359,9 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#invite-close").click();
 
     await page.locator(".project-row-main button").first().click();
+    assert.equal(await page.locator("#guest-name-field").isHidden(), true);
+    assert.equal(await page.locator("#editor-account-button").isVisible(), true);
+    assert.equal(await page.locator("#editor-account-name").textContent(), "Lead Editor");
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
     const shareLink = await page.locator("#share-link").inputValue();
@@ -391,7 +397,13 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.waitForURL(`${base}/projects/${projectId}`);
     await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await invited.locator("#back-projects").isVisible(), true);
-    assert.equal(await invited.locator("#share-project").isHidden(), true);
+    assert.equal(await invited.locator("#share-project").isVisible(), true);
+    await invited.locator("#share-project").click();
+    await invited.locator("#access-dialog").waitFor();
+    assert.notEqual(await invited.locator("#share-link").inputValue(), shareLink);
+    assert.match(await invited.locator("#collaborator-list").textContent(), /adminowner/);
+    assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.membercollaborator/);
+    await invited.locator("#access-close").click();
     await invited.locator("#git-button").click();
     await invited.locator("#git-dialog").waitFor();
     assert.equal(await invited.locator("#clone-button").count(), 0);

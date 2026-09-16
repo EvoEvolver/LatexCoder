@@ -121,11 +121,12 @@ const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements: Record<string, any> = Object.fromEntries([
   "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-link", "back-projects",
+  "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
-  "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "new-share-secret", "output-pane", "pdf-document",
+  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "guest-name-field", "new-file", "new-project", "output-pane", "pdf-document",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
@@ -150,7 +151,6 @@ const state: any = {
   user: null,
   bootstrapReady: true,
   projectCanManage: false,
-  accessProjectId: "",
   accessShareId: "",
   git: null,
   main: "main.tex",
@@ -185,7 +185,23 @@ function colorFor(name) {
 }
 
 function displayName() {
-  return elements.display_name.value.trim() || "Guest";
+  return state.user?.displayName || elements.display_name.value.trim() || "Guest";
+}
+
+function syncAccountUi() {
+  const registered = Boolean(state.user);
+  elements.guest_name_field.hidden = registered;
+  elements.editor_account_button.hidden = !registered;
+  elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
+  elements.editor_account_name.textContent = state.user?.displayName || state.user?.username || "";
+}
+
+function openAccountPanel() {
+  if (!state.user) return;
+  elements.account_username.value = state.user.username;
+  elements.account_display_name.value = state.user.displayName || state.user.username;
+  elements.account_dialog.showModal();
+  queueMicrotask(() => elements.account_display_name.select());
 }
 
 function encodeRoom(relativePath) {
@@ -940,11 +956,11 @@ async function refreshProject(open = false) {
   const data = await request("v1/project");
   const known = state.projects.find(project => project.id === data.project.id);
   if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt });
-  else if (data.project.permissions?.manage) {
-    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt });
+  else if (state.user) {
+    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, permissions: data.project.permissions });
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
-  elements.share_project.hidden = !state.projectCanManage;
+  elements.share_project.hidden = !data.project.permissions?.collaborate;
   elements.project_name.textContent = data.project.name;
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
@@ -992,9 +1008,11 @@ function renderProjects() {
     menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
     const panel = menu.querySelector("div");
     const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
-      ["pencil", "Rename", () => renameProject(project)],
+      ...(project.permissions?.manage ? [
+        ["pencil", "Rename", () => renameProject(project)],
+        ["trash-2", "Delete project", () => deleteProject(project), true],
+      ] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
       ["archive", "Download ZIP", () => downloadProject(project.id)],
-      ["trash-2", "Delete project", () => deleteProject(project), true],
     ];
     for (const [icon, label, action, danger] of actions) {
       const button = document.createElement("button");
@@ -1095,6 +1113,7 @@ async function openProjectPage(projectId, push = true) {
   elements.share_project.hidden = true;
   elements.back_projects.hidden = !state.user;
   elements.editor_login.hidden = Boolean(state.user);
+  syncAccountUi();
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
   document.title = `${project.name} · LaTeX Coder`;
   if (!changed && state.view) return;
@@ -1361,7 +1380,6 @@ async function copyText(value, message) {
 }
 
 function displayAccessShare(share) {
-  state.accessProjectId = state.projectId;
   state.accessShareId = share.id;
   const shareUrl = `${window.location.origin}${share.path}`;
   const agentUrl = `${window.location.origin}${share.agentPath}`;
@@ -1372,15 +1390,27 @@ function displayAccessShare(share) {
   elements.share_link.select();
 }
 
-async function createAccessShare() {
-  const result = await request("v1/project/share", { method: "POST" });
-  displayAccessShare(result.share);
+async function refreshProjectMembers() {
+  const result = await request("v1/project/members");
+  elements.collaborator_list.replaceChildren(...result.members.map(member => {
+    const row = document.createElement("div");
+    row.className = "flex items-center justify-between gap-3 rounded bg-muted px-2 py-1.5";
+    const name = document.createElement("span");
+    name.textContent = member.username;
+    const role = document.createElement("span");
+    role.className = "text-muted-foreground";
+    role.textContent = member.role;
+    row.append(name, role);
+    return row;
+  }));
 }
 
 async function openAccessDialog() {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
-  if (state.accessProjectId !== state.projectId || !state.accessShareId) await createAccessShare();
+  const result = await request("v1/project/share", { method: "POST" });
+  displayAccessShare(result.share);
+  await refreshProjectMembers();
   elements.access_project_name.textContent = project.name;
   elements.access_download.href = projectApiUrl("v1/project/archive");
   elements.access_download.download = `${project.id}.zip`;
@@ -1391,23 +1421,23 @@ async function rotateShareSecret() {
   elements.access_dialog.close();
   const confirmed = await openActionDialog({
     title: "Rotate access secret?",
-    message: "This collaborator's previous Browser, Agent, and Git links will stop working immediately. Existing guest sessions for this link will also be signed out. Other collaborators keep access.",
-    submitLabel: "Rotate secret",
+    message: "Links containing your previous secret will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
+    submitLabel: "Rotate my secret",
     danger: true,
   });
   if (!confirmed) {
     elements.access_dialog.showModal();
     return;
   }
-  const result = await request(`v1/project/share/${encodeURIComponent(state.accessShareId)}/rotate`, { method: "POST" });
+  const result = await request("v1/project/share/rotate", { method: "POST" });
   displayAccessShare(result.share);
   elements.access_dialog.showModal();
-  showToast("Secret rotated. This collaborator's previous links no longer work.");
+  showToast("Your secret was rotated. Previous links no longer work.");
 }
 
 async function enterProjectDashboard(replace = false) {
   await refreshProjects();
-  elements.current_user.textContent = state.user?.username || "";
+  syncAccountUi();
   if (replace) window.history.replaceState({}, "", "/projects");
   showProjectsPage(false);
 }
@@ -1427,6 +1457,34 @@ elements.display_name.addEventListener("change", () => {
   localStorage.setItem("paper-display-name", elements.display_name.value);
   setAwareness();
 });
+elements.account_button.addEventListener("click", openAccountPanel);
+elements.editor_account_button.addEventListener("click", openAccountPanel);
+elements.account_close.addEventListener("click", () => elements.account_dialog.close());
+elements.account_cancel.addEventListener("click", () => elements.account_dialog.close());
+elements.account_dialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  elements.account_dialog.close();
+});
+elements.account_form.addEventListener("submit", async event => {
+  event.preventDefault();
+  elements.account_save.disabled = true;
+  try {
+    const result = await request("v1/users/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: elements.account_display_name.value }),
+    });
+    state.user = result.user;
+    syncAccountUi();
+    setAwareness();
+    elements.account_dialog.close();
+    showToast("Display name updated.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    elements.account_save.disabled = false;
+  }
+});
 elements.auth_form.addEventListener("submit", async event => {
   event.preventDefault();
   elements.auth_submit.disabled = true;
@@ -1443,6 +1501,7 @@ elements.auth_form.addEventListener("submit", async event => {
       }),
     });
     state.user = result.user;
+    syncAccountUi();
     await enterProjectDashboard(true);
   } catch (error) {
     elements.auth_error.textContent = error.message;
@@ -1470,9 +1529,6 @@ elements.access_dialog.addEventListener("cancel", event => {
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
 elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent workspace link copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
-elements.new_share_secret.addEventListener("click", () => createAccessShare()
-  .then(() => showToast("New collaborator link created."))
-  .catch(error => showToast(error.message)));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);
   if (!elements.access_dialog.open) elements.access_dialog.showModal();
@@ -1486,13 +1542,17 @@ elements.invite_dialog.addEventListener("cancel", event => {
   elements.invite_dialog.close();
 });
 elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, "Invitation link copied."));
-elements.logout_button.addEventListener("click", async () => {
+async function logout() {
   await request("v1/auth/logout", { method: "POST" }).catch(() => null);
   state.user = null;
   state.projects = [];
+  syncAccountUi();
+  if (elements.account_dialog.open) elements.account_dialog.close();
   window.history.replaceState({}, "", "/login");
   showAuthPage();
-});
+}
+elements.logout_button.addEventListener("click", logout);
+elements.account_logout.addEventListener("click", logout);
 elements.git_button.addEventListener("click", async () => {
   elements.git_dialog.showModal();
   await refreshGit();
@@ -1696,6 +1756,7 @@ if (testMode) {
   request("v1/auth/me").then(async auth => {
     state.user = auth.user;
     state.bootstrapReady = auth.bootstrapReady;
+    syncAccountUi();
     if (e2eMode && state.user && !routeProjectId()) {
       const data = await refreshProjects();
       return openProjectPage(data.defaultProjectId || state.projects[0]?.id, false);

@@ -17,6 +17,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - A user-scoped project dashboard with stable, shareable editor URLs.
 - Invite-only core-team accounts for project creation and management, plus
   password-bearing share links that establish scoped guest sessions.
+- Persistent member profiles with editable display names used in presence,
+  comments, and suggestions.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Inline comments and tracked suggestions encoded as explicit LaTeX macros.
   Humans and agents see and edit the same review state through ordinary source
@@ -38,7 +40,7 @@ the JSON, Git HTTP, and WebSocket endpoints.
 | LaTeX Coder | Overleaf |
 | --- | --- |
 | **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
-| **Access:** Invite-only members manage only their own projects. Guests exchange a high-entropy project link for a scoped HttpOnly session and never see the owner's project dashboard. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
+| **Access:** Invite-only members see projects they own or have joined. Each member has a personal project secret; guests exchange a member's high-entropy link for a scoped HttpOnly session. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
 | **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |
@@ -84,17 +86,19 @@ additional team members; invitations expire after seven days.
 
 ## Projects
 
-Signed-in users open on a dedicated dashboard containing only projects they own
-and can create new projects under their account. Being signed in does not grant
-access to another user's projects. Project URLs use generated 12-character IDs
-that are independent of display names, so renaming a project never changes its URL.
+Signed-in users open on a dedicated dashboard containing projects they own or
+have joined as registered collaborators, and can create new projects under their
+account. Being signed in alone does not grant access to another user's projects.
+Project URLs use generated 12-character IDs that are independent of display names,
+so renaming a project never changes its URL.
 Guests enter through `/share/<project-id>/<secret>`; the server exchanges that
 secret for a 24-hour, project-scoped HttpOnly session and redirects to the clean
 editor URL `/projects/<project-id>`. Guests can edit that project but cannot list
-or create projects. Only the owner can rename or delete a project and retrieve
-its share and clone URLs. The Collaborate dialog creates a separate access grant
-for each collaborator. Rotating one grant invalidates only that person's Browser,
-Agent, and Git links and guest session; other collaborators keep access. Project
+or create projects. A signed-in member opening the same link joins the project as
+a persistent collaborator. Every registered project member receives a distinct
+personal Browser, Agent, and Git secret in the Collaborate panel. Rotating it
+invalidates only that member's old links and their guest sessions; the other
+members keep access. Only the owner can rename or delete the project. Project
 state is stored beneath:
 
 ```text
@@ -150,7 +154,7 @@ Agents can submit checked UTF-16 edits through
 `POST /v1/files/patch?project=<id>&path=main.tex`. Suggesting mode records the
 edit as inline review storage; direct mode bypasses review creation.
 
-Project owners can copy a capability-bearing Agent workspace URL from the
+Registered project members can copy their own capability-bearing Agent workspace URL from the
 **Collaborate** dialog. Opening `/agent/<project-id>/<share-secret>` returns a
 plain-text project file listing and project-specific read and checked-patch
 URLs. These URLs do not require an account or cookie; possession of the link

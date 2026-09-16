@@ -8,6 +8,7 @@ export type ProjectMetadata = {
   ownerUsername: string | null;
   shareToken: string;
   createdAt: string;
+  membershipRole?: string;
   git?: Record<string, unknown>;
 };
 
@@ -40,6 +41,7 @@ export class StateDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
         password_salt TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -71,9 +73,20 @@ export class StateDatabase {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_username, name);
 
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('owner', 'collaborator')),
+        joined_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, username)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS project_members_user_idx ON project_members(username, joined_at);
+
       CREATE TABLE IF NOT EXISTS project_shares (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        username TEXT,
+        token TEXT,
         token_hash TEXT NOT NULL UNIQUE,
         created_at INTEGER NOT NULL
       ) STRICT;
@@ -106,12 +119,31 @@ export class StateDatabase {
         PRIMARY KEY (project_id, relative_path)
       ) STRICT;
     `);
+    const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as any[];
+    if (!userColumns.some(column => column.name === "display_name")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN display_name TEXT;");
+      this.db.exec("UPDATE users SET display_name = username WHERE display_name IS NULL;");
+    }
     const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as any[];
     if (!projectSessionColumns.some(column => column.name === "share_id")) {
       this.db.exec("ALTER TABLE project_sessions ADD COLUMN share_id TEXT;");
       this.db.exec("DELETE FROM project_sessions WHERE share_id IS NULL;");
     }
-    this.db.exec("PRAGMA user_version = 2;");
+    const projectShareColumns = this.db.prepare("PRAGMA table_info(project_shares)").all() as any[];
+    if (!projectShareColumns.some(column => column.name === "username")) {
+      this.db.exec("ALTER TABLE project_shares ADD COLUMN username TEXT;");
+    }
+    if (!projectShareColumns.some(column => column.name === "token")) {
+      this.db.exec("ALTER TABLE project_shares ADD COLUMN token TEXT;");
+    }
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS project_shares_member_idx
+      ON project_shares(project_id, username) WHERE username IS NOT NULL;
+      INSERT OR IGNORE INTO project_members (project_id, username, role, joined_at)
+      SELECT id, owner_username, 'owner', CAST(strftime('%s', created_at) AS INTEGER) * 1000
+      FROM projects WHERE owner_username IS NOT NULL;
+      PRAGMA user_version = 4;
+    `);
     chmodSync(this.path, 0o600);
   }
 
@@ -144,6 +176,7 @@ export class StateDatabase {
     if (!row) return null;
     return {
       username: row.username as string,
+      displayName: (row.display_name || row.username) as string,
       salt: row.password_salt as string,
       hash: row.password_hash as string,
       createdAt: row.created_at as string,
@@ -151,11 +184,16 @@ export class StateDatabase {
     };
   }
 
-  createUser(user: { username: string; salt: string; hash: string; createdAt: string; invitedBy: string | null }) {
+  createUser(user: { username: string; displayName: string; salt: string; hash: string; createdAt: string; invitedBy: string | null }) {
     this.db.prepare(`
-      INSERT INTO users (username, password_salt, password_hash, created_at, invited_by)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(user.username, user.salt, user.hash, user.createdAt, user.invitedBy);
+      INSERT INTO users (username, display_name, password_salt, password_hash, created_at, invited_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(user.username, user.displayName, user.salt, user.hash, user.createdAt, user.invitedBy);
+  }
+
+  updateUserDisplayName(username: string, displayName: string) {
+    const result = this.db.prepare("UPDATE users SET display_name = ? WHERE username = ?").run(displayName, username);
+    return Number(result.changes) === 1;
   }
 
   getInvitation(tokenHash: string) {
@@ -226,10 +264,24 @@ export class StateDatabase {
     });
   }
 
-  createProjectShare(projectId: string, id: string, tokenHash: string, createdAt: number) {
+  createProjectShare(projectId: string, id: string, username: string, token: string, tokenHash: string, createdAt: number) {
     this.db.prepare(`
-      INSERT INTO project_shares (id, project_id, token_hash, created_at) VALUES (?, ?, ?, ?)
-    `).run(id, projectId, tokenHash, createdAt);
+      INSERT INTO project_shares (id, project_id, username, token, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, username, token, tokenHash, createdAt);
+  }
+
+  getProjectShareForUser(projectId: string, username: string) {
+    const row = this.db.prepare(`
+      SELECT id, project_id, username, token, created_at FROM project_shares
+      WHERE project_id = ? AND username = ?
+    `).get(projectId, username) as any;
+    return row ? {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      username: row.username as string,
+      token: row.token as string,
+      createdAt: Number(row.created_at),
+    } : null;
   }
 
   getProjectShareByToken(projectId: string, tokenHash: string) {
@@ -239,15 +291,37 @@ export class StateDatabase {
     return row ? { id: row.id as string, projectId: row.project_id as string, createdAt: Number(row.created_at) } : null;
   }
 
-  rotateProjectShare(projectId: string, shareId: string, tokenHash: string) {
+  rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string) {
     return this.transaction(() => {
       const result = this.db.prepare(`
-        UPDATE project_shares SET token_hash = ? WHERE id = ? AND project_id = ?
-      `).run(tokenHash, shareId, projectId);
+        UPDATE project_shares SET token = ?, token_hash = ? WHERE project_id = ? AND username = ?
+      `).run(token, tokenHash, projectId, username);
       if (Number(result.changes) !== 1) return false;
-      this.db.prepare("DELETE FROM project_sessions WHERE project_id = ? AND share_id = ?").run(projectId, shareId);
+      const share = this.getProjectShareForUser(projectId, username);
+      this.db.prepare("DELETE FROM project_sessions WHERE project_id = ? AND share_id = ?").run(projectId, share!.id);
       return true;
     });
+  }
+
+  getProjectMember(projectId: string, username: string) {
+    const row = this.db.prepare(`
+      SELECT project_id, username, role, joined_at FROM project_members WHERE project_id = ? AND username = ?
+    `).get(projectId, username) as any;
+    return row ? { projectId: row.project_id as string, username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) } : null;
+  }
+
+  addProjectMember(projectId: string, username: string, role = "collaborator", joinedAt = Date.now()) {
+    this.db.prepare(`
+      INSERT INTO project_members (project_id, username, role, joined_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(project_id, username) DO NOTHING
+    `).run(projectId, username, role, joinedAt);
+  }
+
+  listProjectMembers(projectId: string) {
+    return (this.db.prepare(`
+      SELECT username, role, joined_at FROM project_members WHERE project_id = ?
+      ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, username COLLATE NOCASE
+    `).all(projectId) as any[]).map(row => ({ username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) }));
   }
 
   listProjects(ownerUsername?: string | null) {
@@ -255,6 +329,15 @@ export class StateDatabase {
       ? this.db.prepare("SELECT * FROM projects WHERE owner_username = ? ORDER BY name COLLATE NOCASE").all(ownerUsername)
       : this.db.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE").all();
     return (rows as any[]).map(row => this.projectFromRow(row));
+  }
+
+  listProjectsForUser(username: string) {
+    const rows = this.db.prepare(`
+      SELECT projects.*, project_members.role AS membership_role
+      FROM project_members JOIN projects ON projects.id = project_members.project_id
+      WHERE project_members.username = ? ORDER BY projects.name COLLATE NOCASE
+    `).all(username) as any[];
+    return rows.map(row => ({ ...this.projectFromRow(row), membershipRole: row.membership_role as string }));
   }
 
   getProject(id: string) {
@@ -276,6 +359,7 @@ export class StateDatabase {
         metadata.git ? JSON.stringify(metadata.git) : null,
       );
       this.saveBuild(metadata.id, EMPTY_BUILD);
+      if (metadata.ownerUsername) this.addProjectMember(metadata.id, metadata.ownerUsername, "owner", Date.parse(metadata.createdAt));
     });
   }
 

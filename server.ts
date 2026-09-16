@@ -81,6 +81,15 @@ function cleanUsername(value) {
   return username;
 }
 
+function cleanDisplayName(value) {
+  if (typeof value !== "string") throw apiError("invalid_display_name", "display name is required");
+  const displayName = value.replace(/\s+/g, " ").trim();
+  if (!displayName || displayName.length > 28) {
+    throw apiError("invalid_display_name", "display name must contain 1 to 28 characters");
+  }
+  return displayName;
+}
+
 function validatePassword(value) {
   if (typeof value !== "string" || value.length < 10 || value.length > 256) {
     throw apiError("invalid_password", "password must contain 10 to 256 characters");
@@ -863,9 +872,9 @@ seven-day registration link; invited users register through
 \`POST /v1/auth/register\`.
 
 Member authentication is required for \`GET /v1/projects\` and project creation.
-The list contains only projects owned by the current member. \`POST /v1/projects\`
-with \`{"name":"My paper"}\` creates an owned project. Only its owner can rename,
-delete, or create per-collaborator access grants. Rename or delete one with
+The list contains projects owned by or shared with the current member.
+\`POST /v1/projects\` with \`{"name":"My paper"}\` creates an owned project.
+Only its owner can rename or delete it. Rename or delete one with
 \`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
@@ -875,9 +884,10 @@ Browser routes \`/projects\` and \`/projects/:id\` provide the member dashboard
 and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
 establish a project-scoped session. That session authorizes only the selected
 project and does not expose the owner's dashboard. Signing in alone never grants
-access to another member's projects. \`POST /v1/project/share?project=<id>\`
-creates a separate access grant for one collaborator; rotating one grant does
-not revoke another collaborator's links.
+access to another member's projects. A signed-in user who opens a valid share
+link joins as a persistent registered collaborator. Each registered member gets
+a different personal secret from \`POST /v1/project/share?project=<id>\`;
+rotating it does not revoke another member's links or project membership.
 
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
@@ -1039,6 +1049,7 @@ export async function createPaperServer(options: any = {}) {
     const password = validatePassword(configuredAdminPassword);
     database.createUser({
       username: "admin",
+      displayName: "admin",
       ...passwordRecord(password),
       createdAt: new Date().toISOString(),
       invitedBy: null,
@@ -1071,9 +1082,11 @@ export async function createPaperServer(options: any = {}) {
   }
 
   function currentUser(request) {
-    if (authDisabled) return { username: "test-user" };
+    if (authDisabled) return { username: "test-user", displayName: "Test User" };
     const session = userSession(request);
-    return session ? { username: session.record.username } : null;
+    if (!session) return null;
+    const user = database.getUser(session.record.username);
+    return user ? { username: user.username, displayName: user.displayName } : null;
   }
 
   function requireUser(request) {
@@ -1086,15 +1099,20 @@ export async function createPaperServer(options: any = {}) {
     return currentUser(request)?.username === runtime.metadata.ownerUsername;
   }
 
+  function projectMembership(request, runtime) {
+    const user = currentUser(request);
+    return user ? database.getProjectMember(runtime.id, user.username) : null;
+  }
+
   function hasProjectAccess(request, runtime) {
-    if (isProjectOwner(request, runtime)) return true;
+    if (projectMembership(request, runtime)) return true;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return true;
     return Boolean(findProjectShare(runtime, request.query?.access));
   }
 
   function projectAccessShareId(request, runtime) {
-    if (isProjectOwner(request, runtime)) return null;
+    if (projectMembership(request, runtime)) return null;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return session.record.shares.get(runtime.id) || null;
     return findProjectShare(runtime, request.query?.access)?.id || null;
@@ -1110,6 +1128,12 @@ export async function createPaperServer(options: any = {}) {
     if (!isProjectOwner(request, runtime)) {
       throw apiError("project_owner_required", "only the project owner can manage this project", 403);
     }
+  }
+
+  function requireProjectMember(request, runtime) {
+    const membership = projectMembership(request, runtime);
+    if (!membership) throw apiError("project_member_required", "sign in as a project member to continue", 403);
+    return membership;
   }
 
   function issueUserSession(request, response, username) {
@@ -1152,10 +1176,12 @@ export async function createPaperServer(options: any = {}) {
     };
   }
 
-  function createProjectShare(runtime) {
+  function memberProjectShare(runtime, username) {
+    const existing = database.getProjectShareForUser(runtime.id, username);
+    if (existing) return sharePaths(runtime, existing.id, existing.token);
     const id = randomProjectId();
     const token = randomToken();
-    database.createProjectShare(runtime.id, id, sha256(token), Date.now());
+    database.createProjectShare(runtime.id, id, username, token, sha256(token), Date.now());
     return sharePaths(runtime, id, token);
   }
 
@@ -1189,11 +1215,17 @@ export async function createPaperServer(options: any = {}) {
     return runtime;
   }
 
-  async function projectSummaries(ownerUsername = null) {
+  async function projectSummaries(username = null) {
     const summaries = [];
-    for (const metadata of database.listProjects(ownerUsername)) {
+    const records = username ? database.listProjectsForUser(username) : database.listProjects();
+    for (const metadata of records) {
       const runtime = await loadProject(metadata.id);
-      summaries.push({ ...publicProjectMetadata(runtime.metadata), build: { status: runtime.build.status, pdf: runtime.build.pdf } });
+      summaries.push({
+        ...publicProjectMetadata(runtime.metadata),
+        build: { status: runtime.build.status, pdf: runtime.build.pdf },
+        membership: metadata.membershipRole || "owner",
+        permissions: { manage: (metadata.membershipRole || "owner") === "owner" },
+      });
     }
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
   }
@@ -1225,8 +1257,8 @@ export async function createPaperServer(options: any = {}) {
   const defaultProjectForRequest = async request => {
     const user = currentUser(request);
     if (user) {
-      const owned = await projectSummaries(user.username);
-      if (owned.length) return owned[0].id;
+      const accessible = await projectSummaries(user.username);
+      if (accessible.length) return accessible[0].id;
     }
     const access = projectSession(request);
     if (access) {
@@ -1300,7 +1332,9 @@ export async function createPaperServer(options: any = {}) {
       const runtime = await loadProject(request.params.projectId);
       const share = findProjectShare(runtime, request.params.token);
       if (!share) throw apiError("share_link_invalid", "project share link is invalid", 403);
-      issueProjectSession(request, response, runtime.id, share.id);
+      const user = currentUser(request);
+      if (user) database.addProjectMember(runtime.id, user.username);
+      else issueProjectSession(request, response, runtime.id, share.id);
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
     } catch (error) { next(error); }
   });
@@ -1342,7 +1376,7 @@ export async function createPaperServer(options: any = {}) {
       }
       loginAttempts.delete(attemptKey);
       issueUserSession(request, response, username);
-      response.json({ user: { username } });
+      response.json({ user: { username, displayName: user.displayName } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/logout", (request, response) => {
@@ -1350,6 +1384,14 @@ export async function createPaperServer(options: any = {}) {
     if (session) database.deleteUserSession(session.key);
     response.append("Set-Cookie", sessionCookie(request, "lc_user", "", 0));
     response.json({ user: null });
+  });
+  app.patch("/v1/users/me", express.json({ limit: "16kb" }), (request, response, next) => {
+    try {
+      const user = requireUser(request);
+      const displayName = cleanDisplayName(request.body?.displayName);
+      if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
+      response.json({ user: { username: user.username, displayName } });
+    } catch (error) { next(error); }
   });
   app.get("/v1/invitations/:token", (request, response, next) => {
     try {
@@ -1390,20 +1432,20 @@ export async function createPaperServer(options: any = {}) {
         if (!current || current.usedAt || current.expiresAt <= Date.now()) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
-        database.createUser({ username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy });
+        database.createUser({ username, displayName: username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy });
         if (!database.consumeInvitation(tokenHash, username, createdAt)) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
       });
       issueUserSession(request, response, username);
-      response.status(201).json({ user: { username } });
+      response.status(201).json({ user: { username, displayName: username } });
     } catch (error) { next(error); }
   });
   app.get("/v1/projects", async (request, response, next) => {
     try {
       const user = requireUser(request);
-      const owned = await projectSummaries(user.username);
-      response.json({ projects: owned, defaultProjectId: owned[0]?.id || null });
+      const accessible = await projectSummaries(user.username);
+      response.json({ projects: accessible, defaultProjectId: accessible[0]?.id || null });
     }
     catch (error) { next(error); }
   });
@@ -1453,28 +1495,38 @@ export async function createPaperServer(options: any = {}) {
         main: runtime.build.main,
         files: await listFiles(runtime.projectDir),
         build: runtime.build,
-        permissions: { manage: isProjectOwner(request, runtime) },
+        permissions: { manage: isProjectOwner(request, runtime), collaborate: Boolean(projectMembership(request, runtime)) },
       } });
     } catch (error) { next(error); }
   });
   app.post("/v1/project/share", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      requireProjectOwner(request, runtime);
-      response.status(201).json({ share: createProjectShare(runtime) });
+      const user = requireUser(request);
+      requireProjectMember(request, runtime);
+      response.json({ share: memberProjectShare(runtime, user.username) });
     } catch (error) { next(error); }
   });
-  app.post("/v1/project/share/:shareId/rotate", async (request, response, next) => {
+  app.post("/v1/project/share/rotate", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      requireProjectOwner(request, runtime);
-      const shareId = safeProjectId(request.params.shareId);
+      const user = requireUser(request);
+      requireProjectMember(request, runtime);
+      const current = database.getProjectShareForUser(runtime.id, user.username);
+      if (!current) throw apiError("share_not_found", "create your project access secret first", 404);
       const shareToken = randomToken();
-      if (!database.rotateProjectShare(runtime.id, shareId, sha256(shareToken))) {
+      if (!database.rotateProjectShare(runtime.id, user.username, shareToken, sha256(shareToken))) {
         throw apiError("share_not_found", "project access grant does not exist", 404);
       }
-      runtime.collaboration.disconnectShare(shareId, "project access secret changed");
-      response.json({ share: sharePaths(runtime, shareId, shareToken) });
+      runtime.collaboration.disconnectShare(current.id, "project access secret changed");
+      response.json({ share: sharePaths(runtime, current.id, shareToken) });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/project/members", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      requireProjectMember(request, runtime);
+      response.json({ members: database.listProjectMembers(runtime.id) });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/archive", async (request, response, next) => {
