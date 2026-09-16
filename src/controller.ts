@@ -468,11 +468,14 @@ const reviewTooltip = hoverTooltip((view, position) => {
       dom.className = `cm-review-tooltip ${item.kind}`;
       const meta = document.createElement("strong");
       meta.textContent = item.kind === "comment"
-        ? `${item.author || "Guest"} commented`
+        ? `${item.author || "Guest"} commented · ${item.messages.length} message${item.messages.length === 1 ? "" : "s"}`
         : `${item.author || "Guest"} suggested an edit`;
       const note = document.createElement("p");
       if (item.kind === "comment") {
-        note.textContent = item.note;
+        const latest = item.messages.at(-1);
+        note.textContent = latest.root
+          ? latest.body
+          : `${latest.author || "Guest"}: ${latest.body}`;
       } else if (item.kind === "revision") {
         note.textContent = `Original: ${item.note}`;
       } else {
@@ -487,7 +490,11 @@ const reviewTooltip = hoverTooltip((view, position) => {
       const actions = document.createElement("div");
       actions.className = "cm-review-tooltip-actions";
       if (item.kind === "comment") {
-        actions.append(tooltipButton("Resolve", () => applyReviewDecision(item.id, "resolve")));
+        actions.append(
+          tooltipButton("Reply", () => openCommentThread(item.id, true)),
+          tooltipButton("Open thread", () => openCommentThread(item.id)),
+          tooltipButton("Resolve", () => applyReviewDecision(item.id, "resolve")),
+        );
       } else {
         actions.append(
           tooltipButton("Accept", () => applyReviewDecision(item.id, "accept")),
@@ -523,7 +530,7 @@ function trackedSuggestion(transaction, reviews) {
     queueMicrotask(() => showToast("Turn off Suggesting to edit the document class."));
     return [];
   }
-  if (/\\(?:cmtbg|cmted|revbg|reved|addbg|added|delbg|deled)\b/.test(change.inserted)) {
+  if (/\\(?:cmtbg|cmted|cmtrpl|revbg|reved|addbg|added|delbg|deled)\b/.test(change.inserted)) {
     queueMicrotask(() => showToast("Review storage macros are managed by LaTeX Coder."));
     return [];
   }
@@ -636,7 +643,7 @@ const protectReviewStorage = EditorState.transactionFilter.of(transaction => {
   if (state.suggesting) return trackedSuggestion(transaction, reviews);
   let blocked = false;
   transaction.changes.iterChanges((from, to, _newFrom, _newTo, inserted) => {
-    if (/\\(?:cmtbg|cmted|revbg|reved|addbg|added|delbg|deled)\b/.test(inserted.toString())) blocked = true;
+    if (/\\(?:cmtbg|cmted|cmtrpl|revbg|reved|addbg|added|delbg|deled)\b/.test(inserted.toString())) blocked = true;
     for (const item of reviews) {
       for (const range of [
         { from: item.from, to: item.bodyFrom },
@@ -865,8 +872,9 @@ async function showFilePreview(file) {
 function updatePresence() {
   elements.presence.replaceChildren();
   if (!state.provider) return;
-  const users = [...state.provider.awareness.getStates().values()]
-    .map(value => value.user)
+  const users = [...state.provider.awareness.getStates().entries()]
+    .filter(([clientId]) => clientId !== state.provider.awareness.clientID)
+    .map(([, value]) => value.user)
     .filter(Boolean)
     .slice(0, 10);
   for (const user of users) {
@@ -950,6 +958,36 @@ function applyReviewDecision(id, decision) {
   applyReviewDecisions([id], decision);
 }
 
+function appendCommentReply(threadId, value) {
+  if (!state.view || !value.trim()) return false;
+  const thread = parseReviews(state.view.state.doc.toString())
+    .find(item => item.kind === "comment" && item.id === threadId);
+  if (!thread || !thread.repliesValid || thread.replyInsertAt === null) {
+    showToast("This comment thread cannot accept a reply.");
+    return false;
+  }
+  const reply = `\\cmtrpl{${randomId()}}{${cleanMetadata(displayName())}}{${cleanMetadata(value)}}`;
+  state.view.dispatch({
+    changes: { from: thread.replyInsertAt, to: thread.replyInsertAt, insert: reply },
+    annotations: reviewMutation.of(true),
+  });
+  renderReviews();
+  return true;
+}
+
+function openCommentThread(threadId, reply = false) {
+  selectOutput("review");
+  elements.output_pane.classList.add("mobile-open");
+  renderReviews();
+  const article = [...elements.review_list.querySelectorAll(".review-item")]
+    .find(candidate => candidate.dataset.reviewId === threadId);
+  if (!article) return;
+  article.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  article.classList.add("ring-2", "ring-primary");
+  setTimeout(() => article.classList.remove("ring-2", "ring-primary"), 1200);
+  if (reply) article.querySelector("[data-comment-reply]")?.click();
+}
+
 function reviewButton(label, action) {
   const button = document.createElement("button");
   button.className = "h-7 rounded-md border bg-background px-2.5 text-[11px] font-medium hover:bg-accent";
@@ -959,6 +997,33 @@ function reviewButton(label, action) {
     action();
   });
   return button;
+}
+
+function openReplyComposer(article, threadId) {
+  const existing = article.querySelector(".comment-reply-form");
+  if (existing) return existing.querySelector("textarea").focus();
+  const form = document.createElement("form");
+  form.className = "comment-reply-form mb-2 space-y-2 border-t pt-2";
+  const input = document.createElement("textarea");
+  input.className = "min-h-16 w-full resize-y rounded-md border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
+  input.placeholder = "Write a reply";
+  input.required = true;
+  const controls = document.createElement("div");
+  controls.className = "flex justify-end gap-1.5";
+  const cancel = reviewButton("Cancel", () => form.remove());
+  cancel.type = "button";
+  const submit = reviewButton("Reply", () => {});
+  submit.type = "submit";
+  submit.classList.add("bg-primary", "text-primary-foreground", "hover:bg-primary/90");
+  controls.append(cancel, submit);
+  form.append(input, controls);
+  form.addEventListener("click", event => event.stopPropagation());
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    if (appendCommentReply(threadId, input.value)) showToast("Reply added.");
+  });
+  article.querySelector(".review-buttons").before(form);
+  input.focus();
 }
 
 function renderReviews() {
@@ -993,6 +1058,7 @@ function renderReviews() {
     const item = group.items[0];
     const article = document.createElement("article");
     article.className = `review-item ${group.kind} mb-2 rounded-md border border-l-[3px] border-l-amber-700 bg-card p-3 [&.revision]:border-l-primary`;
+    article.dataset.reviewId = group.id;
     const meta = document.createElement("div");
     meta.className = "review-meta mb-2 flex items-center justify-between gap-2 text-xs [&_strong]:truncate [&_span]:uppercase [&_span]:text-[9px] [&_span]:text-muted-foreground";
     const author = document.createElement("strong");
@@ -1012,15 +1078,31 @@ function renderReviews() {
         addition?.body ? `+ ${addition.body.trim()}` : "",
       ].filter(Boolean).join("\n");
     }
-    const note = document.createElement("p");
+    const note = document.createElement("div");
     note.className = "review-note mb-2 text-sm leading-relaxed";
-    note.textContent = group.kind === "comment"
-      ? item.note
-      : item.kind === "revision" ? `Before: ${item.note}` : "Tracked change";
+    if (group.kind === "comment") {
+      note.classList.add("space-y-2");
+      for (const message of item.messages) {
+        const messageRow = document.createElement("div");
+        messageRow.className = `comment-message rounded-md px-2.5 py-2 ${message.root ? "bg-amber-50" : "bg-muted"}`;
+        const messageAuthor = document.createElement("strong");
+        messageAuthor.className = "mb-0.5 block text-[11px]";
+        messageAuthor.textContent = message.author || "Guest";
+        const messageBody = document.createElement("p");
+        messageBody.className = "whitespace-pre-wrap text-sm";
+        messageBody.textContent = message.body;
+        messageRow.append(messageAuthor, messageBody);
+        note.append(messageRow);
+      }
+    } else {
+      note.textContent = item.kind === "revision" ? `Before: ${item.note}` : "Tracked change";
+    }
     const actions = document.createElement("div");
     actions.className = "review-buttons flex gap-1.5";
     if (group.kind === "comment") {
-      actions.append(reviewButton("Resolve", () => applyReviewDecision(group.id, "resolve")));
+      const reply = reviewButton("Reply", () => openReplyComposer(article, group.id));
+      reply.dataset.commentReply = "";
+      actions.append(reply, reviewButton("Resolve", () => applyReviewDecision(group.id, "resolve")));
     } else {
       actions.append(
         reviewButton("Accept", () => applyReviewDecision(group.id, "accept")),

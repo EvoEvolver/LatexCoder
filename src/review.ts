@@ -13,6 +13,41 @@ function parseBraced(source, start) {
   return null;
 }
 
+function parseCommentNote(note, threadId, rootAuthor) {
+  const opening = "\\cmtrpl";
+  const firstReply = note.indexOf(opening);
+  const rootBody = firstReply < 0 ? note : note.slice(0, firstReply).trimEnd();
+  const replies = [];
+  let valid = true;
+  let cursor = firstReply;
+  while (cursor >= 0 && cursor < note.length) {
+    while (/\s/.test(note[cursor] || "")) cursor += 1;
+    if (cursor >= note.length) break;
+    if (!note.startsWith(opening, cursor)) {
+      valid = false;
+      break;
+    }
+    const id = parseBraced(note, cursor + opening.length);
+    const author = id && parseBraced(note, id.end);
+    const body = author && parseBraced(note, author.end);
+    if (!id || !author || !body || !id.value || replies.some(reply => reply.id === id.value)) {
+      valid = false;
+      break;
+    }
+    replies.push({ id: id.value, author: author.value, body: body.value });
+    cursor = body.end;
+  }
+  return {
+    note: rootBody,
+    replies,
+    repliesValid: valid,
+    messages: [
+      { id: threadId, author: rootAuthor, body: rootBody, root: true },
+      ...replies.map(reply => ({ ...reply, root: false })),
+    ],
+  };
+}
+
 function parseReviewKind(source, kind, opening, closing, closingHasArgument) {
   const items = [];
   let cursor = 0;
@@ -27,15 +62,22 @@ function parseReviewKind(source, kind, opening, closing, closingHasArgument) {
     const note = closingHasArgument ? parseBraced(source, closeAt + closing.length) : null;
     if (closingHasArgument && !note) { cursor = closeAt + closing.length; continue; }
     const to = note?.end ?? closeAt + closing.length;
+    const comment = kind === "comment"
+      ? parseCommentNote(note?.value ?? "", id.value, author.value)
+      : null;
     items.push({
       kind,
       id: id.value,
       author: author.value,
       body: source.slice(author.end, closeAt),
-      note: note?.value ?? "",
+      note: comment?.note ?? note?.value ?? "",
+      replies: comment?.replies ?? [],
+      repliesValid: comment?.repliesValid ?? true,
+      messages: comment?.messages ?? [],
       from,
       bodyFrom: author.end,
       bodyTo: closeAt,
+      replyInsertAt: note ? note.end - 1 : null,
       to,
     });
     cursor = to;

@@ -167,8 +167,19 @@ test("comment accepts arbitrary selected LaTeX fragments", async () => {
 
     const { doc } = await editorState(page);
     assert.match(doc, /\\cmtbg\{[^}]+\}\{[^}]+\}\{fragment % note\\cmted\{Comment on this fragment\}/);
-    await page.locator(".cm-review-comment", { hasText: "{fragment % note" }).waitFor();
-    await page.locator('[data-output="review"]').click();
+    const highlight = page.locator(".cm-review-comment", { hasText: "{fragment % note" });
+    await highlight.waitFor();
+    await highlight.hover();
+    const tooltip = page.locator(".cm-review-tooltip.comment");
+    await tooltip.waitFor();
+    assert.equal(await tooltip.getByRole("button", { name: "Open thread" }).count(), 1);
+    await tooltip.getByRole("button", { name: "Reply", exact: true }).click();
+    const replyForm = page.locator(".comment-reply-form");
+    await replyForm.locator("textarea").fill("I added a source");
+    await replyForm.getByRole("button", { name: "Reply", exact: true }).click();
+    await page.locator(".comment-message", { hasText: "I added a source" }).waitFor();
+    assert.equal(await page.locator(".review-item.comment .comment-message").count(), 2);
+    assert.match((await editorState(page)).doc, /\\cmtrpl\{[^}]+\}\{[^}]+\}\{I added a source\}/);
     await page.locator(".review-item button", { hasText: "Resolve" }).click();
     assert.equal((await editorState(page)).doc, content);
   });
@@ -246,6 +257,8 @@ test("real collaborative page creates and accepts an insertion suggestion", asyn
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
+    assert.equal(await page.locator("#presence .presence-avatar").count(), 0);
     await page.locator("#suggest-edit").click();
     await page.evaluate(() => {
       const { view } = globalThis.__paperE2E.state;
@@ -265,6 +278,26 @@ test("real collaborative page creates and accepts an insertion suggestion", asyn
     const source = await (await fetch(`${base}/v1/files?path=main.tex`)).text();
     assert.match(source, / tracked$/);
     assert.doesNotMatch(source, /\\(?:addbg|added)\b/);
+  });
+});
+
+test("awareness shows other collaborators but not the local user", async () => {
+  await withEditor(async ({ page, base, browser }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
+    assert.equal(await page.locator("#presence .presence-avatar").count(), 0);
+
+    const other = await browser.newPage();
+    try {
+      await other.goto(`${base}/?e2e=1`);
+      await other.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      await other.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
+      await page.waitForFunction(() => document.querySelectorAll("#presence .presence-avatar").length === 1);
+      await other.waitForFunction(() => document.querySelectorAll("#presence .presence-avatar").length === 1);
+    } finally {
+      await other.close();
+    }
   });
 });
 

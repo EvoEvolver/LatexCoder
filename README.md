@@ -20,9 +20,10 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - Persistent member profiles with editable display names used in presence,
   comments, and suggestions.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
-- Inline comments and tracked suggestions encoded as explicit LaTeX macros.
-  Humans and agents see and edit the same review state through ordinary source
-  reads and checked patches, including accepting, rejecting, and resolving it.
+- Threaded inline comments, replies, and tracked suggestions encoded as explicit
+  LaTeX macros. Humans and agents see and edit the same review state through
+  ordinary source reads and checked patches, including replying, accepting,
+  rejecting, and resolving it.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live

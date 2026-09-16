@@ -627,6 +627,15 @@ function validateMergedText(relativePath, source) {
       throw apiError("git_review_conflict", `${relativePath} contains malformed review storage`, 409);
     }
   }
+  const comments = reviews.filter(item => item.kind === "comment");
+  const replies = comments.flatMap(item => item.replies);
+  if (
+    comments.some(item => !item.repliesValid)
+    || source.split("\\cmtrpl").length - 1 !== replies.length
+    || new Set(replies.map(reply => reply.id)).size !== replies.length
+  ) {
+    throw apiError("git_review_conflict", `${relativePath} contains malformed comment replies`, 409);
+  }
 }
 
 async function trackedPaths(projectDir) {
@@ -962,7 +971,7 @@ Overlapping, stale, or Unicode-splitting edits are rejected without changing the
 
 \`POST /v1/compile\` with JSON \`{"main":"main.tex"}\` compiles a PDF.
 
-Text files are synchronized through Yjs. Writing through the API updates connected editors. Inline comments use \`\\cmtbg{id}{name}text\\cmted{comment}\`. Suggestion mode tracks insertions as \`\\addbg{id}{name}text\\added\` and deletions as \`\\delbg{id}{name}text\\deled\`.
+Text files are synchronized through Yjs. Writing through the API updates connected editors. Inline comments use \`\\cmtbg{id}{name}text\\cmted{comment}\`; replies are appended inside the final argument as \`\\cmtrpl{reply-id}{name}{reply}\`. Suggestion mode tracks insertions as \`\\addbg{id}{name}text\\added\` and deletions as \`\\delbg{id}{name}text\\deled\`.
 
 ## Trust
 
@@ -1016,6 +1025,20 @@ To create a reviewable suggestion instead of a direct edit, omit mode or use
 "mode":"suggesting" and include:
 
 {"agent":{"id":"ag_uniqueid","name":"Agent Name"}}
+
+## Reply To An Inline Comment
+
+Comments are stored as:
+
+\\cmtbg{thread-id}{Author}selected text\\cmted{initial comment}
+
+To reply, use the checked patch API to append this immediately before the final
+closing brace of that comment's \\cmted argument:
+
+\\cmtrpl{unique-reply-id}{Agent Name}{Reply text}
+
+Keep the existing comment and replies intact unless the user explicitly asks
+to resolve or rewrite them. Read the latest file revision before patching.
 
 ## Replace Or Create A File
 
