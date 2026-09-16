@@ -273,9 +273,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#action-input").fill("Compact Project");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Compact Project");
-    await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
+    await page.waitForURL(/\/projects\/[A-Za-z0-9_-]{12}$/);
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
-    assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
     assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
     assert.equal(await page.locator("#clone-button").count(), 0);
@@ -339,7 +339,7 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#access-dialog").waitFor();
     const shareLink = await page.locator("#share-link").inputValue();
     const projectId = new URL(shareLink).pathname.split("/")[2];
-    assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
 
     const guest = await browser.newPage();
     await guest.goto(shareLink);

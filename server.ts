@@ -917,10 +917,14 @@ do not store unrelated secrets in project directories.
 }
 
 function safeProjectId(value) {
-  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{12}$/.test(value)) {
     throw apiError("invalid_project", "project id is invalid");
   }
   return value;
+}
+
+function randomProjectId() {
+  return randomBytes(9).toString("base64url");
 }
 
 function cleanProjectName(value) {
@@ -1075,8 +1079,8 @@ export async function createPaperServer(options: any = {}) {
 
   async function createProject(name, ownerUsername) {
     name = cleanProjectName(name);
-    let id = randomUUID();
-    while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomUUID();
+    let id = randomProjectId();
+    while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomProjectId();
     const projectRoot = path.join(projectsDir, id);
     const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });

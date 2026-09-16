@@ -123,7 +123,7 @@ test("root negotiates Agent and human representations", async () => {
 
     const browser = await fetch(`${base}/`, { headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" } });
     assert.match(browser.headers.get("content-type"), /^text\/html/);
-    const sharedProject = await fetch(`${base}/projects/00000000-0000-4000-8000-000000000000`);
+    const sharedProject = await fetch(`${base}/projects/AbCdEf0123_-`);
     assert.match(sharedProject.headers.get("content-type"), /^text\/html/);
     assert.match(await sharedProject.text(), /id="root"/);
     const agentOverride = await fetch(`${base}/`, {
@@ -163,7 +163,7 @@ test("projects isolate files and support lifecycle operations", async () => {
     });
     assert.equal(createdResponse.status, 201);
     const created = (await createdResponse.json()).project;
-    assert.match(created.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.match(created.id, /^[A-Za-z0-9_-]{12}$/);
     assert.notEqual(created.id, "second-paper");
 
     const write = await fetch(`${base}/v1/files?project=${created.id}&path=notes.tex`, {
@@ -525,7 +525,7 @@ test("SQLite is authoritative and legacy or stray directories are ignored", asyn
   try {
     const projects = paper.database.listProjects();
     assert.equal(projects.length, 1);
-    assert.match(projects[0].id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.match(projects[0].id, /^[A-Za-z0-9_-]{12}$/);
     assert.notEqual(await readFile(path.join(stateDir, "projects", projects[0].id, "project", "main.tex"), "utf8"), "stray source\n");
     assert.equal(paper.projectDir, path.join(stateDir, "projects", projects[0].id, "project"));
   } finally {
