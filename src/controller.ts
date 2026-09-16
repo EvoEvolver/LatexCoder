@@ -224,7 +224,21 @@ function showToast(message) {
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
 }
 
-function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false }) {
+function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false }) {
+  document.querySelector("#project-zip-field")?.remove();
+  if (zip) {
+    const field = document.createElement("label");
+    field.id = "project-zip-field";
+    field.className = "grid gap-1.5 text-sm font-medium";
+    field.textContent = "Import ZIP (optional)";
+    const input = document.createElement("input");
+    input.id = "project-zip-input";
+    input.type = "file";
+    input.accept = ".zip,application/zip";
+    input.className = "text-sm file:mr-3 file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-secondary-foreground";
+    field.append(input);
+    elements.action_form.querySelector("footer").before(field);
+  }
   const hasInput = Boolean(label);
   elements.action_title.textContent = title;
   elements.action_label.textContent = label;
@@ -1791,6 +1805,7 @@ elements.git_resolve.addEventListener("click", async () => {
 elements.new_project.addEventListener("click", async () => {
   const name = await openActionDialog({
     title: "New project",
+    zip: true,
     label: "Project name",
     value: "Untitled paper",
     maxLength: 80,
@@ -1798,10 +1813,11 @@ elements.new_project.addEventListener("click", async () => {
   });
   if (!name) return;
   try {
-    const result = await request("v1/projects", {
+    const archive = (document.querySelector("#project-zip-input") as HTMLInputElement)?.files?.[0];
+    const result = await request(archive ? `v1/projects?name=${encodeURIComponent(String(name))}` : "v1/projects", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      headers: { "Content-Type": archive ? "application/zip" : "application/json" },
+      body: archive || JSON.stringify({ name }),
     });
     await refreshProjects(result.project.id);
     await openProjectPage(result.project.id);
@@ -1848,9 +1864,10 @@ elements.upload_file.addEventListener("click", () => elements.upload_input.click
 elements.upload_input.addEventListener("change", async () => {
   try {
     for (const file of elements.upload_input.files) {
-      await request(`v1/files?path=${encodeURIComponent(file.name)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
+      const archive = file.name.toLowerCase().endsWith(".zip");
+      await request(archive ? "v1/files/import" : `v1/files?path=${encodeURIComponent(file.name)}`, {
+        method: archive ? "POST" : "PUT",
+        headers: { "Content-Type": archive ? "application/zip" : "application/octet-stream" },
         body: file,
       });
     }

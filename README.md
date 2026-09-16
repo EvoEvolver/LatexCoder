@@ -124,6 +124,12 @@ automatically; no Docker `VOLUME` declaration or custom start command is used.
 
 ## Projects
 
+New project accepts an optional ZIP archive. Uploading a ZIP from the editor
+extracts it into the current project without overwriting existing files. A
+single enclosing directory is removed automatically. Imports reject unsafe
+paths and Git metadata, and are limited to 20 MiB compressed, 100 MiB extracted,
+and 1,000 entries.
+
 Signed-in users open on a dedicated dashboard containing projects they own or
 have joined as registered collaborators, and can create new projects under their
 account. Being signed in alone does not grant access to another user's projects.

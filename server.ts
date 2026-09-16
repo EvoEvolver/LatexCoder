@@ -13,6 +13,7 @@ import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
+import { unzipSync } from "fflate";
 
 import { StateDatabase } from "./src/database.ts";
 import { parseReviews, stripReviewStorage } from "./src/review.ts";
@@ -90,6 +91,46 @@ export function safeRelativePath(value) {
 
 function isTextFile(relativePath) {
   return TEXT_EXTENSIONS.has(path.extname(relativePath).toLowerCase());
+}
+
+function readProjectZip(body) {
+  let total = 0;
+  let count = 0;
+  let files;
+  try {
+    files = unzipSync(body, { filter: entry => {
+      if (++count > 1000 || entry.originalSize > MAX_FILE_BYTES || (total += entry.originalSize) > 100 * 1024 * 1024) {
+        throw apiError("zip_too_large", "ZIP exceeds file count or extracted size limits", 413);
+      }
+      if (entry.name.includes("\\") || entry.name.split("/").some(part => part === ".." || part === ".git" || part === ".paper-output")) {
+        throw apiError("invalid_zip_path", "ZIP contains an unsafe path");
+      }
+      if (entry.name.endsWith("/")) return false;
+      safeRelativePath(entry.name);
+      return !entry.name.startsWith("__MACOSX/") && !entry.name.endsWith(".DS_Store");
+    } });
+  } catch (error) {
+    if (error.status) throw error;
+    throw apiError("invalid_zip", "ZIP archive could not be read");
+  }
+  const entries = Object.entries(files) as [string, Uint8Array][];
+  if (!entries.length) throw apiError("empty_zip", "ZIP contains no project files");
+  const root = entries[0][0].split("/")[0];
+  const stripRoot = entries.every(([name]) => name.startsWith(`${root}/`));
+  const result = entries.map(([name, content]) => {
+    const relativePath = safeRelativePath(stripRoot ? name.slice(root.length + 1) : name);
+    if (isTextFile(relativePath) && content.length > MAX_TEXT_BYTES) throw apiError("file_too_large", "ZIP text file is too large", 413);
+    return { relativePath, content };
+  });
+  const names = new Set(result.map(file => file.relativePath));
+  if (names.size !== result.length) throw apiError("invalid_zip_path", "ZIP contains duplicate paths");
+  for (const name of names) {
+    const parts = name.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      if (names.has(parts.slice(0, index).join("/"))) throw apiError("invalid_zip_path", "ZIP contains conflicting file and directory paths");
+    }
+  }
+  return result;
 }
 
 function sha256(value) {
@@ -1565,7 +1606,7 @@ export async function createPaperServer(options: any = {}) {
     await mkdir(projectDir, { recursive: true });
     await mkdir(buildDir, { recursive: true });
     const mainPath = path.join(projectDir, "main.tex");
-    if (!existsSync(mainPath)) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
+    if (!(await listFiles(projectDir)).length) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
     await ensureGitRepository(projectDir);
     const build = database.getBuild(id);
     build.pdf = build.pdf && existsSync(path.join(buildDir, "latest.pdf"));
@@ -1599,7 +1640,7 @@ export async function createPaperServer(options: any = {}) {
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async function createProject(name, ownerUsername) {
+  async function createProject(name, ownerUsername, importedFiles = []) {
     name = cleanProjectName(name);
     let id = randomProjectId();
     while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomProjectId();
@@ -1607,8 +1648,19 @@ export async function createPaperServer(options: any = {}) {
     const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
     try {
+      for (const file of importedFiles) {
+        const target = path.join(projectRoot, "project", file.relativePath);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content);
+      }
       database.createProject(metadata);
-      return await loadProject(id);
+      const runtime = await loadProject(id);
+      if (importedFiles.length) {
+        const main = importedFiles.find(file => file.relativePath === "main.tex")
+          || importedFiles.find(file => file.relativePath.endsWith(".tex"));
+        if (main) { runtime.build.main = main.relativePath; database.saveBuild(id, runtime.build); }
+      }
+      return runtime;
     } catch (error) {
       projects.delete(id);
       database.deleteProject(id);
@@ -1927,10 +1979,11 @@ export async function createPaperServer(options: any = {}) {
     }
     catch (error) { next(error); }
   });
-  app.post("/v1/projects", express.json({ limit: "16kb" }), async (request, response, next) => {
+  app.post("/v1/projects", express.json({ limit: "16kb" }), express.raw({ type: "application/zip", limit: "20mb" }), async (request, response, next) => {
     try {
       const user = requireUser(request);
-      const runtime = await createProject(request.body?.name, user.username);
+      const importedFiles = request.is("application/zip") ? readProjectZip(request.body) : [];
+      const runtime = await createProject(request.is("application/zip") ? request.query.name : request.body?.name, user.username, importedFiles);
       response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
     } catch (error) { next(error); }
   });
@@ -2135,6 +2188,32 @@ export async function createPaperServer(options: any = {}) {
       response.type("text/plain; charset=utf-8");
       if (result.code === 0 || (result.code === 1 && result.stderr.length === 0)) return response.send(result.stdout);
       response.status(422).send(result.stderr.length ? result.stderr : Buffer.from(`ripgrep exited with code ${result.code}\n`));
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/files/import", express.raw({ type: "application/zip", limit: "20mb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      if (!Buffer.isBuffer(request.body)) throw apiError("invalid_zip", "send application/zip bytes");
+      const files = readProjectZip(request.body);
+      for (const file of files) {
+        let target = runtime.projectDir;
+        for (const part of file.relativePath.split("/")) {
+          target = path.join(target, part);
+          if (existsSync(target)) {
+            const details = await lstat(target);
+            if (details.isSymbolicLink()) throw apiError("invalid_zip_path", "import cannot traverse symbolic links");
+            if (target !== path.join(runtime.projectDir, file.relativePath) && !details.isDirectory()) throw apiError("file_exists", "import path conflicts with an existing file", 409);
+          }
+        }
+        if (existsSync(target)) throw apiError("file_exists", `${file.relativePath} already exists; ZIP was not imported`, 409);
+      }
+      for (const file of files) {
+        const target = path.join(runtime.projectDir, file.relativePath);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content);
+      }
+      response.status(201).json({ files: files.map(file => ({ path: file.relativePath })) });
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {

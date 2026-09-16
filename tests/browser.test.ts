@@ -6,6 +6,7 @@ import test from "node:test";
 import type { AddressInfo } from "node:net";
 
 import { chromium } from "playwright";
+import { zipSync, strToU8 } from "fflate";
 
 import { createPaperServer } from "../server.ts";
 
@@ -379,6 +380,21 @@ test("image and project PDF files render interactive previews", async () => {
     assert.ok(rendered.width > 100 && rendered.height > 100);
     assert.equal(rendered.ink, true);
     assert.match(await page.locator("#binary-download").getAttribute("href"), /path=reference\.pdf/);
+  });
+});
+
+test("new project and file upload accept ZIP archives", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/projects`);
+    await page.locator("#new-project").click();
+    await page.locator("#action-input").fill("ZIP project");
+    await page.locator("#project-zip-input").setInputFiles({ name: "paper.zip", mimeType: "application/zip", buffer: Buffer.from(zipSync({ "paper/main.tex": strToU8("Imported paper") })) });
+    await page.locator("#action-submit").click();
+    await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "ZIP project");
+    await page.locator(".cm-content").getByText("Imported paper", { exact: true }).waitFor();
+    await page.locator("#upload-input").setInputFiles({ name: "files.zip", mimeType: "application/zip", buffer: Buffer.from(zipSync({ "notes.txt": strToU8("ZIP notes") })) });
+    await page.locator(".file-item", { hasText: "notes.txt" }).waitFor();
+    assert.equal(await page.locator(".file-item", { hasText: "files.zip" }).count(), 0);
   });
 });
 
