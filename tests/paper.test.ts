@@ -925,7 +925,13 @@ test("patch API applies one checked Yjs transaction and rejects stale edits", as
       body: JSON.stringify({ baseSha256: revision, changes: [{ from: 0, to: 0, insert: "stale" }] }),
     });
     assert.equal(stale.status, 409);
-    assert.equal((await stale.json()).error.code, "stale_file");
+    const staleError = await stale.json();
+    assert.equal(staleError.error.code, "stale_file");
+    assert.deepEqual(staleError.error.details, {
+      path: "main.tex",
+      expectedSha256: revision,
+      currentSha256: patch.headers.get("x-content-sha256"),
+    });
     collaboration.flush();
     const persisted = await readFile(path.join(projectDir, "main.tex"), "utf8");
     assert.match(persisted, /edited together/);
@@ -992,6 +998,21 @@ test("patch API validates all ranges before changing a file", async () => {
     assert.equal(direct.status, 200);
     assert.equal((await direct.json()).patch.mode, "direct");
     assert.equal(await (await fetch(`${base}/v1/files?path=unicode.tex`)).text(), "A😀C");
+  });
+});
+
+test("JSON parse failures use a stable structured error", async () => {
+  await withServer(async ({ base }) => {
+    const response = await fetch(`${base}/v1/files/patch?path=main.tex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{not-json",
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual((await response.json()).error, {
+      code: "invalid_json",
+      message: "request body must contain valid JSON",
+    });
   });
 });
 

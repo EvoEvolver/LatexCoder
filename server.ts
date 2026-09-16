@@ -73,8 +73,8 @@ The canonical source is persisted as ordinary files and can be edited by agents 
 \end{document}
 `;
 
-function apiError(code: string, message: string, status = 400) {
-  return Object.assign(new Error(message), { code, status });
+function apiError(code: string, message: string, status = 400, details: Record<string, unknown> | undefined = undefined) {
+  return Object.assign(new Error(message), { code, status, details });
 }
 
 export function safeRelativePath(value) {
@@ -162,6 +162,20 @@ function isUnicodeBoundary(source, offset) {
   const before = source.charCodeAt(offset - 1);
   const after = source.charCodeAt(offset);
   return !(before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff);
+}
+
+function isWellFormedUtf16(value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function cleanReviewMetadata(value) {
@@ -366,8 +380,13 @@ function createCollaborationStore(projectId, projectDir, database) {
     const shared = load(relativePath);
     const text = shared.doc.getText("content");
     const source = text.toString();
-    if (sha256(source) !== baseSha256) {
-      throw apiError("stale_file", "file changed since it was read; fetch it and retry the patch", 409);
+    const currentSha256 = sha256(source);
+    if (currentSha256 !== baseSha256) {
+      throw apiError("stale_file", "file changed since it was read; fetch it and retry the patch", 409, {
+        path: relativePath,
+        expectedSha256: baseSha256,
+        currentSha256,
+      });
     }
     const changes = requestedChanges.map((change, index) => {
       const from = change?.from;
@@ -378,6 +397,9 @@ function createCollaborationStore(projectId, projectDir, database) {
       }
       if (typeof insert !== "string") {
         throw apiError("invalid_change", `changes[${index}].insert must be a string`);
+      }
+      if (!isWellFormedUtf16(insert)) {
+        throw apiError("invalid_change", `changes[${index}].insert contains an unpaired UTF-16 surrogate`);
       }
       if (from === to && insert.length === 0) {
         throw apiError("invalid_change", `changes[${index}] does not change the document`);
@@ -1273,9 +1295,12 @@ Content-Type: application/json
 
 {"baseSha256":"<digest from X-Content-SHA256>","mode":"direct","changes":[{"from":0,"to":0,"insert":"text"}]}
 
-Patch offsets are UTF-16 offsets. The entire patch is applied in one Yjs
-transaction and is immediately visible to connected editors. A stale digest is
-rejected with HTTP 409; read the file again and retry.
+Patch ranges use UTF-16 code-unit offsets into the version identified by
+baseSha256. All ranges are checked against that original version, then applied
+together in one Yjs transaction. Ranges must be non-overlapping, and inserted
+strings must be valid JSON strings (escape newlines as \\n when constructing
+JSON manually). A stale digest is rejected with HTTP 409 and the response
+includes error.details.currentSha256; read the file again and retry.
 
 To create a reviewable suggestion instead of a direct edit, omit mode or use
 "mode":"suggesting" and include:
@@ -2196,9 +2221,13 @@ export async function createPaperServer(options: any = {}) {
   app.use((request, _response, next) => next(apiError("route_not_found", `route ${request.method} ${request.path} does not exist`, 404)));
   app.use((error, _request, response, _next) => {
     const status = Number.isInteger(error.status) ? error.status : 500;
-    const code = error.code && typeof error.code === "string" ? error.code : "internal_error";
+    const parseError = error.type === "entity.parse.failed";
+    const code = parseError ? "invalid_json" : (error.code && typeof error.code === "string" ? error.code : "internal_error");
+    const message = parseError ? "request body must contain valid JSON" : (status >= 500 ? "internal server error" : error.message);
     if (status >= 500) console.error(error);
-    response.status(status).json({ error: { code, message: status >= 500 ? "internal server error" : error.message } });
+    const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = { error: { code, message } };
+    if (status < 500 && error.details && typeof error.details === "object") body.error.details = error.details;
+    response.status(parseError ? 400 : status).json(body);
   });
 
   const server = createServer(app);
