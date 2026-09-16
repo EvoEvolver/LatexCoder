@@ -420,6 +420,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
     assert.equal(await page.locator("#access-dialog header strong").textContent(), "Collaborate");
+    assert.match(await page.locator("#browser-editing-description").textContent(), /Guests can edit the project without creating an account/);
+    assert.doesNotMatch(await page.locator("#browser-editing-description").textContent(), /temporary/i);
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
     assert.equal(await page.locator("#agent-editing-section label").textContent(), "Agent editing");
