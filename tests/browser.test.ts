@@ -383,6 +383,36 @@ test("image and project PDF files render interactive previews", async () => {
   });
 });
 
+test("Ctrl-click follows includes, citations, and label references", async () => {
+  await withEditor(async ({ page, base }) => {
+    const projects = await (await page.request.get(`${base}/v1/projects`)).json();
+    const id = projects.defaultProjectId;
+    const source = String.raw`\include{chapters/intro}
+\cite{smith} \citep[see]{smith} \citet{smith}
+\ref{sec:intro} \autoref{sec:intro} \cref{sec:intro}`;
+    for (const [path, body] of [["main.tex", source], ["chapters/intro.tex", String.raw`\section{Intro}\label{sec:intro}`], ["refs.bib", "@article{smith, title={Title}}"]]) {
+      await page.request.put(`${base}/v1/files?project=${id}&path=${encodeURIComponent(path)}`, { data: body, headers: { "Content-Type": "text/plain" } });
+    }
+    for (const macro of ["include", "cite", "citep", "citet", "ref", "autoref", "cref"]) {
+      await page.goto(`${base}/projects/${id}?e2e=1`);
+      await page.waitForFunction(() => globalThis.__paperE2E?.state.view?.state.doc.toString().includes("\\include"));
+      const point = await page.evaluate(command => {
+        const view = globalThis.__paperE2E.state.view;
+        const text = view.state.doc.toString();
+        const pos = text.indexOf("{", text.indexOf("\\" + command)) + 2;
+        const coords = view.coordsAtPos(pos);
+        return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
+      }, macro);
+      await page.keyboard.down("Control");
+      await page.mouse.click(point.x, point.y);
+      await page.keyboard.up("Control");
+      const target = macro.startsWith("cite") ? "refs.bib" : "chapters/intro.tex";
+      await page.waitForFunction(path => document.querySelector("#active-file-label")?.textContent === path, target);
+      if (macro !== "include") await page.waitForFunction(() => !globalThis.__paperE2E.state.view.state.selection.main.empty);
+    }
+  });
+});
+
 test("sidebar folders expand, collapse, and create nested files", async () => {
   await withEditor(async ({ page, base }) => {
     await page.locator("#new-file").click();

@@ -71,6 +71,7 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
 import { parseReviews, stripReviewStorage } from "./review.ts";
+import { referenceLinks, referenceDefinition, type ReferenceLink } from "./references.ts";
 
 declare global {
   interface Window {
@@ -730,6 +731,54 @@ const protectReviewStorage = EditorState.transactionFilter.of(transaction => {
   return [];
 });
 
+async function followReference(link: ReferenceLink) {
+  const projectId = state.projectId;
+  const originFile = state.activeFile;
+  try {
+    let destination: { path: string; from: number; to: number } | undefined;
+    if (link.kind === "file") {
+      const directory = originFile.split("/").slice(0, -1).join("/");
+      const normalize = (value: string) => {
+        const parts: string[] = [];
+        for (const part of value.split("/")) {
+          if (part === "..") parts.pop();
+          else if (part && part !== ".") parts.push(part);
+        }
+        return parts.join("/");
+      };
+      const name = link.key.endsWith(".tex") ? link.key : `${link.key}.tex`;
+      const candidates = [normalize(name), normalize(`${directory}/${name}`)];
+      const file = state.files.find(file => candidates.includes(file.path));
+      if (file) destination = { path: file.path, from: 0, to: 0 };
+    } else {
+      const kind = link.kind;
+      const candidates = state.files.filter(file => file.path.endsWith(kind === "cite" ? ".bib" : ".tex"));
+      candidates.sort((left, right) => Number(right.path === originFile) - Number(left.path === originFile));
+      for (const file of candidates) {
+        const source = file.path === originFile ? state.view.state.doc.toString()
+          : await (await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`))).text();
+        const definition = referenceDefinition(source, link.key, kind);
+        if (definition) { destination = { path: file.path, ...definition }; break; }
+      }
+    }
+    if (state.projectId !== projectId || state.activeFile !== originFile) return;
+    if (!destination) { showToast(`Definition not found: ${link.key}`); return; }
+    await openFile(destination.path);
+    const provider = state.provider;
+    const view = state.view;
+    const deadline = Date.now() + 5000;
+    while (!provider.synced && Date.now() < deadline && state.view === view) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    if (state.view !== view || !provider.synced) return;
+    const source = view.state.doc.toString();
+    const current = link.kind === "file" ? { from: 0, to: 0 } : referenceDefinition(source, link.key, link.kind);
+    if (!current) { showToast(`Definition not found: ${link.key}`); return; }
+    view.dispatch({ selection: { anchor: current.from, head: current.to }, scrollIntoView: true });
+    view.focus();
+  } catch (error) { showToast(error.message); }
+}
+
 function editorExtensions(ytext, provider) {
   const undoManager = new Y.UndoManager(ytext);
   return [
@@ -751,6 +800,24 @@ function editorExtensions(ytext, provider) {
     highlightActiveLine(),
     highlightSelectionMatches(),
     StreamLanguage.define(stex),
+    EditorView.domEventHandlers({
+      mousedown(event, view) {
+        if (!event.ctrlKey || event.button !== 0) return false;
+        const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (position === null) return false;
+        const link = referenceLinks(view.state.doc.toString()).find(link => position >= link.from && position < link.to);
+        if (!link) return false;
+        event.preventDefault();
+        void followReference(link);
+        return true;
+      },
+      mousemove(event, view) {
+        const position = event.ctrlKey ? view.posAtCoords({ x: event.clientX, y: event.clientY }) : null;
+        const linked = position !== null && referenceLinks(view.state.doc.toString()).some(link => position >= link.from && position < link.to);
+        view.contentDOM.style.cursor = linked ? "pointer" : "";
+      },
+      keyup(event, view) { if (event.key === "Control") view.contentDOM.style.cursor = ""; },
+    }),
     reviewDecorations,
     reviewTooltip,
     protectReviewStorage,
