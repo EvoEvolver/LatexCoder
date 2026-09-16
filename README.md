@@ -30,6 +30,7 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - Git status, history, checkpoints, and a copy-ready personal Git remote for
   ordinary `clone`, `pull`, and `push` workflows.
 - Local LaTeX compilation with PDF preview, build logs, and PDF download.
+- In-editor previews for project images and PDF files, with zoom and download.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
 - Project-scoped plain-text Agent workspace links that can submit checked edits

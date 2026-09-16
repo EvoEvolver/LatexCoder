@@ -40,6 +40,28 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+function previewPdf() {
+  const stream = "BT /F1 20 Tf 48 110 Td (Project PDF preview) Tj ET\n";
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(source));
+    source += object;
+  }
+  const xref = Buffer.byteLength(source);
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  source += offsets.slice(1).map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(source);
+}
+
 async function createEditor(page, content) {
   await page.evaluate(async text => {
     const view = globalThis.__paperTest.createEditor(text, true);
@@ -253,6 +275,53 @@ test("real collaborative page replaces a selection and exposes review actions", 
   });
 });
 
+test("image and project PDF files render interactive previews", async () => {
+  await withEditor(async ({ page, base }) => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#236b59"/><circle cx="160" cy="90" r="45" fill="#ffffff"/></svg>';
+    assert.equal((await page.request.put(`${base}/v1/files?path=diagram.svg`, {
+      data: svg,
+      headers: { "Content-Type": "image/svg+xml" },
+    })).status(), 201);
+    assert.equal((await page.request.put(`${base}/v1/files?path=reference.pdf`, {
+      data: previewPdf(),
+      headers: { "Content-Type": "application/pdf" },
+    })).status(), 201);
+
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator(".file-row", { hasText: "diagram.svg" }).click();
+    await page.waitForFunction(() => {
+      const image = document.querySelector<HTMLImageElement>("#image-preview");
+      return image && !image.hidden && image.naturalWidth === 320;
+    });
+    assert.equal(await page.locator("#binary-kind").textContent(), "Image preview");
+    assert.equal(await page.locator("#binary-status").textContent(), "320 × 180");
+    assert.equal(await page.locator("#review-actions").isHidden(), true);
+    const initialWidth = (await page.locator("#image-preview").boundingBox())!.width;
+    await page.locator("#file-preview-zoom-in").click();
+    assert.ok((await page.locator("#image-preview").boundingBox())!.width > initialWidth);
+
+    await page.locator(".file-row", { hasText: "reference.pdf" }).click();
+    await page.locator("#file-pdf-document canvas").waitFor();
+    assert.equal(await page.locator("#binary-kind").textContent(), "PDF preview");
+    assert.equal(await page.locator("#binary-status").textContent(), "1 page");
+    const rendered = await page.locator("#file-pdf-document canvas").evaluate((canvas: HTMLCanvasElement) => {
+      const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+      let ink = false;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] > 0 && (pixels[index] < 240 || pixels[index + 1] < 240 || pixels[index + 2] < 240)) {
+          ink = true;
+          break;
+        }
+      }
+      return { width: canvas.width, height: canvas.height, ink };
+    });
+    assert.ok(rendered.width > 100 && rendered.height > 100);
+    assert.equal(rendered.ink, true);
+    assert.match(await page.locator("#binary-download").getAttribute("href"), /path=reference\.pdf/);
+  });
+});
+
 test("project page exposes sharing while destructive actions stay in menus", async () => {
   await withEditor(async ({ page, base }) => {
     await page.setViewportSize({ width: 800, height: 700 });
@@ -285,7 +354,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal((await page.locator("#share-project").textContent())?.trim(), "Collaborate");
     assert.equal(await page.locator(".topbar #compile-button").count(), 0);
     assert.equal(await page.locator(".output-header #compile-button + .segmented").count(), 1);
-    assert.equal((await page.locator("#compile-button").textContent())?.trim(), "Compiler");
+    assert.equal((await page.locator("#compile-button").textContent())?.trim(), "Compile");
     assert.ok((await page.locator("#compile-button").boundingBox())!.width >= 108);
 
     await page.locator("#share-project").click();
@@ -293,6 +362,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#access-dialog header strong").textContent(), "Collaborate");
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-link").inputValue(), new RegExp(`^${base}/agent/${projectId}/[A-Za-z0-9_-]+$`));
+    assert.equal(await page.locator("#agent-editing-section label").textContent(), "Agent editing");
+    assert.match(await page.locator("#agent-editing-section p").textContent(), /open it with curl/);
+    assert.doesNotMatch(await page.locator("#agent-editing-section p").textContent(), /Yjs/i);
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
     assert.equal(await page.locator("#clone-section label").textContent(), "Git clone and push");
     assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);

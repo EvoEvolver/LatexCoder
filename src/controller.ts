@@ -124,9 +124,9 @@ const elements: Record<string, any> = Object.fromEntries([
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
-  "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
+  "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
-  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "guest-name-field", "new-file", "new-project", "output-pane", "pdf-document",
+  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
@@ -136,6 +136,7 @@ const elements: Record<string, any> = Object.fromEntries([
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
 const apiUrl = relative => new URL(`/${String(relative).replace(/^\//, "")}`, window.location.origin);
+const IMAGE_PREVIEW_PATTERN = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 const socketUrl = relative => {
   const url = apiUrl(relative);
@@ -163,6 +164,10 @@ const state: any = {
   pdfRequestVersion: 0,
   pdfRenderVersion: 0,
   pdfZoom: 1,
+  filePreviewDocument: null,
+  filePreviewLoadingTask: null,
+  filePreviewVersion: 0,
+  filePreviewZoom: 1,
   reviewSelection: null,
   selectionSuggestionIds: [],
   suggesting: false,
@@ -321,7 +326,8 @@ function projectApiUrl(relative) {
 }
 
 function fileIcon(file) {
-  if (/\.(png|jpe?g|gif|webp|svg)$/i.test(file.path)) return "image";
+  if (IMAGE_PREVIEW_PATTERN.test(file.path)) return "image";
+  if (/\.pdf$/i.test(file.path)) return "file-check-2";
   return file.text ? "file-text" : "file";
 }
 
@@ -730,6 +736,132 @@ function disconnectEditor() {
   elements.selection_actions.hidden = true;
 }
 
+function resetFilePreview() {
+  state.filePreviewVersion += 1;
+  state.filePreviewLoadingTask?.destroy().catch(() => {});
+  state.filePreviewLoadingTask = null;
+  state.filePreviewDocument = null;
+  state.filePreviewZoom = 1;
+  elements.image_preview.onload = null;
+  elements.image_preview.onerror = null;
+  elements.image_preview.removeAttribute("src");
+  elements.image_preview.hidden = true;
+  elements.file_pdf_document.replaceChildren();
+  elements.file_pdf_document.hidden = true;
+  elements.binary_fallback.hidden = true;
+}
+
+function sizeImagePreview() {
+  const image = elements.image_preview;
+  if (!image.naturalWidth || !image.naturalHeight) return;
+  const viewport = elements.file_preview_viewport;
+  const fit = Math.min(
+    1,
+    Math.max(0.05, (viewport.clientWidth - 32) / image.naturalWidth),
+    Math.max(0.05, (viewport.clientHeight - 32) / image.naturalHeight),
+  );
+  image.style.width = `${Math.round(image.naturalWidth * fit * state.filePreviewZoom)}px`;
+  image.style.height = `${Math.round(image.naturalHeight * fit * state.filePreviewZoom)}px`;
+}
+
+async function renderFilePdf() {
+  const pdf = state.filePreviewDocument;
+  if (!pdf) return;
+  const version = ++state.filePreviewVersion;
+  const firstPage = await pdf.getPage(1);
+  const base = firstPage.getViewport({ scale: 1 });
+  const fit = Math.min(1.25, Math.max(0.25, (elements.file_preview_viewport.clientWidth - 32) / base.width));
+  const scale = fit * state.filePreviewZoom;
+  const fragment = document.createDocumentFragment();
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    if (version !== state.filePreviewVersion) return;
+    const page = pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale });
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width * pixelRatio);
+    canvas.height = Math.floor(viewport.height * pixelRatio);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+    canvas.setAttribute("aria-label", `Preview page ${pageNumber}`);
+    fragment.append(canvas);
+    await page.render({
+      canvas,
+      canvasContext: canvas.getContext("2d"),
+      viewport,
+      transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+    }).promise;
+  }
+  if (version !== state.filePreviewVersion) return;
+  elements.file_pdf_document.replaceChildren(fragment);
+  elements.file_pdf_document.hidden = false;
+  elements.binary_status.textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`;
+}
+
+function showFilePreviewFallback(relativePath, message = "Preview unavailable") {
+  elements.binary_kind.textContent = "Binary file";
+  elements.binary_status.textContent = message;
+  elements.binary_name.textContent = relativePath;
+  elements.binary_fallback.hidden = false;
+  elements.file_preview_zoom_in.disabled = true;
+  elements.file_preview_zoom_out.disabled = true;
+}
+
+async function showFilePreview(file) {
+  resetFilePreview();
+  const relativePath = file.path;
+  const url = projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`);
+  elements.binary_download.href = url;
+  elements.binary_download.download = relativePath.split("/").at(-1);
+  elements.binary_fallback_download.href = url;
+  elements.binary_fallback_download.download = relativePath.split("/").at(-1);
+  elements.file_preview_zoom_in.disabled = false;
+  elements.file_preview_zoom_out.disabled = false;
+  const version = state.filePreviewVersion;
+
+  if (IMAGE_PREVIEW_PATTERN.test(relativePath)) {
+    elements.binary_kind.textContent = "Image preview";
+    elements.binary_status.textContent = "Loading";
+    elements.image_preview.alt = relativePath;
+    elements.image_preview.onload = () => {
+      if (version !== state.filePreviewVersion) return;
+      elements.image_preview.hidden = false;
+      elements.binary_status.textContent = `${elements.image_preview.naturalWidth} × ${elements.image_preview.naturalHeight}`;
+      sizeImagePreview();
+    };
+    elements.image_preview.onerror = () => {
+      if (version === state.filePreviewVersion) showFilePreviewFallback(relativePath, "Image preview failed");
+    };
+    elements.image_preview.src = url.toString();
+    return;
+  }
+
+  if (/\.pdf$/i.test(relativePath)) {
+    elements.binary_kind.textContent = "PDF preview";
+    elements.binary_status.textContent = "Loading";
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
+      const loadingTask = getDocument({ data: await response.arrayBuffer() });
+      state.filePreviewLoadingTask = loadingTask;
+      const pdf = await loadingTask.promise;
+      if (version !== state.filePreviewVersion) {
+        await loadingTask.destroy();
+        return;
+      }
+      state.filePreviewDocument = pdf;
+      await renderFilePdf();
+    } catch (error) {
+      if (state.activeFile !== relativePath) return;
+      console.error("project PDF preview failed", error);
+      showFilePreviewFallback(relativePath, "PDF preview failed");
+    }
+    return;
+  }
+
+  showFilePreviewFallback(relativePath);
+}
+
 function updatePresence() {
   elements.presence.replaceChildren();
   if (!state.provider) return;
@@ -760,16 +892,17 @@ async function openFile(relativePath) {
   elements.files_pane.classList.remove("mobile-open");
   if (relativePath === state.activeFile && (state.view || !file.text)) return;
   disconnectEditor();
+  resetFilePreview();
   state.activeFile = relativePath;
   elements.active_file_label.textContent = relativePath;
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
+  elements.review_actions.hidden = !file.text;
   renderFiles();
   if (!file.text) {
-    elements.binary_name.textContent = relativePath;
-    elements.binary_download.href = projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`);
-    elements.sync_state.textContent = "Stored";
+    elements.sync_state.textContent = "Preview";
     renderReviews();
+    await showFilePreview(file);
     return;
   }
 
@@ -1084,6 +1217,7 @@ function showProjectsPage(push = true) {
     return;
   }
   disconnectEditor();
+  resetFilePreview();
   if (elements.git_dialog.open) elements.git_dialog.close();
   if (elements.access_dialog.open) elements.access_dialog.close();
   elements.editor_page.hidden = true;
@@ -1101,7 +1235,10 @@ async function openProjectPage(projectId, push = true) {
     throw new Error("Project does not exist");
   }
   const changed = projectId !== state.projectId;
-  if (changed) disconnectEditor();
+  if (changed) {
+    disconnectEditor();
+    resetFilePreview();
+  }
   elements.projects_page.hidden = true;
   elements.auth_page.hidden = true;
   elements.editor_page.hidden = false;
@@ -1524,7 +1661,7 @@ elements.access_dialog.addEventListener("cancel", event => {
   elements.access_dialog.close();
 });
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
-elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent workspace link copied."));
+elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent editing link copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);
@@ -1614,6 +1751,16 @@ elements.pdf_zoom_in.addEventListener("click", () => {
   state.pdfZoom = Math.min(2, state.pdfZoom + 0.15);
   renderPdf();
 });
+elements.file_preview_zoom_out.addEventListener("click", () => {
+  state.filePreviewZoom = Math.max(0.5, state.filePreviewZoom - 0.2);
+  if (!elements.image_preview.hidden) sizeImagePreview();
+  else renderFilePdf();
+});
+elements.file_preview_zoom_in.addEventListener("click", () => {
+  state.filePreviewZoom = Math.min(3, state.filePreviewZoom + 0.2);
+  if (!elements.image_preview.hidden) sizeImagePreview();
+  else renderFilePdf();
+});
 elements.upload_file.addEventListener("click", () => elements.upload_input.click());
 elements.upload_input.addEventListener("change", async () => {
   try {
@@ -1690,7 +1837,10 @@ async function deleteFile(target) {
 }
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
 document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
-window.addEventListener("beforeunload", disconnectEditor);
+window.addEventListener("beforeunload", () => {
+  disconnectEditor();
+  resetFilePreview();
+});
 async function routeApp() {
   const invitationToken = routeInvitationToken();
   if (invitationToken) {
