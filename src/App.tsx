@@ -3,7 +3,7 @@ import {
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
   MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, TerminalSquare, Trash2,
-  Search, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
+  ClipboardPaste, Redo2, Scissors, ScanText, Search, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -20,6 +20,7 @@ const iconComponents = {
   "arrow-left": ArrowLeft,
   "check-check": CheckCheck,
   "copy": Copy,
+  "clipboard-paste": ClipboardPaste,
   "download": Download,
   "file": File,
   "file-check-2": FileCheck2,
@@ -40,10 +41,14 @@ const iconComponents = {
   "pencil": Pencil,
   "play": Play,
   "refresh-cw": RefreshCw,
+  "redo-2": Redo2,
+  "scissors": Scissors,
+  "scan-text": ScanText,
   "search": Search,
   "terminal-square": TerminalSquare,
   "trash-2": Trash2,
   "upload": Upload,
+  "undo-2": Undo2,
   "user-plus": UserPlus,
   "user-round": UserRound,
   "x": X,
@@ -174,6 +179,14 @@ export function AppShell() {
       </div>
 
       <div id="toast" className="toast fixed bottom-5 left-1/2 z-50 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-xl" role="status" hidden />
+      <div id="editor-context-menu" role="menu" aria-label="Edit selection" className="fixed z-40 w-52 max-h-[calc(100dvh-1rem)] overflow-auto rounded-md border bg-card p-1 text-card-foreground shadow-xl" hidden>
+        {([
+          ["undo", "undo-2", "Undo"], ["redo", "redo-2", "Redo"],
+          ["cut", "scissors", "Cut"], ["copy", "copy", "Copy"], ["paste", "clipboard-paste", "Paste"],
+          ["delete", "trash-2", "Delete"], ["select-all", "scan-text", "Select all"],
+          ["comment", "message-square-plus", "Add comment"], ["pdf", "file-check-2", "Go to PDF"],
+        ] as const).map(([action, icon, label]) => <Button key={action} role="menuitem" data-editor-action={action} variant="ghost" size="sm" className={cn("w-full justify-start rounded-sm px-2 text-xs disabled:pointer-events-auto disabled:opacity-40", (action === "cut" || action === "comment") && "mt-1 border-t") }><Icon name={icon} />{label}</Button>)}
+      </div>
       <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search project" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[60dvh] overflow-auto" /></div></dialog>
 
       <dialog id="review-dialog" className={dialogClass}><form id="review-form" className="space-y-4 p-5"><header className="flex items-center justify-between"><strong id="dialog-title">Comment</strong><Button id="review-close" className={iconButton} variant="ghost" size="icon" type="button" title="Close"><Icon name="x" /></Button></header><label id="dialog-label" className="block text-sm font-medium" htmlFor="review-text">Comment</label><Textarea id="review-text" rows={5} required /><footer className="flex justify-end gap-2"><Button id="review-cancel" variant="outline" type="button">Cancel</Button><Button id="dialog-submit" type="submit">Insert</Button></footer></form></dialog>

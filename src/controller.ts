@@ -1,5 +1,5 @@
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, redo, redoDepth, selectAll, undo, undoDepth } from "@codemirror/commands";
 import {
   bracketMatching,
   defaultHighlightStyle,
@@ -839,6 +839,10 @@ function editorExtensions(ytext, provider) {
     referenceHighlights,
     EditorView.domEventHandlers({
       mousedown(event, view) {
+        if (event.button === 2 && !view.state.selection.main.empty) {
+          event.preventDefault();
+          return true;
+        }
         if (!referenceModifierPressed(event) || event.button !== 0) return false;
         const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
         if (position === null) return false;
@@ -854,6 +858,12 @@ function editorExtensions(ytext, provider) {
         view.contentDOM.style.cursor = linked ? "pointer" : "";
       },
       keyup(event, view) { if (event.key === referenceModifier) view.contentDOM.style.cursor = ""; },
+      contextmenu(event, view) {
+        if (view.state.selection.main.empty) return false;
+        event.preventDefault();
+        openEditorContextMenu(event, view);
+        return true;
+      },
     }),
     reviewDecorations,
     reviewTooltip,
@@ -862,6 +872,7 @@ function editorExtensions(ytext, provider) {
     keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
+      if (update.docChanged || update.selectionSet) closeEditorContextMenu();
       if (update.docChanged) {
         queueReviewRender();
         elements.git_dirty.hidden = false;
@@ -906,6 +917,7 @@ function editorExtensions(ytext, provider) {
 }
 
 function disconnectEditor() {
+  closeEditorContextMenu();
   state.provider?.destroy();
   state.view?.destroy();
   state.doc?.destroy();
@@ -1606,10 +1618,13 @@ async function renderPdf() {
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     canvas.setAttribute("aria-label", `PDF page ${pageNumber}`);
-    canvas.title = "Double-click to open source";
+    canvas.dataset.page = String(pageNumber);
+    canvas.title = `${macReferences ? "Command" : "Ctrl"}+click to open source`;
     const revision = state.pdfSourceRevision;
     const projectId = state.projectId;
-    canvas.addEventListener("dblclick", async event => {
+    canvas.addEventListener("click", async event => {
+      if (!referenceModifierPressed(event) || event.button !== 0) return;
+      event.preventDefault();
       const bounds = canvas.getBoundingClientRect();
       try {
         const destination = await request("v1/build/source", {
@@ -2174,6 +2189,115 @@ async function deleteFile(target) {
     await refreshProject(state.activeFile === target);
   }
 }
+const editorContextMenu = document.getElementById("editor-context-menu")!;
+let contextView: EditorView | null = null;
+
+function closeEditorContextMenu() {
+  editorContextMenu.hidden = true;
+  contextView = null;
+}
+
+function openEditorContextMenu(event: MouseEvent, view: EditorView) {
+  contextView = view;
+  const selection = view.state.selection.main;
+  const overlapsReview = parseReviews(view.state.doc.toString()).some(item => selection.from < item.to && selection.to > item.from);
+  editorContextMenu.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach(button => {
+    const action = button.dataset.editorAction;
+    button.disabled = action === "undo" ? !undoDepth(view.state)
+      : action === "redo" ? !redoDepth(view.state)
+      : action === "comment" ? overlapsReview
+      : action === "pdf" ? !state.activeFile.endsWith(".tex") || !state.projectId
+      : action === "paste" ? !navigator.clipboard?.readText
+      : false;
+  });
+  editorContextMenu.hidden = false;
+  elements.selection_actions.hidden = true;
+  const bounds = editorContextMenu.getBoundingClientRect();
+  const caret = view.coordsAtPos(selection.head);
+  const x = event.clientX || caret?.left || 8;
+  const y = event.clientY || caret?.bottom || 8;
+  editorContextMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+  editorContextMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+  editorContextMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+}
+
+async function goToPdf(view: EditorView) {
+  const project = state.projectId;
+  const file = state.activeFile;
+  const source = view.state.doc.toString();
+  const line = view.state.doc.lineAt(view.state.selection.main.from).number;
+  const position = await request("v1/build/position", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line }),
+  });
+  if (state.projectId !== project || state.view !== view) return;
+  selectOutput("pdf");
+  await showPdf(true);
+  if (state.projectId !== project || state.pdfSourceRevision !== position.revision) throw new Error("The PDF changed. Try navigating again.");
+  const canvas = (elements.pdf_document as HTMLElement).querySelector<HTMLCanvasElement>(`canvas[data-page="${position.page}"]`);
+  if (!canvas) throw new Error("PDF page not found");
+  const page = await state.pdfDocument.getPage(position.page);
+  const viewport = page.getViewport({ scale: 1 });
+  const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
+  const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
+  if (narrowWorkspace.matches) elements.output_pane.classList.add("mobile-open");
+  elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
+  elements.pdf_document.querySelector("#pdf-source-marker")?.remove();
+  const marker = document.createElement("div");
+  marker.id = "pdf-source-marker";
+  marker.className = "pointer-events-none absolute z-10 h-6 w-28 -translate-x-1/2 -translate-y-1/2 border-2 border-amber-500 bg-amber-200/30";
+  marker.style.top = `${canvas.offsetTop + y}px`;
+  marker.style.left = `${canvas.offsetLeft + x}px`;
+  elements.pdf_document.append(marker);
+  setTimeout(() => marker.remove(), 2000);
+}
+
+editorContextMenu.addEventListener("click", async event => {
+  const button = (event.target as Element).closest<HTMLButtonElement>("[data-editor-action]");
+  const view = contextView;
+  if (!button || button.disabled || !view || state.view !== view) return;
+  const action = button.dataset.editorAction;
+  const doc = view.state.doc;
+  const selection = view.state.selection;
+  closeEditorContextMenu();
+  view.focus();
+  try {
+    if (action === "undo") { undo(view); return; }
+    if (action === "redo") { redo(view); return; }
+    if (action === "select-all") { selectAll(view); return; }
+    if (action === "comment") { openReviewDialog(); return; }
+    if (action === "pdf") { await goToPdf(view); return; }
+    if (action === "copy" || action === "cut") {
+      const text = selection.ranges.map(range => stripReviewStorage(doc.sliceString(range.from, range.to))).join("\n");
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else if (!document.execCommand("copy")) throw new Error("Clipboard access unavailable");
+      if (action === "copy") return;
+    }
+    const inserted = action === "paste" ? await navigator.clipboard.readText() : "";
+    if (state.view !== view || view.state.doc !== doc || !view.state.selection.eq(selection)) throw new Error("The selection changed. Try again.");
+    view.dispatch({ ...view.state.replaceSelection(inserted), userEvent: action === "paste" ? "input.paste" : "delete.cut" });
+  } catch (error) { showToast(error.message); }
+});
+
+editorContextMenu.addEventListener("keydown", event => {
+  if (event.key === "Escape" || event.key === "Tab") {
+    const view = contextView;
+    event.preventDefault();
+    closeEditorContextMenu();
+    view?.focus();
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const buttons = [...editorContextMenu.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+  buttons[next]?.focus();
+});
+document.addEventListener("pointerdown", event => { if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu(); }, true);
+window.addEventListener("blur", closeEditorContextMenu);
+window.addEventListener("resize", closeEditorContextMenu);
+document.addEventListener("scroll", event => { if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu(); }, true);
+
 async function revealSource(destination: { path: string; line: number; from?: number; to?: number }) {
   const project = state.projectId;
   await openFile(destination.path);

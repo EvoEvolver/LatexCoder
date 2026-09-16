@@ -18,6 +18,7 @@ import { unzipSync } from "fflate";
 import { StateDatabase } from "./src/database.ts";
 import { parseReviews, stripReviewStorage } from "./src/review.ts";
 import { compileSourceMap } from "./src/source-map.ts";
+import { fileChanges } from "./src/file-diff.ts";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TEXT_EXTENSIONS = new Set([".bib", ".cls", ".csv", ".json", ".md", ".sty", ".tex", ".txt", ".yaml", ".yml"]);
@@ -493,6 +494,20 @@ function createCollaborationStore(projectId, projectDir, database) {
     return { source: result, sha256: sha256(result), mode, suggestionIds };
   }
 
+  function editFile(relativePath, baseSha256, updated, options: any = {}) {
+    if (typeof baseSha256 !== "string" || !/^[a-f0-9]{64}$/.test(baseSha256)) throw apiError("invalid_base_sha256", "X-Base-SHA256 must be a lowercase SHA-256 hex digest");
+    const source = readText(relativePath);
+    const currentSha256 = sha256(source);
+    if (currentSha256 !== baseSha256) throw apiError("stale_file", "file changed since it was downloaded; download the latest file, reapply your edits, and retry", 409, { path: relativePath, expectedSha256: baseSha256, currentSha256 });
+    const mode = options.mode ?? "direct";
+    if (mode !== "direct" && mode !== "suggesting") throw apiError("invalid_mode", "mode must be suggesting or direct");
+    if (mode === "suggesting") agentAuthor(options.agent);
+    const changes = fileChanges(source, updated);
+    if (!changes.length) return { source, sha256: currentSha256, mode, suggestionIds: [], changeCount: 0 };
+    const result = patchText(relativePath, baseSha256, changes, { ...options, mode });
+    return { ...result, changeCount: changes.length };
+  }
+
   function flush() {
     for (const shared of docs.values()) {
       if (shared.removed) continue;
@@ -548,7 +563,7 @@ function createCollaborationStore(projectId, projectDir, database) {
     }
   }
 
-  return { attach, disconnectShare, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
+  return { attach, disconnectShare, editFile, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
 }
 
 async function listFiles(projectDir) {
@@ -1261,11 +1276,12 @@ its matching cached artifact.
 
 \`PUT /v1/files?path=chapters/intro.tex\` writes the raw request body.
 
-\`POST /v1/files/patch?path=main.tex\` applies checked UTF-16 ranges in one
-Yjs transaction. It defaults to Suggesting mode and requires Agent identity:
-\`{"baseSha256":"...","agent":{"id":"ag_...","name":"writer"},"changes":[{"from":10,"to":14,"insert":"replacement"}]}\`.
-Use \`"mode":"direct"\` only when an unreviewed edit is explicitly intended.
-Overlapping, stale, or Unicode-splitting edits are rejected without changing the file.
+\`POST /v1/files/edit?path=main.tex\` uploads the complete updated UTF-8 file
+as raw bytes. Supply the downloaded file's \`X-Content-SHA256\` in the
+\`X-Base-SHA256\` request header. The server checks the live Yjs revision,
+calculates the diff, and applies it in one transaction. Stale uploads return
+HTTP 409 without changing the file. Direct editing is the default.
+To create suggestions, add \`&mode=suggesting&agentId=ag_unique&agentName=writer\`.
 
 \`DELETE /v1/files?path=chapters/intro.tex\` removes a file.
 
@@ -1287,7 +1303,7 @@ do not store unrelated secrets in project directories.
 function agentProjectManual(runtime, files, shareToken, origin) {
   const capability = new URLSearchParams({ project: runtime.id, access: shareToken });
   const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
-  const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const editUrl = relativePath => `/v1/files/edit?${capability}&path=${encodeURIComponent(relativePath)}`;
   const projectUrl = `/v1/project?${capability}`;
   const searchUrl = `/v1/search?${capability}`;
   const pdfUrl = `/v1/build/pdf?${capability}`;
@@ -1331,52 +1347,37 @@ curl -fsSL '${origin}${pdfUrl}' -o latest.pdf
 This always downloads a PDF built from the current project inputs. The server
 handles compilation and caching; do not call the compile API first.
 
-## Submit A Yjs Edit
+## Upload An Updated File
 
-Never construct patch JSON by hand. LaTeX backslashes such as \\section,
-\\begin, \\text, and \\newcommand are JSON escapes or invalid JSON when pasted
-directly into a JSON string. Write the exact LaTeX to a file, then use a JSON
-encoder so it is escaped correctly.
+Download the file and its revision, edit the downloaded file locally, then
+upload the complete updated file as raw UTF-8 bytes. No JSON escaping, base64,
+or character offsets are needed. Keep all unchanged content, including review
+macros and replies, intact.
 
 curl -fsS -D /tmp/latexcoder-headers '${origin}${fileUrl(main)}' \\
   -o /tmp/latexcoder-current.tex
 SHA=$(awk 'tolower($1) == "x-content-sha256:" { gsub("\\r", "", $2); print $2 }' \\
   /tmp/latexcoder-headers)
 
-cat > /tmp/latexcoder-insert.tex <<'LATEX'
-\\section{Introduction}
-Write the exact LaTeX here. Backslashes, quotes, and newlines stay unchanged.
-LATEX
+cp /tmp/latexcoder-current.tex /tmp/latexcoder-updated.tex
+# Edit /tmp/latexcoder-updated.tex with your local file-editing tool.
 
-FROM=0
-TO=0
-jq -n \\
-  --arg sha "$SHA" \\
-  --argjson from "$FROM" \\
-  --argjson to "$TO" \\
-  --rawfile insert /tmp/latexcoder-insert.tex \\
-  '{baseSha256: $sha, mode: "direct", changes: [{from: $from, to: $to, insert: $insert}]}' \\
-  > /tmp/latexcoder-patch.json
+curl -fsS -X POST '${origin}${editUrl(main)}' \\
+  -H 'Content-Type: text/plain; charset=utf-8' \\
+  -H "X-Base-SHA256: $SHA" \\
+  --data-binary @/tmp/latexcoder-updated.tex
 
-curl -fsS -X POST '${origin}${patchUrl(main)}' \\
-  -H 'Content-Type: application/json' \\
-  --data-binary @/tmp/latexcoder-patch.json
+The server computes Yjs operations automatically and broadcasts them to
+connected editors. It checks the hash of the live collaborative content, not
+an older disk copy. Missing or invalid hashes are rejected; stale hashes return
+HTTP 409 with error.details.currentSha256. Download the latest file, reapply
+your intended changes to that version, and retry. Never just substitute a new
+hash onto an old edited file: that would overwrite others' changes.
 
-If jq is unavailable, use another real JSON serializer. Never interpolate raw
-LaTeX into JSON with shell string concatenation. Set FROM and TO to UTF-16
-code-unit offsets into /tmp/latexcoder-current.tex.
-
-Patch ranges use UTF-16 code-unit offsets into the version identified by
-baseSha256. All ranges are checked against that original version, then applied
-together in one Yjs transaction. Ranges must be non-overlapping. A stale digest
-is rejected with HTTP 409 and the response includes
-error.details.currentSha256; read the file again, recalculate the offsets, and
-retry.
-
-To create a reviewable suggestion instead of a direct edit, omit mode or use
-"mode":"suggesting" and include:
-
-{"agent":{"id":"ag_uniqueid","name":"Agent Name"}}
+Uploads are direct edits by default. To create reviewable suggestions, append
+&mode=suggesting&agentId=ag_uniqueid&agentName=Agent%20Name to the upload URL.
+The response returns the resulting file hash and generated suggestion IDs.
+Suggestion uploads may not overlap existing open reviews.
 
 ## Reply To An Inline Comment
 
@@ -1384,25 +1385,25 @@ Comments are stored as:
 
 \\cmtbg{thread-id}{Author}selected text\\cmted{initial comment}
 
-To reply, use the checked patch API to append this immediately before the final
+To reply, edit the downloaded file to append this immediately before the final
 closing brace of that comment's \\cmted argument:
 
 \\cmtrpl{unique-reply-id}{Agent Name}{Reply text}
 
 Keep the existing comment and replies intact unless the user explicitly asks
-to resolve or rewrite them. Read the latest file revision before patching.
+to resolve or rewrite them. Upload the updated file with its original base hash.
 
-## Replace Or Create A File
+## Create A File
 
 PUT ${fileUrl(main)}
 Content-Type: text/plain; charset=utf-8
 
-The raw request body becomes the file content. Prefer the checked patch API for
-existing text because it detects concurrent edits.
+Use PUT only for new files or binary uploads. For existing text files, use the
+checked full-file upload above; do not use an unchecked PUT to bypass a conflict.
 
 ## Git (Only When The User Explicitly Requests It)
 
-Do not use Git by default. For normal editing, use the checked Yjs patch API
+Do not use Git by default. For normal editing, use the checked full-file upload
 above. Only inspect Git status, create a commit, resolve a conflict, clone, or
 push the repository when the user explicitly requests that Git operation.
 
@@ -1424,7 +1425,7 @@ checkpoints current Yjs changes, then automatically merges the pushed commit
 into Yjs-backed main. If it cannot merge safely, the incoming commit is kept on
 a conflict branch and the live document stays unchanged. The remote may not
 contain uncommitted Yjs changes until the checkpoint created by a push or web
-commit. Use the checked Yjs patch API unless the user specifically asks for a
+commit. Use the checked full-file upload unless the user specifically asks for a
 Git workflow.
 `;
 }
@@ -2319,6 +2320,26 @@ export async function createPaperServer(options: any = {}) {
       response.status(201).json({ file: { path: relativePath, size: body.length, text: isTextFile(relativePath) } });
     } catch (error) { next(error); }
   });
+  app.post("/v1/files/edit", express.raw({ type: () => true, limit: MAX_TEXT_BYTES }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const relativePath = safeRelativePath(request.query.path);
+      if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be edited", 415);
+      const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+      let source: string;
+      try { source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body); }
+      catch { throw apiError("invalid_utf8", "upload must be a valid UTF-8 file"); }
+      const result = runtime.collaboration.editFile(relativePath, request.get("X-Base-SHA256"), source, {
+        mode: request.query.mode,
+        agent: { id: request.query.agentId, name: request.query.agentName },
+      });
+      runtime.collaboration.flush();
+      response.setHeader("ETag", `"${result.sha256}"`);
+      response.setHeader("X-Content-SHA256", result.sha256);
+      response.json({ file: { path: relativePath, size: Buffer.byteLength(result.source), text: true, sha256: result.sha256 }, edit: { mode: result.mode, changeCount: result.changeCount, suggestionIds: result.suggestionIds } });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/files/patch", express.json({ limit: `${MAX_TEXT_BYTES}b` }), (request, response, next) => {
     resolveProject(request).then(runtime => {
       assertProjectWritable(runtime);
@@ -2380,6 +2401,42 @@ export async function createPaperServer(options: any = {}) {
       response.setHeader("ETag", `"${build.sourceRevision}"`);
       response.setHeader("X-LaTeX-Coder-Source-Revision", build.sourceRevision);
       response.sendFile(path.join(runtime.buildDir, "latest.pdf"), { dotfiles: "allow" });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/build/position", express.json({ limit: `${MAX_TEXT_BYTES * 2}b` }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const file = safeRelativePath(request.body?.path);
+      const { line, source } = request.body || {};
+      if (!file.endsWith(".tex") || !Number.isSafeInteger(line) || line < 1 || typeof source !== "string") throw apiError("invalid_position", "Expected a LaTeX file, source, and positive line number");
+      if (runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source changed. Try navigating again.", 409);
+      await ensureLatestPdf(runtime);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) await compileProject(runtime, runtime.build.main);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) throw apiError("synctex_missing", "The compiler did not produce SyncTeX data", 409);
+      let snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      if (snapshot.files[file]?.source !== source) {
+        const result = await compileProject(runtime, runtime.build.main);
+        if (!result.success) throw apiError("compile_failed", "Compilation failed while locating the PDF position", 422);
+        snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      }
+      const map = snapshot.files[file];
+      if (!map) throw apiError("source_not_found", "This file is not part of the compiled document", 404);
+      if (map.source !== source || runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source changed. Try navigating again.", 409);
+      let projectedLine = 1;
+      for (let index = 0; index < map.lines.length; index++) {
+        if (Math.abs(map.lines[index] - line) < Math.abs(map.lines[projectedLine - 1] - line)) projectedLine = index + 1;
+      }
+      let result;
+      try {
+        result = await run(options.synctex || "synctex", ["view", "-i", `${projectedLine}:0:${path.join(snapshot.root, file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 5000, env: { ...process.env, SYNCTEX_VIEWER: "" } });
+      } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
+      if (runtime.compilePromise || snapshot.revision !== runtime.build.sourceRevision || runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source or PDF changed. Try navigating again.", 409);
+      const page = Number(/^Page:(\d+)$/m.exec(result.output)?.[1]);
+      const x = Number(/^x:([\d.eE+-]+)$/m.exec(result.output)?.[1]);
+      const y = Number(/^y:([\d.eE+-]+)$/m.exec(result.output)?.[1]);
+      if (result.code !== 0 || !page || !Number.isFinite(x) || !Number.isFinite(y)) throw apiError("source_not_found", "No PDF position for this source", 404);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ page, x, y, revision: snapshot.revision });
     } catch (error) { next(error); }
   });
   app.post("/v1/build/source", express.json({ limit: "16kb" }), async (request, response, next) => {

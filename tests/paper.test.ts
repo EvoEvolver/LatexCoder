@@ -391,14 +391,12 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentWorkspace.headers.get("content-type"), /^text\/plain/);
     const agentInstructions = await agentWorkspace.text();
     assert.match(agentInstructions, /^# Shared Capability/m);
-    assert.match(agentInstructions, /Submit A Yjs Edit/);
-    assert.match(agentInstructions, /Never construct patch JSON by hand/);
-    assert.match(agentInstructions, /jq -n/);
-    assert.match(agentInstructions, /--rawfile insert \/tmp\/latexcoder-insert\.tex/);
-    assert.match(agentInstructions, /--data-binary @\/tmp\/latexcoder-patch\.json/);
-    assert.ok(agentInstructions.includes("\\section{Introduction}"));
-    assert.ok(!agentInstructions.includes("\\\\section{Introduction}"));
-    assert.ok(agentInstructions.includes("jq -n \\\n  --arg sha"));
+    assert.match(agentInstructions, /Upload An Updated File/);
+    assert.match(agentInstructions, /No JSON escaping, base64/);
+    assert.match(agentInstructions, /X-Base-SHA256: \$SHA/);
+    assert.match(agentInstructions, /--data-binary @\/tmp\/latexcoder-updated\.tex/);
+    assert.match(agentInstructions, /Never just substitute a new/);
+    assert.ok(!agentInstructions.includes("FROM=0"));
     assert.match(agentInstructions, /Search The Project/);
     assert.match(agentInstructions, /curl -fsS -X POST '.*\/v1\/search\?project=/);
     assert.match(agentInstructions, /X-Ripgrep-Exit-Code/);
@@ -407,7 +405,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentInstructions, /do not call the compile API first/);
     assert.match(agentInstructions, /Reply To An Inline Comment/);
     assert.match(agentInstructions, /\\cmtrpl\{unique-reply-id\}\{Agent Name\}\{Reply text\}/);
-    assert.match(agentInstructions, /\/v1\/files\/patch\?project=/);
+    assert.match(agentInstructions, /\/v1\/files\/edit\?project=/);
     assert.match(agentInstructions, /Git \(Only When The User Explicitly Requests It\)/);
     assert.match(agentInstructions, /Do not use Git by default/);
     assert.match(agentInstructions, /\/v1\/git\/commit\?project=/);
@@ -420,15 +418,11 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal(agentRead.status, 200);
     assert.equal(agentRead.headers.get("cache-control"), "no-store");
     const agentSource = await agentRead.text();
-    const agentPatchUrl = `${base}/v1/files/patch?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
+    const agentPatchUrl = `${base}/v1/files/edit?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
     const agentPatch = await fetch(agentPatchUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        baseSha256: agentRead.headers.get("x-content-sha256"),
-        mode: "direct",
-        changes: [{ from: agentSource.length, to: agentSource.length, insert: "\n% edited from Agent workspace\n" }],
-      }),
+      headers: { "Content-Type": "text/plain", "X-Base-SHA256": agentRead.headers.get("x-content-sha256")! },
+      body: agentSource + "\n% edited from Agent workspace\n",
     });
     assert.equal(agentPatch.status, 200);
     assert.match(await (await fetch(agentFileUrl)).text(), /% edited from Agent workspace\n$/);
@@ -918,6 +912,77 @@ test("file API writes canonical project files", async () => {
     const downloaded = await fetch(`${base}/v1/files?path=chapter.tex`);
     assert.equal(downloaded.status, 200);
     assert.equal(await downloaded.text(), "A new chapter.\n");
+  });
+});
+
+test("full-file edit computes Yjs changes atomically and rejects live stale hashes", async () => {
+  await withServer(async ({ base, ws, projectDir, collaboration }) => {
+    const room = Buffer.from("main.tex").toString("base64url");
+    const doc = new Y.Doc();
+    const provider = new WebsocketProvider(`${ws}/v1/collab`, room, doc, { WebSocketPolyfill: WebSocket as any });
+    try {
+      await waitFor(() => provider.synced);
+      const downloaded = await fetch(`${base}/v1/files?path=main.tex`);
+      const original = await downloaded.text();
+      const hash = downloaded.headers.get("x-content-sha256")!;
+      const updated = "\\section{Unicode 😀}\n" + original.replace("shared live", 'shared "direct"') + "\n\\newcommand{\\test}{Backslashes}\n";
+      let transactions = 0;
+      const shared = collaboration.load("main.tex");
+      shared.doc.on("update", () => transactions++);
+      const upload = (source, revision, query = "") => fetch(`${base}/v1/files/edit?path=main.tex${query}`, {
+        method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8", ...(revision === undefined ? {} : { "X-Base-SHA256": revision }) }, body: source,
+      });
+      const edited = await upload(updated, hash);
+      assert.equal(edited.status, 200, await edited.clone().text());
+      const result = await edited.json();
+      assert.equal(result.file.sha256, sha256(updated));
+      assert.equal(result.edit.mode, "direct");
+      assert.ok(result.edit.changeCount >= 2);
+      assert.equal(transactions, 1);
+      await waitFor(() => doc.getText("content").toString() === updated);
+      assert.equal(await readFile(path.join(projectDir, "main.tex"), "utf8"), updated);
+      const noop = await upload(updated, result.file.sha256);
+      assert.equal(noop.status, 200);
+      assert.equal((await noop.json()).edit.changeCount, 0);
+      assert.equal(transactions, 1);
+      const stale = await upload("overwrite", hash);
+      assert.equal(stale.status, 409);
+      assert.equal((await stale.json()).error.details.currentSha256, sha256(updated));
+      const missing = await upload("overwrite", undefined);
+      assert.equal(missing.status, 400);
+      const invalid = await upload(Buffer.from([0xff]), result.file.sha256);
+      assert.equal(invalid.status, 400);
+      assert.equal(shared.doc.getText("content").toString(), updated);
+      assert.equal(transactions, 1);
+
+      // The in-memory Yjs version differs from disk before its persistence timer.
+      shared.doc.getText("content").insert(0, "human edit\n");
+      const live = shared.doc.getText("content").toString();
+      const liveStale = await upload("overwrite", sha256(updated));
+      assert.equal(liveStale.status, 409);
+      assert.equal(shared.doc.getText("content").toString(), live);
+      const fresh = await upload(live.replace("Backslashes", "Suggested"), sha256(live), "&mode=suggesting&agentId=ag_upload&agentName=Writer");
+      assert.equal(fresh.status, 200, await fresh.clone().text());
+      const suggesting = await fresh.json();
+      assert.equal(suggesting.edit.mode, "suggesting");
+      assert.ok(suggesting.edit.suggestionIds.length);
+      assert.ok(parseReviews(shared.doc.getText("content").toString()).some(review => review.author.includes("Writer")));
+    } finally { provider.destroy(); doc.destroy(); }
+  });
+});
+
+test("two full-file uploads with the same base cannot overwrite each other", async () => {
+  await withServer(async ({ base }) => {
+    const downloaded = await fetch(`${base}/v1/files?path=main.tex`);
+    const hash = downloaded.headers.get("x-content-sha256")!;
+    const original = await downloaded.text();
+    const versions = [original + "\nAgent one", original + "\nAgent two"];
+    const responses = await Promise.all(versions.map(body => fetch(`${base}/v1/files/edit?path=main.tex`, {
+      method: "POST", headers: { "X-Base-SHA256": hash, "Content-Type": "text/plain" }, body,
+    })));
+    assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+    const current = await (await fetch(`${base}/v1/files?path=main.tex`)).text();
+    assert.equal(current, versions[responses.findIndex(response => response.status === 200)]);
   });
 });
 

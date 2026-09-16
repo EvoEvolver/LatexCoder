@@ -42,6 +42,75 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+async function selectionContextMenu(page, needle, testMode = true) {
+  const point = await page.evaluate(({ needle, testMode }) => {
+    const view = (testMode ? globalThis.__paperTest : globalThis.__paperE2E).state.view;
+    const from = view.state.doc.toString().indexOf(needle);
+    view.dispatch({ selection: { anchor: from, head: from + needle.length } });
+    view.focus();
+    const bounds = view.coordsAtPos(from + 1);
+    return { x: bounds.left + 1, y: (bounds.top + bounds.bottom) / 2 };
+  }, { needle, testMode });
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await page.locator("#editor-context-menu").waitFor();
+}
+
+test("selected text context menu preserves selection and offers editing commands", async () => {
+  await withEditor(async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await createEditor(page, LIPSUM);
+    await page.evaluate(() => { globalThis.__paperTest.state.suggesting = false; });
+    await selectionContextMenu(page, "brave");
+    assert.equal(await page.locator("#editor-context-menu [role=menuitem]").count(), 9);
+    await page.screenshot({ path: "/tmp/latexcoder-editor-context-menu.png" });
+    await page.locator('[data-editor-action="copy"]').click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "brave");
+    await selectionContextMenu(page, "brave");
+    await page.locator('[data-editor-action="cut"]').click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString() === "Hello  new world.");
+    await selectionContextMenu(page, "new");
+    await page.locator('[data-editor-action="undo"]').click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString() === "Hello brave new world.");
+    await selectionContextMenu(page, "brave");
+    await page.locator('[data-editor-action="redo"]').click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString() === "Hello  new world.");
+    await selectionContextMenu(page, "new");
+    await page.evaluate(() => navigator.clipboard.writeText("pasted"));
+    await page.locator('[data-editor-action="paste"]').click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString() === "Hello  pasted world.");
+    await selectionContextMenu(page, "pasted");
+    await page.locator('[data-editor-action="delete"]').click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString() === "Hello   world.");
+    await selectionContextMenu(page, "world");
+    await page.locator('[data-editor-action="select-all"]').click();
+    assert.equal(await page.evaluate(() => globalThis.__paperTest.state.view.state.selection.main.to), "Hello   world.".length);
+    await selectionContextMenu(page, "world");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#editor-context-menu").isVisible(), false);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.waitForFunction(() => document.querySelector("#files-pane").getBoundingClientRect().right <= 0);
+    await selectionContextMenu(page, "world");
+    const menu = await page.locator("#editor-context-menu").boundingBox();
+    assert.ok(menu.x >= 0 && menu.x + menu.width <= 390 && menu.y + menu.height <= 844);
+    await page.screenshot({ path: "/tmp/latexcoder-editor-context-mobile.png" });
+  });
+});
+
+test("selection context menu adds comments and blocks overlapping comments", async () => {
+  await withEditor(async ({ page }) => {
+    await createEditor(page, LIPSUM);
+    await selectionContextMenu(page, "brave");
+    await page.locator('[data-editor-action="comment"]').click();
+    assert.equal(await page.evaluate(() => globalThis.__paperTest.state.reviewSelection.selected), "brave");
+    await page.locator("#review-text").fill("Context comment");
+    await page.locator("#dialog-submit").click();
+    await page.waitForFunction(() => globalThis.__paperTest.state.view.state.doc.toString().includes("Context comment"));
+    await selectionContextMenu(page, "brave");
+    assert.equal(await page.locator('[data-editor-action="comment"]').isDisabled(), true);
+  });
+});
+
 test("project search opens cross-file matches and respects case", async () => {
   await withEditor(async ({ page, base }) => {
     const projects = await (await page.request.get(`${base}/v1/projects`)).json();
@@ -67,8 +136,11 @@ test("project search opens cross-file matches and respects case", async () => {
 });
 
 const realLatexmk = ["/Library/TeX/texbin/latexmk", "/usr/bin/latexmk"].find(existsSync);
-test("real SyncTeX PDF double-click opens included source and rejects stale source", { skip: !realLatexmk }, async () => {
+for (const platform of ["MacIntel", "Linux x86_64"]) {
+test(`${platform} real SyncTeX PDF modifier-click opens included source and rejects stale source`, { skip: !realLatexmk }, async () => {
   await withEditor(async ({ page, base }) => {
+    await page.addInitScript(value => Object.defineProperty(navigator, "platform", { value }), platform);
+    const modifier = platform === "MacIntel" ? "Meta" : "Control";
     page.setDefaultTimeout(30000);
     const projects = await (await page.request.get(`${base}/v1/projects`)).json();
     const id = projects.defaultProjectId;
@@ -90,8 +162,26 @@ test("real SyncTeX PDF double-click opens included source and rejects stale sour
       const bounds = document.querySelector("#pdf-document canvas").getBoundingClientRect();
       return { x: bounds.left + x / viewport.width * bounds.width, y: bounds.top + y / viewport.height * bounds.height };
     });
+    let sourceRequests = 0;
+    page.on("request", request => { if (request.url().includes("/v1/build/source")) sourceRequests++; });
+    await page.mouse.click(point.x, point.y);
+    await page.keyboard.down(modifier === "Meta" ? "Control" : "Meta");
+    await page.mouse.click(point.x, point.y);
+    await page.keyboard.up(modifier === "Meta" ? "Control" : "Meta");
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(sourceRequests, 0);
     const sourceResponse = page.waitForResponse(response => response.url().includes("/v1/build/source"));
-    await page.mouse.dblclick(point.x, point.y);
+    const clickSource = async () => {
+      // On a macOS test host, physical Ctrl-click opens the native context menu.
+      if (platform !== "MacIntel") {
+        await page.locator("#pdf-document canvas").dispatchEvent("click", { clientX: point.x, clientY: point.y, ctrlKey: true, button: 0 });
+      } else {
+        await page.keyboard.down(modifier);
+        await page.mouse.click(point.x, point.y);
+        await page.keyboard.up(modifier);
+      }
+    };
+    await clickSource();
     const response = await sourceResponse;
     assert.equal(response.status(), 200, await response.text());
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro.tex");
@@ -100,16 +190,28 @@ test("real SyncTeX PDF double-click opens included source and rejects stale sour
       return view.state.doc.lineAt(view.state.selection.main.head).text.includes("Unique source");
     });
     await page.screenshot({ path: "/tmp/latexcoder-pdf-source.png" });
+    await selectionContextMenu(page, "Unique source", false);
+    const positionResponse = page.waitForResponse(response => response.url().includes("/v1/build/position"));
+    await page.locator('[data-editor-action="pdf"]').click();
+    const forward = await positionResponse;
+    assert.equal(forward.status(), 200, await forward.text());
+    await page.locator("#pdf-source-marker").waitFor();
+    await page.screenshot({ path: "/tmp/latexcoder-source-to-pdf.png" });
+    const noteOnlyEdit = child.replace("Hidden comment", "Hidden\nupdated comment");
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/intro.tex`, { data: noteOnlyEdit, headers: { "Content-Type": "text/plain" } });
+    const refreshedMapping = await page.request.post(`${base}/v1/build/position?project=${id}`, { data: { path: "chapters/intro.tex", line: 5, source: noteOnlyEdit } });
+    assert.equal(refreshedMapping.status(), 200, await refreshedMapping.text());
     const revision = await page.evaluate(() => globalThis.__paperE2E.state.pdfSourceRevision);
     const invalid = await page.request.post(`${base}/v1/build/source?project=${id}`, { data: { page: 1, x: -1, y: 20, revision } });
     assert.equal(invalid.status(), 400);
     const outdated = await page.request.post(`${base}/v1/build/source?project=${id}`, { data: { page: 1, x: 200, y: 130, revision: "old" } });
     assert.equal(outdated.status(), 409);
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/intro.tex`, { data: child + "Changed", headers: { "Content-Type": "text/plain" } });
-    await page.mouse.dblclick(point.x, point.y);
+    await clickSource();
     await page.waitForFunction(() => document.querySelector("#toast")?.textContent?.includes("source changed"));
   }, { compiler: realLatexmk });
 });
+}
 
 test("workspace panels resize and Files can be hidden and restored", async () => {
   await withEditor(async ({ page }) => {

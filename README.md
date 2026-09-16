@@ -22,7 +22,7 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Threaded inline comments, replies, and tracked suggestions encoded as explicit
   LaTeX macros. Humans and agents see and edit the same review state through
-  ordinary source reads and checked patches, including replying, accepting,
+  ordinary source reads and hash-checked full-file uploads, including replying, accepting,
   rejecting, and resolving it.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
@@ -33,12 +33,16 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
   build logs, and an always-current PDF download endpoint.
 - In-editor previews for project images and PDF files, with zoom and download.
-- Double-click compiled PDF content to open its LaTeX source via SyncTeX,
+- Command-click (Mac) or Ctrl-click compiled PDF content to open its LaTeX source via SyncTeX,
   including included files and review-aware line mapping.
+- Selection context menus with common editing commands, inline comments, and
+  forward SyncTeX navigation from source to the matching PDF position.
 - Project-wide text search with highlighted matches and cross-file navigation;
   optional case-sensitive and sandboxed ripgrep regular-expression search.
 - Whole-project ZIP export, including the current uncommitted working tree.
-- A Markdown manual and checked file/patch APIs for coding agents.
+- A Markdown manual and full-file editing API for coding agents. Agents upload
+  raw UTF-8 files with their downloaded base SHA-256; the server computes Yjs
+  changes and rejects stale uploads without overwriting collaborators' edits.
 - A project-scoped ripgrep API with native regex, glob, line-number, and output
   options for coding agents.
 - Project-scoped plain-text Agent workspace links that can submit checked edits
@@ -206,15 +210,19 @@ curl -c session.txt -L 'http://127.0.0.1:8090/share/<project-id>/<share-secret>'
 curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=<project-id>'
 ```
 
-Agents can submit checked UTF-16 edits through
-`POST /v1/files/patch?project=<id>&path=main.tex`. Suggesting mode records the
-edit as inline review storage; direct mode bypasses review creation. The Agent
-workspace instructs agents to write raw LaTeX to a temporary file and serialize
-it with `jq --rawfile`, avoiding hand-written JSON escaping errors.
+Agents download a file using `GET /v1/files` and keep its `X-Content-SHA256`
+header. After editing that file locally, upload the complete UTF-8 file to
+`POST /v1/files/edit?project=<id>&path=main.tex` using `--data-binary @file.tex`
+and the header `X-Base-SHA256: <downloaded-hash>`. No JSON escaping or offsets
+are needed. The server computes and applies the diff in one Yjs transaction.
+If the live file changed, it returns HTTP 409 without modifying anything.
+Download the latest version and reapply the edits; never attach a new hash to
+an old edited file. Direct mode is the default; `mode=suggesting` with
+`agentId` and `agentName` query parameters creates inline review suggestions.
 
 Registered project members can copy their own capability-bearing Agent workspace URL from the
 **Collaborate** dialog. Opening `/agent/<project-id>/<share-secret>` returns a
-plain-text project file listing and project-specific read and checked-patch
+plain-text project file listing and project-specific read and checked-upload
 URLs. These URLs do not require an account or cookie; possession of the link
 grants edit access to that project.
 
