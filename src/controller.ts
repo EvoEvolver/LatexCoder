@@ -129,7 +129,7 @@ const elements: Record<string, any> = Object.fromEntries([
   "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
@@ -1065,7 +1065,6 @@ function openReviewDialog() {
 
 elements.review_form.addEventListener("submit", event => {
   event.preventDefault();
-  if (event.submitter?.value === "cancel") return elements.review_dialog.close();
   const review = state.reviewSelection;
   const value = elements.review_text.value;
   if (!review || !value.trim()) return;
@@ -1080,6 +1079,8 @@ elements.review_form.addEventListener("submit", event => {
   state.view.focus();
   renderReviews();
 });
+elements.review_close.addEventListener("click", () => elements.review_dialog.close());
+elements.review_cancel.addEventListener("click", () => elements.review_dialog.close());
 
 function randomId() {
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

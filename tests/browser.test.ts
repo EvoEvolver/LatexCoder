@@ -174,6 +174,33 @@ test("comment accepts arbitrary selected LaTeX fragments", async () => {
   });
 });
 
+test("an empty inline comment can be cancelled or closed", async () => {
+  await withEditor(async ({ page }) => {
+    await createEditor(page, LIPSUM);
+    const selectWord = () => page.evaluate(() => {
+      const { view } = globalThis.__paperTest.state;
+      view.dispatch({ selection: { anchor: 6, head: 11 } });
+      view.focus();
+    });
+
+    await selectWord();
+    await page.locator("#add-comment").click();
+    await page.locator("#review-cancel").click();
+    assert.equal(await page.locator("#review-dialog").isHidden(), true);
+
+    await selectWord();
+    await page.locator("#add-comment").click();
+    await page.locator("#review-close").click();
+    assert.equal(await page.locator("#review-dialog").isHidden(), true);
+
+    await selectWord();
+    await page.locator("#add-comment").click();
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#review-dialog").isHidden(), true);
+    assert.equal((await editorState(page)).doc, LIPSUM);
+  });
+});
+
 test("selection overlay preserves the addition highlight", async () => {
   await withEditor(async ({ page }) => {
     const content = "Hello \\addbg{r1}{Ada}brave\\added world.";
