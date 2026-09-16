@@ -278,6 +278,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
     assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
+    assert.equal(await page.locator("#files-pane > .pane-header #download-project").count(), 1);
+    assert.equal(await page.locator(".topbar #download-project").count(), 0);
     assert.equal(await page.locator("#clone-button").count(), 0);
     assert.equal(await page.locator("#share-project + #git-button").count(), 1);
 

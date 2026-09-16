@@ -130,13 +130,13 @@ export function AppShell() {
           <Button id="editor-login" variant="outline" size="sm" hidden><Icon name="log-in" /><span className="max-sm:hidden">Sign in</span></Button>
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Share</span></Button>
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
-          <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
           <Button id="compile-button" size="sm"><Icon name="play" /><span className="max-sm:hidden">Compile</span></Button>
         </header>
 
         <main className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_minmax(21rem,1fr)_minmax(22rem,46%)] overflow-hidden max-[760px]:grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <div className="pane-header flex h-11 items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex items-center gap-0.5">
+              <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="upload-file" icon="upload" title="Upload" />
               <input id="upload-input" type="file" multiple hidden />
