@@ -125,10 +125,10 @@ const elements: Record<string, any> = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-name", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
-  "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "output-pane", "pdf-document",
+  "editor-login", "editor-page", "editor", "empty-output", "file-list", "files-pane", "new-file", "new-project", "new-share-secret", "output-pane", "pdf-document",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-ref", "git-refresh", "git-resolve", "git-summary", "git-sync",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
@@ -150,6 +150,8 @@ const state: any = {
   user: null,
   bootstrapReady: true,
   projectCanManage: false,
+  accessProjectId: "",
+  accessShareId: "",
   git: null,
   main: "main.tex",
   files: [],
@@ -1358,21 +1360,49 @@ async function copyText(value, message) {
   showToast(message);
 }
 
-async function openAccessDialog() {
-  const project = state.projects.find(candidate => candidate.id === state.projectId);
-  if (!project) return;
-  const result = await request("v1/project/share");
-  const shareUrl = `${window.location.origin}${result.share.path}`;
-  const agentUrl = `${window.location.origin}${result.share.agentPath}`;
-  const cloneUrl = `${window.location.origin}${result.share.clonePath}`;
-  elements.access_project_name.textContent = project.name;
+function displayAccessShare(share) {
+  state.accessProjectId = state.projectId;
+  state.accessShareId = share.id;
+  const shareUrl = `${window.location.origin}${share.path}`;
+  const agentUrl = `${window.location.origin}${share.agentPath}`;
+  const cloneUrl = `${window.location.origin}${share.clonePath}`;
   elements.share_link.value = shareUrl;
   elements.agent_link.value = agentUrl;
   elements.clone_command.value = `git clone ${cloneUrl}`;
+  elements.share_link.select();
+}
+
+async function createAccessShare() {
+  const result = await request("v1/project/share", { method: "POST" });
+  displayAccessShare(result.share);
+}
+
+async function openAccessDialog() {
+  const project = state.projects.find(candidate => candidate.id === state.projectId);
+  if (!project) return;
+  if (state.accessProjectId !== state.projectId || !state.accessShareId) await createAccessShare();
+  elements.access_project_name.textContent = project.name;
   elements.access_download.href = projectApiUrl("v1/project/archive");
   elements.access_download.download = `${project.id}.zip`;
   elements.access_dialog.showModal();
-  elements.share_link.select();
+}
+
+async function rotateShareSecret() {
+  elements.access_dialog.close();
+  const confirmed = await openActionDialog({
+    title: "Rotate access secret?",
+    message: "This collaborator's previous Browser, Agent, and Git links will stop working immediately. Existing guest sessions for this link will also be signed out. Other collaborators keep access.",
+    submitLabel: "Rotate secret",
+    danger: true,
+  });
+  if (!confirmed) {
+    elements.access_dialog.showModal();
+    return;
+  }
+  const result = await request(`v1/project/share/${encodeURIComponent(state.accessShareId)}/rotate`, { method: "POST" });
+  displayAccessShare(result.share);
+  elements.access_dialog.showModal();
+  showToast("Secret rotated. This collaborator's previous links no longer work.");
 }
 
 async function enterProjectDashboard(replace = false) {
@@ -1440,6 +1470,13 @@ elements.access_dialog.addEventListener("cancel", event => {
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
 elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent workspace link copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
+elements.new_share_secret.addEventListener("click", () => createAccessShare()
+  .then(() => showToast("New collaborator link created."))
+  .catch(error => showToast(error.message)));
+elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
+  showToast(error.message);
+  if (!elements.access_dialog.open) elements.access_dialog.showModal();
+}));
 elements.invite_user.addEventListener("click", createInvitation);
 elements.invite_regenerate.addEventListener("click", createInvitation);
 elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());

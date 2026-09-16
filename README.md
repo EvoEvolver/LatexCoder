@@ -92,7 +92,10 @@ Guests enter through `/share/<project-id>/<secret>`; the server exchanges that
 secret for a 24-hour, project-scoped HttpOnly session and redirects to the clean
 editor URL `/projects/<project-id>`. Guests can edit that project but cannot list
 or create projects. Only the owner can rename or delete a project and retrieve
-its share and clone URLs. Project state is stored beneath:
+its share and clone URLs. The Collaborate dialog creates a separate access grant
+for each collaborator. Rotating one grant invalidates only that person's Browser,
+Agent, and Git links and guest session; other collaborators keep access. Project
+state is stored beneath:
 
 ```text
 .latexcoder/

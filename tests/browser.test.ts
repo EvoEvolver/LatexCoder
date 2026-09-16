@@ -292,6 +292,20 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-link").inputValue(), new RegExp(`^${base}/agent/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
+    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other collaborators keep access/);
+    const firstCollaboratorLink = await page.locator("#share-link").inputValue();
+    await page.locator("#new-share-secret").click();
+    await page.waitForFunction(previous => document.querySelector<HTMLInputElement>("#share-link")?.value !== previous, firstCollaboratorLink);
+    const previousShareLink = await page.locator("#share-link").inputValue();
+    assert.equal((await page.request.get(firstCollaboratorLink, { maxRedirects: 0 })).status(), 303);
+    await page.locator("#rotate-share-secret").click();
+    assert.equal(await page.locator("#action-title").textContent(), "Rotate access secret?");
+    assert.match(await page.locator("#action-message").textContent(), /Existing guest sessions for this link/);
+    await page.locator("#action-submit").click();
+    await page.locator("#access-dialog").waitFor();
+    assert.notEqual(await page.locator("#share-link").inputValue(), previousShareLink);
+    assert.equal((await page.request.get(previousShareLink, { maxRedirects: 0 })).status(), 403);
+    assert.equal((await page.request.get(firstCollaboratorLink, { maxRedirects: 0 })).status(), 303);
     await page.locator("#access-close").click();
 
     await page.locator("#new-file").click();

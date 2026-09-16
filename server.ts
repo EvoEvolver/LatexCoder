@@ -161,6 +161,7 @@ function pathFromRoomName(roomName) {
 
 function createCollaborationStore(projectId, projectDir, database) {
   const docs = new Map();
+  const connectionShares = new WeakMap();
   let shuttingDown = false;
   let suspended = false;
 
@@ -228,13 +229,14 @@ function createCollaborationStore(projectId, projectDir, database) {
     return shared;
   }
 
-  function attach(connection, relativePath) {
+  function attach(connection, relativePath, shareId = null) {
     if (suspended) {
       connection.close(1012, "project is synchronizing with Git");
       return;
     }
     const shared = load(relativePath);
     shared.connections.set(connection, new Set());
+    connectionShares.set(connection, shareId);
     connection.binaryType = "arraybuffer";
     connection.on("message", raw => {
       try {
@@ -438,7 +440,15 @@ function createCollaborationStore(projectId, projectDir, database) {
     suspended = false;
   }
 
-  return { attach, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
+  function disconnectShare(shareId, reason) {
+    for (const shared of docs.values()) {
+      for (const connection of shared.connections.keys()) {
+        if (connectionShares.get(connection) === shareId) connection.close(1008, reason);
+      }
+    }
+  }
+
+  return { attach, disconnectShare, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
 }
 
 async function listFiles(projectDir) {
@@ -855,7 +865,7 @@ seven-day registration link; invited users register through
 Member authentication is required for \`GET /v1/projects\` and project creation.
 The list contains only projects owned by the current member. \`POST /v1/projects\`
 with \`{"name":"My paper"}\` creates an owned project. Only its owner can rename,
-delete, or retrieve its share secret. Rename or delete one with
+delete, or create per-collaborator access grants. Rename or delete one with
 \`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
@@ -865,7 +875,9 @@ Browser routes \`/projects\` and \`/projects/:id\` provide the member dashboard
 and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
 establish a project-scoped session. That session authorizes only the selected
 project and does not expose the owner's dashboard. Signing in alone never grants
-access to another member's projects.
+access to another member's projects. \`POST /v1/project/share?project=<id>\`
+creates a separate access grant for one collaborator; rotating one grant does
+not revoke another collaborator's links.
 
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
@@ -1078,7 +1090,14 @@ export async function createPaperServer(options: any = {}) {
     if (isProjectOwner(request, runtime)) return true;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return true;
-    return hasValidShareToken(runtime, request.query?.access);
+    return Boolean(findProjectShare(runtime, request.query?.access));
+  }
+
+  function projectAccessShareId(request, runtime) {
+    if (isProjectOwner(request, runtime)) return null;
+    const session = projectSession(request);
+    if (session?.record.projects.has(runtime.id)) return session.record.shares.get(runtime.id) || null;
+    return findProjectShare(runtime, request.query?.access)?.id || null;
   }
 
   function requireProjectAccess(request, runtime) {
@@ -1099,10 +1118,10 @@ export async function createPaperServer(options: any = {}) {
     response.append("Set-Cookie", sessionCookie(request, "lc_user", token, USER_SESSION_SECONDS));
   }
 
-  function issueProjectSession(request, response, projectId) {
+  function issueProjectSession(request, response, projectId, shareId) {
     const existing = projectSession(request);
     const token = existing?.token || randomToken();
-    database.addProjectSession(sha256(token), projectId, Date.now() + PROJECT_SESSION_SECONDS * 1000);
+    database.addProjectSession(sha256(token), projectId, shareId, Date.now() + PROJECT_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_access", token, PROJECT_SESSION_SECONDS));
   }
 
@@ -1119,11 +1138,25 @@ export async function createPaperServer(options: any = {}) {
     return result;
   }
 
-  function hasValidShareToken(runtime, supplied) {
-    if (typeof supplied !== "string") return false;
-    const expected = Buffer.from(sha256(runtime.metadata.shareToken), "hex");
-    const actual = Buffer.from(sha256(supplied), "hex");
-    return timingSafeEqual(expected, actual);
+  function findProjectShare(runtime, supplied) {
+    if (typeof supplied !== "string" || !supplied) return null;
+    return database.getProjectShareByToken(runtime.id, sha256(supplied));
+  }
+
+  function sharePaths(runtime, shareId, shareToken) {
+    return {
+      id: shareId,
+      path: `/share/${encodeURIComponent(runtime.id)}/${shareToken}`,
+      agentPath: `/agent/${encodeURIComponent(runtime.id)}/${shareToken}`,
+      clonePath: `/git/${encodeURIComponent(runtime.id)}/${shareToken}`,
+    };
+  }
+
+  function createProjectShare(runtime) {
+    const id = randomProjectId();
+    const token = randomToken();
+    database.createProjectShare(runtime.id, id, sha256(token), Date.now());
+    return sharePaths(runtime, id, token);
   }
 
   async function loadProject(id) {
@@ -1211,7 +1244,7 @@ export async function createPaperServer(options: any = {}) {
   const resolveGitProject = async request => {
     const runtime = await loadProject(request.params.projectId);
     if (hasProjectAccess(request, runtime)) return runtime;
-    if (!hasValidShareToken(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
+    if (!findProjectShare(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
     return runtime;
   };
 
@@ -1265,15 +1298,16 @@ export async function createPaperServer(options: any = {}) {
   app.get("/share/:projectId/:token", async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
-      if (!hasValidShareToken(runtime, request.params.token)) throw apiError("share_link_invalid", "project share link is invalid", 403);
-      issueProjectSession(request, response, runtime.id);
+      const share = findProjectShare(runtime, request.params.token);
+      if (!share) throw apiError("share_link_invalid", "project share link is invalid", 403);
+      issueProjectSession(request, response, runtime.id, share.id);
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
     } catch (error) { next(error); }
   });
   app.get("/agent/:projectId/:token", async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
-      if (!hasValidShareToken(runtime, request.params.token)) throw apiError("agent_link_invalid", "Agent link is invalid", 403);
+      if (!findProjectShare(runtime, request.params.token)) throw apiError("agent_link_invalid", "Agent link is invalid", 403);
       response.setHeader("Cache-Control", "no-store");
       response.type("text/plain; charset=utf-8").send(agentProjectManual(
         runtime,
@@ -1423,15 +1457,24 @@ export async function createPaperServer(options: any = {}) {
       } });
     } catch (error) { next(error); }
   });
-  app.get("/v1/project/share", async (request, response, next) => {
+  app.post("/v1/project/share", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
       requireProjectOwner(request, runtime);
-      response.json({ share: {
-        path: `/share/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
-        agentPath: `/agent/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
-        clonePath: `/git/${encodeURIComponent(runtime.id)}/${runtime.metadata.shareToken}`,
-      } });
+      response.status(201).json({ share: createProjectShare(runtime) });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/project/share/:shareId/rotate", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      requireProjectOwner(request, runtime);
+      const shareId = safeProjectId(request.params.shareId);
+      const shareToken = randomToken();
+      if (!database.rotateProjectShare(runtime.id, shareId, sha256(shareToken))) {
+        throw apiError("share_not_found", "project access grant does not exist", 404);
+      }
+      runtime.collaboration.disconnectShare(shareId, "project access secret changed");
+      response.json({ share: sharePaths(runtime, shareId, shareToken) });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/archive", async (request, response, next) => {
@@ -1692,8 +1735,9 @@ export async function createPaperServer(options: any = {}) {
       const scoped = parts.length > 1;
       const runtime = await loadProject(scoped ? parts[0] : await defaultProjectForRequest(request));
       requireProjectAccess(request, runtime);
+      const shareId = projectAccessShareId(request, runtime);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
-      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath));
+      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId));
     })().catch(() => {
       socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       socket.destroy();

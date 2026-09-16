@@ -265,8 +265,8 @@ test("invite-only users and project capability sessions enforce access boundarie
       headers: { Cookie: adminCookie },
     })).status, 403);
 
-    const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { headers: { Cookie: memberCookie } });
-    assert.equal(shareResponse.status, 200);
+    const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST", headers: { Cookie: memberCookie } });
+    assert.equal(shareResponse.status, 201);
     const share = (await shareResponse.json()).share;
     assert.match(share.agentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+$`));
     const agentWorkspace = await fetch(`${base}${share.agentPath}`);
@@ -314,6 +314,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal(signedCollaboratorProject.status, 200);
     assert.equal((await signedCollaboratorProject.json()).project.permissions.manage, false);
     assert.equal((await fetch(`${base}/v1/project/share?project=${project.id}`, {
+      method: "POST",
       headers: { Cookie: signedCollaboratorCookies },
     })).status, 403);
 
@@ -325,6 +326,31 @@ test("invite-only users and project capability sessions enforce access boundarie
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
+
+    assert.equal((await fetch(`${base}/v1/project/share/${share.id}/rotate?project=${project.id}`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+    })).status, 401);
+    const independentShareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(independentShareResponse.status, 201);
+    const independentShare = (await independentShareResponse.json()).share;
+    assert.notEqual(independentShare.path, share.path);
+    const rotateResponse = await fetch(`${base}/v1/project/share/${share.id}/rotate?project=${project.id}`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(rotateResponse.status, 200);
+    const rotatedShare = (await rotateResponse.json()).share;
+    assert.notEqual(rotatedShare.path, share.path);
+    assert.equal((await fetch(`${base}${share.path}`, { redirect: "manual" })).status, 403);
+    assert.equal((await fetch(`${base}${share.agentPath}`)).status, 403);
+    assert.notEqual((await fetch(`${base}${share.clonePath}/info/refs?service=git-upload-pack`)).status, 200);
+    assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: projectCookie } })).status, 401);
+    assert.equal((await fetch(`${base}${rotatedShare.path}`, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${base}${independentShare.path}`, { redirect: "manual" })).status, 303);
 
     const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
     const users = database.prepare("SELECT username, password_hash FROM users ORDER BY username").all() as any[];
@@ -367,7 +393,7 @@ test("user and project sessions survive a server restart", async () => {
     const userCookie = login.headers.get("set-cookie")!.split(";", 1)[0];
     const projects = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: userCookie } })).json();
     const projectId = projects.defaultProjectId;
-    const share = await (await fetch(`${base}/v1/project/share?project=${projectId}`, { headers: { Cookie: userCookie } })).json();
+    const share = await (await fetch(`${base}/v1/project/share?project=${projectId}`, { method: "POST", headers: { Cookie: userCookie } })).json();
     const exchange = await fetch(`${base}${share.share.path}`, { redirect: "manual" });
     const projectCookie = exchange.headers.get("set-cookie")!.split(";", 1)[0];
     await stop();

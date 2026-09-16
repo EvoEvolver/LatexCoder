@@ -71,9 +71,18 @@ export class StateDatabase {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_username, name);
 
+      CREATE TABLE IF NOT EXISTS project_shares (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS project_shares_project_idx ON project_shares(project_id, created_at);
+
       CREATE TABLE IF NOT EXISTS project_sessions (
         token_hash TEXT NOT NULL,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        share_id TEXT,
         expires_at INTEGER NOT NULL,
         PRIMARY KEY (token_hash, project_id)
       ) STRICT;
@@ -96,8 +105,13 @@ export class StateDatabase {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (project_id, relative_path)
       ) STRICT;
-      PRAGMA user_version = 1;
     `);
+    const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as any[];
+    if (!projectSessionColumns.some(column => column.name === "share_id")) {
+      this.db.exec("ALTER TABLE project_sessions ADD COLUMN share_id TEXT;");
+      this.db.exec("DELETE FROM project_sessions WHERE share_id IS NULL;");
+    }
+    this.db.exec("PRAGMA user_version = 2;");
     chmodSync(this.path, 0o600);
   }
 
@@ -191,21 +205,48 @@ export class StateDatabase {
 
   getProjectSession(tokenHash: string) {
     this.db.prepare("DELETE FROM project_sessions WHERE expires_at <= ?").run(Date.now());
-    const rows = this.db.prepare("SELECT project_id, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as any[];
+    const rows = this.db.prepare("SELECT project_id, share_id, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as any[];
     if (!rows.length) return null;
     return {
       projects: new Set(rows.map(row => row.project_id as string)),
+      shares: new Map(rows.map(row => [row.project_id as string, row.share_id as string])),
       expiresAt: Math.max(...rows.map(row => Number(row.expires_at))),
     };
   }
 
-  addProjectSession(tokenHash: string, projectId: string, expiresAt: number) {
+  addProjectSession(tokenHash: string, projectId: string, shareId: string, expiresAt: number) {
     this.transaction(() => {
       this.db.prepare("UPDATE project_sessions SET expires_at = ? WHERE token_hash = ?").run(expiresAt, tokenHash);
       this.db.prepare(`
-        INSERT INTO project_sessions (token_hash, project_id, expires_at) VALUES (?, ?, ?)
-        ON CONFLICT(token_hash, project_id) DO UPDATE SET expires_at = excluded.expires_at
-      `).run(tokenHash, projectId, expiresAt);
+        INSERT INTO project_sessions (token_hash, project_id, share_id, expires_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(token_hash, project_id) DO UPDATE SET
+          share_id = excluded.share_id,
+          expires_at = excluded.expires_at
+      `).run(tokenHash, projectId, shareId, expiresAt);
+    });
+  }
+
+  createProjectShare(projectId: string, id: string, tokenHash: string, createdAt: number) {
+    this.db.prepare(`
+      INSERT INTO project_shares (id, project_id, token_hash, created_at) VALUES (?, ?, ?, ?)
+    `).run(id, projectId, tokenHash, createdAt);
+  }
+
+  getProjectShareByToken(projectId: string, tokenHash: string) {
+    const row = this.db.prepare(`
+      SELECT id, project_id, created_at FROM project_shares WHERE project_id = ? AND token_hash = ?
+    `).get(projectId, tokenHash) as any;
+    return row ? { id: row.id as string, projectId: row.project_id as string, createdAt: Number(row.created_at) } : null;
+  }
+
+  rotateProjectShare(projectId: string, shareId: string, tokenHash: string) {
+    return this.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE project_shares SET token_hash = ? WHERE id = ? AND project_id = ?
+      `).run(tokenHash, shareId, projectId);
+      if (Number(result.changes) !== 1) return false;
+      this.db.prepare("DELETE FROM project_sessions WHERE project_id = ? AND share_id = ?").run(projectId, shareId);
+      return true;
     });
   }
 
