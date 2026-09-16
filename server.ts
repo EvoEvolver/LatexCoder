@@ -674,8 +674,6 @@ async function runRipgrep(projectDir, args, options: any = {}): Promise<{ code: 
     if (existsSync(runtimePath)) sandboxArgs.push("--ro-bind", runtimePath, runtimePath);
   }
   sandboxArgs.push(
-    "--proc", "/proc",
-    "--dev", "/dev",
     "--tmpfs", "/tmp",
     "--ro-bind", projectDir, "/project",
     "--chdir", "/project",
@@ -2082,7 +2080,7 @@ export async function createPaperServer(options: any = {}) {
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("X-Ripgrep-Exit-Code", String(result.code));
       response.type("text/plain; charset=utf-8");
-      if (result.code === 0 || result.code === 1) return response.send(result.stdout);
+      if (result.code === 0 || (result.code === 1 && result.stderr.length === 0)) return response.send(result.stdout);
       response.status(422).send(result.stderr.length ? result.stderr : Buffer.from(`ripgrep exited with code ${result.code}\n`));
     } catch (error) { next(error); }
   });
@@ -2242,7 +2240,7 @@ export async function createPaperServer(options: any = {}) {
 export async function startPaperServer(options: any = {}) {
   const paper = await createPaperServer(options);
   const host = options.host || process.env.LATEXCODER_HOST || "0.0.0.0";
-  const port = Number(options.port || process.env.LATEXCODER_PORT || 8090);
+  const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PORT || 8090);
   await new Promise<void>((resolve, reject) => {
     paper.server.once("error", reject);
     paper.server.listen(port, host, () => resolve());

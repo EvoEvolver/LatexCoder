@@ -94,6 +94,34 @@ with `scrypt` in `.latexcoder/state.sqlite` and is ignored after the first user 
 been created. Signed-in users can generate single-use registration links for
 additional team members; invitations expire after seven days.
 
+## Docker
+
+The image stores all persistent state beneath `/data`, including SQLite,
+projects, Git repositories, Yjs snapshots, compiler caches, and generated PDFs.
+It does not declare a Docker `VOLUME`; configure the deployment platform's
+persistent volume mount at `/data`. The image also includes Tectonic, ripgrep,
+and bubblewrap.
+
+```sh
+docker build -t latexcoder .
+docker volume create latexcoder-data
+docker run --rm \
+  --name latexcoder \
+  --publish 8090:8090 \
+  --security-opt seccomp=unconfined \
+  --env LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' \
+  --volume latexcoder-data:/data \
+  latexcoder
+```
+
+The seccomp setting lets bubblewrap create the Linux namespaces used by the
+project search sandbox; no additional Linux capabilities are required. The
+setting is not needed if search is not used.
+
+On Railway, attach a persistent volume with mount path `/data` and set
+`LATEXCODER_ADMIN_PASSWORD`. The server accepts Railway's injected `PORT`
+automatically; no Docker `VOLUME` declaration or custom start command is used.
+
 ## Projects
 
 Signed-in users open on a dedicated dashboard containing projects they own or
