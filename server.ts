@@ -916,11 +916,13 @@ do not store unrelated secrets in project directories.
 `;
 }
 
-function agentProjectManual(runtime, files, shareToken) {
+function agentProjectManual(runtime, files, shareToken, origin) {
   const capability = new URLSearchParams({ project: runtime.id, access: shareToken });
   const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
   const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
   const projectUrl = `/v1/project?${capability}`;
+  const gitUrl = endpoint => `/v1/git${endpoint}?${capability}`;
+  const cloneUrl = `${origin}/git/${encodeURIComponent(runtime.id)}/${encodeURIComponent(shareToken)}`;
   const main = runtime.build.main || "main.tex";
   const fileList = files.map(file => `- ${JSON.stringify(file.path)}${file.text ? " (text)" : " (binary)"}`).join("\n");
   return `# ${runtime.metadata.name}
@@ -963,6 +965,34 @@ Content-Type: text/plain; charset=utf-8
 
 The raw request body becomes the file content. Prefer the checked patch API for
 existing text because it detects concurrent edits.
+
+## Git (Only When The User Explicitly Requests It)
+
+Do not use Git by default. For normal editing, use the checked Yjs patch API
+above. Only inspect Git status, create a commit, synchronize a ref, resolve a
+conflict, or clone the repository when the user explicitly requests that Git
+operation.
+
+GET ${gitUrl("")}
+
+POST ${gitUrl("/commit")}
+Content-Type: application/json
+
+{"message":"Commit message requested by the user"}
+
+POST ${gitUrl("/sync")}
+Content-Type: application/json
+
+{"ref":"optional server-visible ref requested by the user"}
+
+Read-only clone command:
+
+git clone ${cloneUrl}
+
+The clone URL exposes committed history only and does not accept pushes. It may
+not contain uncommitted Yjs changes. To make changes visible in the live editor,
+use the checked Yjs patch API unless the user specifically asks for a Git
+workflow.
 `;
 }
 
@@ -1249,6 +1279,7 @@ export async function createPaperServer(options: any = {}) {
         runtime,
         await listFiles(runtime.projectDir),
         request.params.token,
+        `${request.protocol}://${request.get("host")}`,
       ));
     } catch (error) { next(error); }
   });

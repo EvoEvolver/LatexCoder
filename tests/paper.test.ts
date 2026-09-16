@@ -275,6 +275,11 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentInstructions, /^# Shared Capability/m);
     assert.match(agentInstructions, /Submit A Yjs Edit/);
     assert.match(agentInstructions, /\/v1\/files\/patch\?project=/);
+    assert.match(agentInstructions, /Git \(Only When The User Explicitly Requests It\)/);
+    assert.match(agentInstructions, /Do not use Git by default/);
+    assert.match(agentInstructions, /\/v1\/git\/commit\?project=/);
+    assert.ok(agentInstructions.includes(`git clone ${base}${share.clonePath}`));
+    assert.match(agentInstructions, /clone URL exposes committed history only and does not accept pushes/);
 
     const shareToken = share.agentPath.split("/").at(-1);
     const agentFileUrl = `${base}/v1/files?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;

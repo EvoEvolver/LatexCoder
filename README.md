@@ -153,6 +153,11 @@ plain-text project file listing and project-specific read and checked-patch
 URLs. These URLs do not require an account or cookie; possession of the link
 grants edit access to that project.
 
+The Agent workspace also documents its capability-bearing Git status, commit,
+sync, and read-only clone interfaces. It explicitly tells agents not to use Git
+unless the user requests a Git operation; routine live-document edits continue
+to use checked Yjs patches.
+
 ## Trust Boundary
 
 Member passwords are hashed, invitation tokens are single-use, and share links
