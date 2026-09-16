@@ -120,7 +120,7 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements: Record<string, any> = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-link", "back-projects",
+  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
@@ -1602,7 +1602,7 @@ function displayAccessShare(share) {
   const agentUrl = `${window.location.origin}${share.agentPath}`;
   const cloneUrl = `${window.location.origin}${share.clonePath}`;
   elements.share_link.value = shareUrl;
-  elements.agent_link.value = agentUrl;
+  elements.agent_command.value = `curl -fsSL '${agentUrl}'`;
   elements.clone_command.value = `git clone ${cloneUrl}`;
   elements.share_link.select();
 }
@@ -1744,7 +1744,7 @@ elements.access_dialog.addEventListener("cancel", event => {
   elements.access_dialog.close();
 });
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
-elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_link.value, "Agent editing link copied."));
+elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, "Agent editing command copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);
