@@ -144,11 +144,9 @@ export function AppShell() {
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex min-w-0 flex-wrap items-center gap-0.5">
-              <Button id="download-project" variant="ghost" size="icon" title="Download project ZIP" asChild><a><Icon name="archive" /></a></Button>
               <IconButton id="project-search" icon="search" title="Search project" />
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="new-folder" icon="folder-plus" title="New folder" />
-              <IconButton id="open-trash" icon="trash-2" title="Recently deleted" />
               <IconButton id="upload-file" icon="upload" title="Upload" />
               <input id="upload-input" type="file" multiple hidden />
             </div></div>
@@ -196,7 +194,19 @@ export function AppShell() {
         ] as const).map(([action, icon, label]) => <Button key={action} role="menuitem" data-editor-action={action} variant="ghost" size="sm" className={cn("w-full justify-start rounded-sm px-2 text-xs disabled:pointer-events-auto disabled:opacity-40", (action === "cut" || action === "comment") && "mt-1 border-t") }><Icon name={icon} />{label}</Button>)}
       </div>
       <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search and replace" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><div className="mt-3 flex flex-wrap gap-2"><Input id="replace-text" className="min-w-0 flex-1" aria-label="Replacement text" placeholder="Replacement text" /><select id="replace-scope" aria-label="Replace scope" className="h-9 rounded-md border bg-background px-2 text-xs"><option value="file">Current file</option><option value="project">Entire project</option></select><Button id="replace-preview" variant="outline" size="sm">Preview</Button><Button id="replace-apply" size="sm" hidden>Apply replacements</Button></div><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[55dvh] overflow-auto" /></div></dialog>
-      <dialog id="settings-dialog" className={dialogClass}><form id="settings-form" className="space-y-4 p-5"><DialogHeader title="Project settings" closeId="settings-close" /><label className="grid gap-1.5 text-sm" htmlFor="settings-main">Main document<select id="settings-main" className="h-9 min-w-0 rounded-md border bg-background px-3" /></label><label className="grid gap-1.5 text-sm" htmlFor="settings-compiler">Compiler<select id="settings-compiler" className="h-9 rounded-md border bg-background px-3"><option value="auto">Automatic</option><option value="tectonic">Tectonic</option><option value="latexmk">latexmk</option></select></label><label className="flex items-center gap-2 text-sm"><input id="settings-auto" type="checkbox" />Automatic compilation</label><footer className="flex justify-end"><Button type="submit">Save</Button></footer></form></dialog>
+      <dialog id="settings-dialog" className={dialogClass}>
+        <form id="settings-form" className="space-y-4 p-5">
+          <DialogHeader title="Project settings" closeId="settings-close" />
+          <label className="grid gap-1.5 text-sm" htmlFor="settings-main">Main document<select id="settings-main" className="h-9 min-w-0 rounded-md border bg-background px-3" /></label>
+          <label className="grid gap-1.5 text-sm" htmlFor="settings-compiler">Compiler<select id="settings-compiler" className="h-9 rounded-md border bg-background px-3"><option value="auto">Automatic</option><option value="tectonic">Tectonic</option><option value="latexmk">latexmk</option></select></label>
+          <label className="flex items-center gap-2 text-sm"><input id="settings-auto" type="checkbox" />Automatic compilation</label>
+          <div className="flex flex-wrap gap-2 border-t pt-4">
+            <Button id="open-trash" type="button" variant="outline" size="sm"><Icon name="trash-2" />Recently deleted</Button>
+            <Button id="download-project" variant="outline" size="sm" title="Download project ZIP" asChild><a><Icon name="archive" />Download ZIP</a></Button>
+          </div>
+          <footer className="flex justify-end"><Button type="submit">Save</Button></footer>
+        </form>
+      </dialog>
       <dialog id="trash-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Recently deleted" closeId="trash-close" /><div id="trash-list" className="max-h-[60dvh] overflow-auto" /></div></dialog>
 
       <dialog id="review-dialog" className={dialogClass}><form id="review-form" className="space-y-4 p-5"><header className="flex items-center justify-between"><strong id="dialog-title">Comment</strong><Button id="review-close" className={iconButton} variant="ghost" size="icon" type="button" title="Close"><Icon name="x" /></Button></header><label id="dialog-label" className="block text-sm font-medium" htmlFor="review-text">Comment</label><Textarea id="review-text" rows={5} required /><footer className="flex justify-end gap-2"><Button id="review-cancel" variant="outline" type="button">Cancel</Button><Button id="dialog-submit" type="submit">Insert</Button></footer></form></dialog>

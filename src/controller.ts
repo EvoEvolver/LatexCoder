@@ -2485,7 +2485,7 @@ async function renderTrash() {
     row.append(label, restore); list.append(row);
   }
 }
-document.getElementById("open-trash")!.addEventListener("click", () => { trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
+document.getElementById("open-trash")!.addEventListener("click", () => { settingsDialog.close(); trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
 
 const editorContextMenu = document.getElementById("editor-context-menu")!;
 let contextView: EditorView | null = null;

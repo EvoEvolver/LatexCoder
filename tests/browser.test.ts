@@ -285,6 +285,7 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await renamed.getByRole("button", { name: "Delete folder", exact: true }).click();
     await page.locator("#action-submit").click();
     await renamed.waitFor({ state: "detached" });
+    await page.locator("#project-settings").click();
     await page.locator("#open-trash").click();
     await page.locator("#trash-list button").click();
     await renamed.waitFor();
@@ -1079,7 +1080,10 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
     assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
-    assert.equal(await page.locator("#files-pane > .pane-header #download-project").count(), 1);
+    assert.equal(await page.locator("#files-pane > .pane-header #download-project").count(), 0);
+    assert.equal(await page.locator("#files-pane > .pane-header #open-trash").count(), 0);
+    assert.equal(await page.locator("#settings-dialog #download-project").count(), 1);
+    assert.equal(await page.locator("#settings-dialog #open-trash").count(), 1);
     assert.equal(await page.locator(".topbar #download-project").count(), 0);
     assert.equal(await page.locator("#clone-button").count(), 0);
     assert.equal(await page.locator("#share-project + #git-button").count(), 1);
