@@ -285,6 +285,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal((await page.locator("#share-project").textContent())?.trim(), "Collaborate");
     assert.equal(await page.locator(".topbar #compile-button").count(), 0);
     assert.equal(await page.locator(".output-header #compile-button + .segmented").count(), 1);
+    assert.equal((await page.locator("#compile-button").textContent())?.trim(), "Compiler");
+    assert.ok((await page.locator("#compile-button").boundingBox())!.width >= 108);
 
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
