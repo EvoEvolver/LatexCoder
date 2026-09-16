@@ -2,10 +2,10 @@
 
 LaTeX Coder is a small, collaborative, filesystem-backed LaTeX editor. One
 Node process serves the browser editor, project APIs, and Yjs WebSocket rooms.
-Each project keeps ordinary source files, collaboration snapshots, and build
-artifacts in an isolated directory. A small invite-only user system protects
+Each project keeps ordinary source files and build artifacts in an isolated
+directory, while SQLite stores structured application state. A small invite-only user system protects
 the project dashboard, while capability links give guests access to individual
-projects without requiring an account or database.
+projects without requiring an account.
 
 The application is TypeScript end to end. The browser UI is React built by
 Vite, with shadcn-style components and Tailwind CSS v4 utilities. The Node
@@ -71,12 +71,12 @@ share-link, and collaboration traffic to the backend.
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
 change the listener. State defaults to `.latexcoder/`; set
 `LATEXCODER_STATE_DIR` to move it. `LATEXCODER_LATEX_BIN` may point to Tectonic
-or `latexmk`. The older `PAPER_*` names remain supported as fallbacks. The install helper at
+or `latexmk`. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
 
 On an empty state directory, `LATEXCODER_ADMIN_PASSWORD` creates the initial
 `admin` user. The password must contain at least 10 characters. It is hashed
-with `scrypt` in `.latexcoder/auth.json` and is ignored after the first user has
+with `scrypt` in `.latexcoder/state.sqlite` and is ignored after the first user has
 been created. Signed-in users can generate single-use registration links for
 additional team members; invitations expire after seven days.
 
@@ -92,16 +92,17 @@ or create projects. Only the owner can rename or delete a project and retrieve
 its share and clone URLs. Project state is stored beneath:
 
 ```text
-.latexcoder/projects/<project-id>/
-  project/       canonical source files and independent Git repository
-    .git/
-  yjs/           collaborative editing snapshots
-  build/         latest build metadata and PDF
-  project.json   display metadata
+.latexcoder/
+  state.sqlite   users, invitations, sessions, project/build state, Yjs snapshots
+  projects/<project-id>/
+    project/     canonical source files and independent Git repository
+      .git/
+    build/       latest compiled PDF
 ```
 
-An existing single-project state root containing `project/`, `yjs/`, and
-`build/` is migrated automatically to `projects/paper/` on first startup.
+SQLite is authoritative for structured state; the server does not infer or
+migrate projects from legacy JSON files or stray directories. Source files and
+each project's Git repository remain directly accessible on the filesystem.
 
 ## Git And Collaboration
 
@@ -148,7 +149,8 @@ edit as inline review storage; direct mode bypasses review creation.
 Member passwords are hashed, invitation tokens are single-use, and share links
 are high-entropy bearer secrets exchanged for project-scoped sessions. This is
 basic access control, not a hardened multi-tenant security boundary: anyone who
-has a share link can edit and reshare that project. Sessions are kept in memory
-and expire or are lost on restart. LaTeX compilation is not a security sandbox;
+has a share link can edit and reshare that project. Sessions are persisted in
+SQLite and remain valid across restarts until they expire or the user logs out.
+LaTeX compilation is not a security sandbox;
 run the service for trusted teams and do not place unrelated secrets in project
 directories.

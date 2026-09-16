@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
 import { promisify } from "node:util";
@@ -287,14 +289,59 @@ test("invite-only users and project capability sessions enforce access boundarie
       await rm(temporary, { recursive: true, force: true });
     }
 
-    const storedAuth = await readFile(path.join(stateDir, "auth.json"), "utf8");
-    assert.doesNotMatch(storedAuth, new RegExp(adminPassword));
-    assert.doesNotMatch(storedAuth, /another secure password/);
-    assert.match(storedAuth, /"hash"/);
-    const storedProject = JSON.parse(await readFile(path.join(stateDir, "projects", project.id, "project.json"), "utf8"));
-    assert.equal(storedProject.ownerUsername, "member.one");
+    const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
+    const users = database.prepare("SELECT username, password_hash FROM users ORDER BY username").all() as any[];
+    assert.deepEqual(users.map(user => user.username), ["admin", "member.one"]);
+    assert.ok(users.every(user => user.password_hash && user.password_hash !== adminPassword && user.password_hash !== "another secure password"));
+    const storedProject = database.prepare("SELECT owner_username FROM projects WHERE id = ?").get(project.id) as any;
+    assert.equal(storedProject.owner_username, "member.one");
+    database.close();
+    assert.equal(existsSync(path.join(stateDir, "auth.json")), false);
+    assert.equal(existsSync(path.join(stateDir, "projects", project.id, "project.json")), false);
     assert.ok(initialProject);
   }, { authDisabled: false, adminPassword });
+});
+
+test("user and project sessions survive a server restart", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-session-restart-"));
+  const adminPassword = "restart persistence password";
+  let paper: any;
+  const start = async () => {
+    paper = await createPaperServer({ stateDir, authDisabled: false, adminPassword });
+    await new Promise<void>((resolve, reject) => {
+      paper.server.once("error", reject);
+      paper.server.listen(0, "127.0.0.1", resolve);
+    });
+    return `http://127.0.0.1:${(paper.server.address() as AddressInfo).port}`;
+  };
+  const stop = async () => {
+    paper.sockets.close();
+    await new Promise(resolve => paper.server.close(resolve));
+    paper.shutdown();
+  };
+
+  try {
+    let base = await start();
+    const login = await fetch(`${base}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: adminPassword }),
+    });
+    const userCookie = login.headers.get("set-cookie")!.split(";", 1)[0];
+    const projects = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: userCookie } })).json();
+    const projectId = projects.defaultProjectId;
+    const share = await (await fetch(`${base}/v1/project/share?project=${projectId}`, { headers: { Cookie: userCookie } })).json();
+    const exchange = await fetch(`${base}${share.share.path}`, { redirect: "manual" });
+    const projectCookie = exchange.headers.get("set-cookie")!.split(";", 1)[0];
+    await stop();
+
+    base = await start();
+    assert.equal((await fetch(`${base}/v1/projects`, { headers: { Cookie: userCookie } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/project?project=${projectId}`, { headers: { Cookie: projectCookie } })).status, 200);
+  } finally {
+    if (paper?.server.listening) await stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("project ZIP includes live files and Git HTTP serves cloneable history", async () => {
@@ -465,14 +512,16 @@ test("Git conflicts quarantine incoming commits while Yjs stays on main", async 
   });
 });
 
-test("legacy single-project state migrates without changing source files", async () => {
-  const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-migrate-"));
-  const legacyProject = path.join(stateDir, "project");
-  await mkdir(legacyProject, { recursive: true });
-  await writeFile(path.join(legacyProject, "main.tex"), "legacy source\n", "utf8");
+test("SQLite is authoritative and legacy or stray directories are ignored", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-sqlite-authority-"));
+  const strayProject = path.join(stateDir, "projects", "stray", "project");
+  await mkdir(strayProject, { recursive: true });
+  await writeFile(path.join(strayProject, "main.tex"), "stray source\n", "utf8");
   const paper = await createPaperServer({ stateDir, authDisabled: true });
   try {
-    assert.equal(await readFile(path.join(stateDir, "projects", "paper", "project", "main.tex"), "utf8"), "legacy source\n");
+    const projects = paper.database.listProjects();
+    assert.deepEqual(projects.map(project => project.id), ["paper"]);
+    assert.notEqual(await readFile(path.join(stateDir, "projects", "paper", "project", "main.tex"), "utf8"), "stray source\n");
     assert.equal(paper.projectDir, path.join(stateDir, "projects", "paper", "project"));
   } finally {
     paper.shutdown();
@@ -608,8 +657,8 @@ test("patch API validates all ranges before changing a file", async () => {
   });
 });
 
-test("two Yjs clients collaborate and persist plain LaTeX", async () => {
-  await withServer(async ({ ws, projectDir, collaboration }) => {
+test("two Yjs clients collaborate and persist plain LaTeX plus a SQLite snapshot", async () => {
+  await withServer(async ({ ws, stateDir, projectDir, collaboration }) => {
     const room = Buffer.from("main.tex").toString("base64url");
     const firstDoc = new Y.Doc();
     const secondDoc = new Y.Doc();
@@ -620,6 +669,10 @@ test("two Yjs clients collaborate and persist plain LaTeX", async () => {
     await waitFor(() => secondDoc.getText("content").toString().endsWith("% collaborative edit\n"));
     collaboration.flush();
     assert.match(await readFile(path.join(projectDir, "main.tex"), "utf8"), /% collaborative edit\n$/);
+    const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
+    const snapshot = database.prepare("SELECT length(snapshot) AS bytes FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?").get("paper", "main.tex") as any;
+    assert.ok(snapshot.bytes > 0);
+    database.close();
     first.destroy();
     second.destroy();
     firstDoc.destroy();

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import * as syncProtocol from "y-protocols/sync";
 import { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
 
+import { StateDatabase } from "./src/database.ts";
 import { parseReviews, stripReviewStorage } from "./src/review.ts";
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -158,16 +159,10 @@ function pathFromRoomName(roomName) {
   }
 }
 
-function createCollaborationStore(projectDir, stateDir) {
+function createCollaborationStore(projectId, projectDir, database) {
   const docs = new Map();
-  const snapshotsDir = path.join(stateDir, "yjs");
   let shuttingDown = false;
   let suspended = false;
-
-  function snapshotPath(relativePath) {
-    const digest = createHash("sha256").update(relativePath).digest("hex");
-    return path.join(snapshotsDir, `${digest}.bin`);
-  }
 
   function persist(shared) {
     if (shuttingDown || suspended || shared.removed) return;
@@ -176,7 +171,7 @@ function createCollaborationStore(projectDir, stateDir) {
       shared.persistTimer = undefined;
       const text = shared.doc.getText("content").toString();
       atomicWriteSync(path.join(projectDir, shared.relativePath), text);
-      atomicWriteSync(snapshotPath(shared.relativePath), Y.encodeStateAsUpdate(shared.doc));
+      database.saveYjsSnapshot(projectId, shared.relativePath, Y.encodeStateAsUpdate(shared.doc));
     }, 180);
   }
 
@@ -193,9 +188,9 @@ function createCollaborationStore(projectDir, stateDir) {
     const target = path.join(projectDir, relativePath);
     if (!existsSync(target)) throw apiError("file_not_found", "file does not exist", 404);
     const doc = new Y.Doc();
-    const snapshot = snapshotPath(relativePath);
-    if (existsSync(snapshot)) {
-      Y.applyUpdate(doc, readFileSync(snapshot));
+    const snapshot = database.getYjsSnapshot(projectId, relativePath);
+    if (snapshot) {
+      Y.applyUpdate(doc, snapshot);
     } else {
       const source = readFileSync(target, "utf8");
       if (Buffer.byteLength(source) > MAX_TEXT_BYTES) throw apiError("file_too_large", "text file is too large", 413);
@@ -402,7 +397,7 @@ function createCollaborationStore(projectDir, stateDir) {
       if (shared.persistTimer) clearTimeout(shared.persistTimer);
       shared.persistTimer = undefined;
       atomicWriteSync(path.join(projectDir, shared.relativePath), shared.doc.getText("content").toString());
-      atomicWriteSync(snapshotPath(shared.relativePath), Y.encodeStateAsUpdate(shared.doc));
+      database.saveYjsSnapshot(projectId, shared.relativePath, Y.encodeStateAsUpdate(shared.doc));
     }
   }
 
@@ -416,7 +411,8 @@ function createCollaborationStore(projectDir, stateDir) {
       shared.doc.destroy();
       docs.delete(relativePath);
     }
-    return rm(snapshotPath(relativePath), { force: true });
+    database.deleteYjsSnapshot(projectId, relativePath);
+    return Promise.resolve();
   }
 
   function shutdown() {
@@ -666,7 +662,7 @@ async function createConflictBranch(runtime, incoming, local) {
   await git(runtime.projectDir, ["branch", branch, incoming]);
   const conflict = { branch, incoming, base: local, createdAt: new Date().toISOString() };
   runtime.metadata = { ...runtime.metadata, git: { ...(runtime.metadata.git || {}), conflict } };
-  await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
+  runtime.database.saveProject(runtime.metadata);
   return conflict;
 }
 
@@ -794,7 +790,7 @@ async function gitResolve(runtime, message) {
     const nextGit = { ...(runtime.metadata.git || {}) };
     delete nextGit.conflict;
     runtime.metadata = { ...runtime.metadata, git: nextGit };
-    await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
+    runtime.database.saveProject(runtime.metadata);
     return { status: "resolved", commit };
   });
 }
@@ -863,7 +859,7 @@ delete, or retrieve its share secret. Rename or delete one with
 \`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
-the first project is used for backwards compatibility.
+the first accessible project is used.
 
 Browser routes \`/projects\` and \`/projects/:id\` provide the member dashboard
 and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
@@ -913,7 +909,8 @@ Text files are synchronized through Yjs. Writing through the API updates connect
 
 Passwords are scrypt-hashed and share URLs are bearer secrets exchanged for
 24-hour, project-scoped sessions. Anyone holding a share URL can edit and
-reshare that project. Sessions are in memory and are cleared on restart. LaTeX
+reshare that project. Users, invitations, projects, sessions, build state, and
+Yjs snapshots are persisted in SQLite. LaTeX
 compilation is not a security sandbox; use this service with trusted teams and
 do not store unrelated secrets in project directories.
 `;
@@ -942,73 +939,54 @@ function projectSlug(name) {
   return slug || "project";
 }
 
-async function readProjectMetadata(projectRoot, id) {
-  try {
-    const metadata = JSON.parse(await readFile(path.join(projectRoot, "project.json"), "utf8"));
-    return { ...metadata, id, name: cleanProjectName(metadata.name), createdAt: metadata.createdAt || null };
-  } catch {
-    return { id, name: id === "paper" ? "Paper" : id, createdAt: null };
-  }
-}
-
-async function writeProjectMetadata(projectRoot, metadata) {
-  await writeFile(path.join(projectRoot, "project.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-}
-
 export async function createPaperServer(options: any = {}) {
-  const stateDir = path.resolve(options.stateDir || process.env.LATEXCODER_STATE_DIR || process.env.PAPER_STATE_DIR || path.join(process.cwd(), ".latexcoder"));
+  const stateDir = path.resolve(options.stateDir || process.env.LATEXCODER_STATE_DIR || path.join(process.cwd(), ".latexcoder"));
   const projectsDir = path.join(stateDir, "projects");
   await mkdir(stateDir, { recursive: true });
+  await mkdir(projectsDir, { recursive: true });
+  const database = new StateDatabase(stateDir);
 
   const authDisabled = options.authDisabled === true;
-  const authPath = path.join(stateDir, "auth.json");
-  let authState: any = { version: 1, users: {}, invitations: {} };
-  try {
-    const stored = JSON.parse(await readFile(authPath, "utf8"));
-    authState = {
-      version: 1,
-      users: stored.users && typeof stored.users === "object" ? stored.users : {},
-      invitations: stored.invitations && typeof stored.invitations === "object" ? stored.invitations : {},
-    };
-  } catch {}
-  const saveAuth = () => {
-    atomicWriteSync(authPath, `${JSON.stringify(authState, null, 2)}\n`);
-    chmodSync(authPath, 0o600);
-  };
   const configuredAdminPassword = options.adminPassword ?? process.env.LATEXCODER_ADMIN_PASSWORD;
-  if (!authDisabled && !Object.keys(authState.users).length && configuredAdminPassword) {
+  if (!authDisabled && database.countUsers() === 0 && configuredAdminPassword) {
     const password = validatePassword(configuredAdminPassword);
-    authState.users.admin = {
+    database.createUser({
       username: "admin",
       ...passwordRecord(password),
       createdAt: new Date().toISOString(),
       invitedBy: null,
-    };
-    saveAuth();
+    });
   }
 
-  const userSessions = new Map();
-  const projectSessions = new Map();
   const loginAttempts = new Map();
   const USER_SESSION_SECONDS = 7 * 24 * 60 * 60;
   const PROJECT_SESSION_SECONDS = 24 * 60 * 60;
   const INVITATION_SECONDS = 7 * 24 * 60 * 60;
 
-  function sessionRecord(request, cookieName, sessions) {
+  function cookieSession(request, cookieName) {
     const token = parseCookies(request)[cookieName];
     if (!token) return null;
-    const key = sha256(token);
-    const record = sessions.get(key);
-    if (!record || record.expiresAt <= Date.now()) {
-      sessions.delete(key);
-      return null;
-    }
-    return { key, token, record };
+    return { key: sha256(token), token };
+  }
+
+  function userSession(request) {
+    const session = cookieSession(request, "lc_user");
+    if (!session) return null;
+    const record = database.getUserSession(session.key);
+    return record ? { ...session, record } : null;
+  }
+
+  function projectSession(request) {
+    const session = cookieSession(request, "lc_access");
+    if (!session) return null;
+    const record = database.getProjectSession(session.key);
+    return record ? { ...session, record } : null;
   }
 
   function currentUser(request) {
     if (authDisabled) return { username: "test-user" };
-    return sessionRecord(request, "lc_user", userSessions)?.record.user || null;
+    const session = userSession(request);
+    return session ? { username: session.record.username } : null;
   }
 
   function requireUser(request) {
@@ -1023,7 +1001,7 @@ export async function createPaperServer(options: any = {}) {
 
   function hasProjectAccess(request, runtime) {
     if (isProjectOwner(request, runtime)) return true;
-    const session = sessionRecord(request, "lc_access", projectSessions);
+    const session = projectSession(request);
     return Boolean(session?.record.projects.has(runtime.id));
   }
 
@@ -1041,48 +1019,23 @@ export async function createPaperServer(options: any = {}) {
 
   function issueUserSession(request, response, username) {
     const token = randomToken();
-    userSessions.set(sha256(token), {
-      user: { username },
-      expiresAt: Date.now() + USER_SESSION_SECONDS * 1000,
-    });
+    database.createUserSession(sha256(token), username, Date.now() + USER_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_user", token, USER_SESSION_SECONDS));
   }
 
   function issueProjectSession(request, response, projectId) {
-    const existing = sessionRecord(request, "lc_access", projectSessions);
-    if (existing) {
-      existing.record.projects.add(projectId);
-      existing.record.expiresAt = Date.now() + PROJECT_SESSION_SECONDS * 1000;
-      response.append("Set-Cookie", sessionCookie(request, "lc_access", existing.token, PROJECT_SESSION_SECONDS));
-      return;
-    }
-    const token = randomToken();
-    projectSessions.set(sha256(token), {
-      projects: new Set([projectId]),
-      expiresAt: Date.now() + PROJECT_SESSION_SECONDS * 1000,
-    });
+    const existing = projectSession(request);
+    const token = existing?.token || randomToken();
+    database.addProjectSession(sha256(token), projectId, Date.now() + PROJECT_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_access", token, PROJECT_SESSION_SECONDS));
   }
 
-  // Move the original single-project layout in place on first startup.
-  const legacyProjectDir = path.join(stateDir, "project");
-  if (existsSync(legacyProjectDir) && !existsSync(projectsDir)) {
-    const migratedRoot = path.join(projectsDir, "paper");
-    await mkdir(migratedRoot, { recursive: true });
-    for (const directory of ["project", "yjs", "build"]) {
-      const source = path.join(stateDir, directory);
-      if (existsSync(source)) await rename(source, path.join(migratedRoot, directory));
-    }
-    await writeProjectMetadata(migratedRoot, { id: "paper", name: "Paper", createdAt: new Date().toISOString() });
-  }
-  await mkdir(projectsDir, { recursive: true });
-
   const projects = new Map();
-  const legacyOwnerUsername = authDisabled
+  const initialOwnerUsername = authDisabled
     ? "test-user"
-    : Object.hasOwn(authState.users, "admin")
+    : database.getUser("admin")
       ? "admin"
-      : Object.keys(authState.users)[0] || null;
+      : database.firstUsername() || null;
   function publicProjectMetadata(metadata) {
     const result = { ...metadata };
     delete result.shareToken;
@@ -1093,37 +1046,23 @@ export async function createPaperServer(options: any = {}) {
   async function loadProject(id) {
     id = safeProjectId(id);
     if (projects.has(id)) return projects.get(id);
+    const metadata = database.getProject(id);
+    if (!metadata) throw apiError("project_not_found", "project does not exist", 404);
     const projectRoot = path.join(projectsDir, id);
     if (!existsSync(projectRoot)) throw apiError("project_not_found", "project does not exist", 404);
-    let metadata = await readProjectMetadata(projectRoot, id);
-    let metadataChanged = false;
-    if (typeof metadata.shareToken !== "string" || metadata.shareToken.length < 32) {
-      metadata = { ...metadata, shareToken: randomToken() };
-      metadataChanged = true;
-    }
-    if (!metadata.ownerUsername && legacyOwnerUsername) {
-      metadata = { ...metadata, ownerUsername: legacyOwnerUsername };
-      metadataChanged = true;
-    }
-    if (metadataChanged) {
-      await writeProjectMetadata(projectRoot, metadata);
-    }
     const projectDir = path.join(projectRoot, "project");
     const buildDir = path.join(projectRoot, "build");
     await mkdir(projectDir, { recursive: true });
-    await mkdir(path.join(projectRoot, "yjs"), { recursive: true });
     await mkdir(buildDir, { recursive: true });
     const mainPath = path.join(projectDir, "main.tex");
     if (!existsSync(mainPath)) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
     await ensureGitRepository(projectDir);
-    let build = { status: "idle", main: "main.tex", startedAt: null, finishedAt: null, log: "", pdf: false };
-    try {
-      build = JSON.parse(await readFile(path.join(buildDir, "latest.json"), "utf8"));
-      build.pdf = existsSync(path.join(buildDir, "latest.pdf"));
-    } catch {}
+    const build = database.getBuild(id);
+    build.pdf = build.pdf && existsSync(path.join(buildDir, "latest.pdf"));
     const runtime = {
       id, metadata, projectRoot, projectDir, buildDir,
-      collaboration: createCollaborationStore(projectDir, projectRoot),
+      database,
+      collaboration: createCollaborationStore(id, projectDir, database),
       build,
       gitBusy: false,
       gitReaders: 0,
@@ -1135,12 +1074,9 @@ export async function createPaperServer(options: any = {}) {
   }
 
   async function projectSummaries(ownerUsername = null) {
-    const entries = await readdir(projectsDir, { withFileTypes: true });
     const summaries = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(entry.name)) continue;
-      const runtime = await loadProject(entry.name);
-      if (ownerUsername && runtime.metadata.ownerUsername !== ownerUsername) continue;
+    for (const metadata of database.listProjects(ownerUsername)) {
+      const runtime = await loadProject(metadata.id);
       summaries.push({ ...publicProjectMetadata(runtime.metadata), build: { status: runtime.build.status, pdf: runtime.build.pdf } });
     }
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
@@ -1151,30 +1087,37 @@ export async function createPaperServer(options: any = {}) {
     const base = projectSlug(name);
     let id = base;
     let suffix = 2;
-    while (existsSync(path.join(projectsDir, id))) id = `${base.slice(0, 58)}-${suffix++}`;
+    while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = `${base.slice(0, 58)}-${suffix++}`;
     const projectRoot = path.join(projectsDir, id);
     const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
-    await writeProjectMetadata(projectRoot, metadata);
-    return loadProject(id);
+    try {
+      database.createProject(metadata);
+      return await loadProject(id);
+    } catch (error) {
+      projects.delete(id);
+      database.deleteProject(id);
+      await rm(projectRoot, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   let existing = await projectSummaries();
-  if (!existing.length) {
-    await createProject("Paper", legacyOwnerUsername);
+  if (!existing.length && initialOwnerUsername) {
+    await createProject("Paper", initialOwnerUsername);
     existing = await projectSummaries();
   }
-  let defaultProjectId = existing[0].id;
+  let defaultProjectId = existing[0]?.id || null;
   const defaultProjectForRequest = async request => {
     const user = currentUser(request);
     if (user) {
       const owned = await projectSummaries(user.username);
       if (owned.length) return owned[0].id;
     }
-    const access = sessionRecord(request, "lc_access", projectSessions);
+    const access = projectSession(request);
     if (access) {
       for (const projectId of access.record.projects) {
-        if (existsSync(path.join(projectsDir, projectId))) return projectId;
+        if (database.getProject(projectId)) return projectId;
       }
     }
     throw apiError("project_not_found", "no accessible project was selected", 404);
@@ -1254,7 +1197,7 @@ export async function createPaperServer(options: any = {}) {
     response.json({
       user: currentUser(request),
       invitationOnly: true,
-      bootstrapReady: Object.keys(authState.users).length > 0,
+      bootstrapReady: database.countUsers() > 0,
     });
   });
   app.post("/v1/auth/login", express.json({ limit: "16kb" }), (request, response, next) => {
@@ -1267,7 +1210,7 @@ export async function createPaperServer(options: any = {}) {
       }
       if (attempts.count >= 10) throw apiError("login_rate_limited", "too many login attempts; try again later", 429);
       const username = cleanUsername(request.body?.username);
-      const user = Object.hasOwn(authState.users, username) ? authState.users[username] : null;
+      const user = database.getUser(username);
       if (!user || !passwordMatches(request.body?.password, user)) {
         attempts.count += 1;
         throw apiError("invalid_credentials", "username or password is incorrect", 401);
@@ -1278,17 +1221,17 @@ export async function createPaperServer(options: any = {}) {
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/logout", (request, response) => {
-    const session = sessionRecord(request, "lc_user", userSessions);
-    if (session) userSessions.delete(session.key);
+    const session = userSession(request);
+    if (session) database.deleteUserSession(session.key);
     response.append("Set-Cookie", sessionCookie(request, "lc_user", "", 0));
     response.json({ user: null });
   });
   app.get("/v1/invitations/:token", (request, response, next) => {
     try {
-      const invitation = authState.invitations[sha256(String(request.params.token || ""))];
-      const valid = invitation && !invitation.usedAt && Date.parse(invitation.expiresAt) > Date.now();
+      const invitation = database.getInvitation(sha256(String(request.params.token || "")));
+      const valid = invitation && !invitation.usedAt && invitation.expiresAt > Date.now();
       if (!valid) throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
-      response.json({ invitation: { invitedBy: invitation.createdBy, expiresAt: invitation.expiresAt } });
+      response.json({ invitation: { invitedBy: invitation.createdBy, expiresAt: new Date(invitation.expiresAt).toISOString() } });
     } catch (error) { next(error); }
   });
   app.post("/v1/invitations", (request, response, next) => {
@@ -1296,35 +1239,37 @@ export async function createPaperServer(options: any = {}) {
       const user = requireUser(request);
       const token = randomToken();
       const createdAt = new Date();
-      authState.invitations[sha256(token)] = {
+      database.createInvitation({
+        tokenHash: sha256(token),
         createdBy: user.username,
         createdAt: createdAt.toISOString(),
-        expiresAt: new Date(createdAt.getTime() + INVITATION_SECONDS * 1000).toISOString(),
-        usedAt: null,
-      };
-      saveAuth();
+        expiresAt: createdAt.getTime() + INVITATION_SECONDS * 1000,
+      });
       response.status(201).json({ invitation: { token, path: `/register/${token}` } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/register", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
       const token = String(request.body?.token || "");
-      const invitation = authState.invitations[sha256(token)];
-      if (!invitation || invitation.usedAt || Date.parse(invitation.expiresAt) <= Date.now()) {
+      const tokenHash = sha256(token);
+      const invitation = database.getInvitation(tokenHash);
+      if (!invitation || invitation.usedAt || invitation.expiresAt <= Date.now()) {
         throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
       }
       const username = cleanUsername(request.body?.username);
-      if (Object.hasOwn(authState.users, username)) throw apiError("username_taken", "username is already registered", 409);
+      if (database.getUser(username)) throw apiError("username_taken", "username is already registered", 409);
       const password = validatePassword(request.body?.password);
-      authState.users[username] = {
-        username,
-        ...passwordRecord(password),
-        createdAt: new Date().toISOString(),
-        invitedBy: invitation.createdBy,
-      };
-      invitation.usedAt = new Date().toISOString();
-      invitation.usedBy = username;
-      saveAuth();
+      const createdAt = new Date().toISOString();
+      database.transaction(() => {
+        const current = database.getInvitation(tokenHash);
+        if (!current || current.usedAt || current.expiresAt <= Date.now()) {
+          throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
+        }
+        database.createUser({ username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy });
+        if (!database.consumeInvitation(tokenHash, username, createdAt)) {
+          throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
+        }
+      });
       issueUserSession(request, response, username);
       response.status(201).json({ user: { username } });
     } catch (error) { next(error); }
@@ -1349,7 +1294,7 @@ export async function createPaperServer(options: any = {}) {
       const runtime = await loadProject(request.params.projectId);
       requireProjectOwner(request, runtime);
       runtime.metadata = { ...runtime.metadata, name: cleanProjectName(request.body?.name) };
-      await writeProjectMetadata(runtime.projectRoot, runtime.metadata);
+      database.saveProject(runtime.metadata);
       response.json({ project: publicProjectMetadata(runtime.metadata) });
     } catch (error) { next(error); }
   });
@@ -1361,7 +1306,15 @@ export async function createPaperServer(options: any = {}) {
       await waitForGitReaders(runtime);
       runtime.collaboration.shutdown();
       projects.delete(runtime.id);
-      await rm(runtime.projectRoot, { recursive: true, force: false });
+      const deletedRoot = `${runtime.projectRoot}.deleted-${randomUUID()}`;
+      await rename(runtime.projectRoot, deletedRoot);
+      try {
+        database.deleteProject(runtime.id);
+      } catch (error) {
+        await rename(deletedRoot, runtime.projectRoot);
+        throw error;
+      }
+      await rm(deletedRoot, { recursive: true, force: true });
       const remaining = await projectSummaries(ownerUsername);
       if (defaultProjectId === runtime.id) defaultProjectId = (await projectSummaries())[0]?.id || null;
       response.json({ deleted: { id: runtime.id }, defaultProjectId: remaining[0]?.id || null });
@@ -1572,6 +1525,7 @@ export async function createPaperServer(options: any = {}) {
       const main = safeRelativePath(request.body?.main || runtime.build.main || "main.tex");
       if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
       runtime.build = { status: "running", main, startedAt: new Date().toISOString(), finishedAt: null, log: "", pdf: runtime.build.pdf };
+      database.saveBuild(runtime.id, runtime.build);
       workDir = path.join(buildDir, `job-${randomUUID()}`);
       const gitDir = path.join(projectDir, ".git");
       await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
@@ -1587,7 +1541,7 @@ export async function createPaperServer(options: any = {}) {
       }
       const outputDir = path.join(workDir, ".paper-output");
       await mkdir(outputDir, { recursive: true });
-      const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN || process.env.PAPER_LATEX_BIN, stateDir);
+      const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN, stateDir);
       const executable = path.basename(compiler);
       const args = executable.startsWith("latexmk")
         ? ["-pdf", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
@@ -1608,7 +1562,7 @@ export async function createPaperServer(options: any = {}) {
         log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
         pdf: success || runtime.build.pdf,
       };
-      await writeFile(path.join(buildDir, "latest.json"), JSON.stringify(runtime.build, null, 2), "utf8");
+      database.saveBuild(runtime.id, runtime.build);
       response.status(success ? 200 : 422).json({ build: runtime.build });
     } catch (error) {
       if (runtime) {
@@ -1618,7 +1572,7 @@ export async function createPaperServer(options: any = {}) {
           finishedAt: new Date().toISOString(),
           log: error.message,
         };
-        await writeFile(path.join(runtime.buildDir, "latest.json"), JSON.stringify(runtime.build, null, 2), "utf8");
+        database.saveBuild(runtime.id, runtime.build);
       }
       next(error);
     } finally {
@@ -1654,22 +1608,26 @@ export async function createPaperServer(options: any = {}) {
     });
   });
 
-  const defaultRuntime = await loadProject(defaultProjectId);
+  const defaultRuntime = defaultProjectId ? await loadProject(defaultProjectId) : null;
+  let closed = false;
   const shutdown = () => {
+    if (closed) return;
     for (const runtime of projects.values()) runtime.collaboration.shutdown();
+    database.close();
+    closed = true;
   };
   return {
-    app, server, sockets, stateDir, projectsDir, projects, shutdown,
+    app, server, sockets, stateDir, projectsDir, projects, database, shutdown,
     // Kept for API consumers of the original single-project server.
-    projectDir: defaultRuntime.projectDir,
-    collaboration: defaultRuntime.collaboration,
+    projectDir: defaultRuntime?.projectDir,
+    collaboration: defaultRuntime?.collaboration,
   };
 }
 
 export async function startPaperServer(options: any = {}) {
   const paper = await createPaperServer(options);
-  const host = options.host || process.env.LATEXCODER_HOST || process.env.PAPER_HOST || "0.0.0.0";
-  const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PAPER_PORT || 8090);
+  const host = options.host || process.env.LATEXCODER_HOST || "0.0.0.0";
+  const port = Number(options.port || process.env.LATEXCODER_PORT || 8090);
   await new Promise<void>((resolve, reject) => {
     paper.server.once("error", reject);
     paper.server.listen(port, host, () => resolve());

@@ -2,7 +2,7 @@
 set -eu
 
 version="0.17.0"
-state_dir="${LATEXCODER_STATE_DIR:-${PAPER_STATE_DIR:-$PWD/.latexcoder}}"
+state_dir="${LATEXCODER_STATE_DIR:-$PWD/.latexcoder}"
 bin_dir="$state_dir/bin"
 target="$bin_dir/tectonic"
 
