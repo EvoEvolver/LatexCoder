@@ -779,8 +779,14 @@ async function followReference(link: ReferenceLink) {
   const projectId = state.projectId;
   const originFile = state.activeFile;
   try {
+    if (link.kind === "url") {
+      const url = new URL(link.key);
+      if (!["http:", "https:", "mailto:"].includes(url.protocol)) throw new Error("Unsupported URL protocol");
+      window.open(url.href, "_blank", "noopener,noreferrer");
+      return;
+    }
     let destination: { path: string; from: number; to: number } | undefined;
-    if (link.kind === "file") {
+    if (link.kind === "file" || link.kind === "asset") {
       const directory = originFile.split("/").slice(0, -1).join("/");
       const normalize = (value: string) => {
         const parts: string[] = [];
@@ -790,9 +796,9 @@ async function followReference(link: ReferenceLink) {
         }
         return parts.join("/");
       };
-      const name = link.key.endsWith(".tex") ? link.key : `${link.key}.tex`;
-      const candidates = [normalize(name), normalize(`${directory}/${name}`)];
-      const file = state.files.find(file => candidates.includes(file.path));
+      const names = link.kind === "asset" ? /\.[^/]+$/.test(link.key) ? [link.key] : [link.key, ...["pdf", "png", "jpg", "jpeg", "svg", "webp", "gif"].map(extension => `${link.key}.${extension}`)] : [link.key.endsWith(".tex") ? link.key : `${link.key}.tex`];
+      const candidates = names.flatMap(name => [normalize(name), normalize(`${directory}/${name}`)]);
+      const file = candidates.map(candidate => state.files.find(file => file.path === candidate)).find(Boolean);
       if (file) destination = { path: file.path, from: 0, to: 0 };
     } else {
       const kind = link.kind;
@@ -808,6 +814,7 @@ async function followReference(link: ReferenceLink) {
     if (state.projectId !== projectId || state.activeFile !== originFile) return;
     if (!destination) { showToast(`Definition not found: ${link.key}`); return; }
     await openFile(destination.path);
+    if (link.kind === "asset") return;
     const provider = state.provider;
     const view = state.view;
     const deadline = Date.now() + 5000;

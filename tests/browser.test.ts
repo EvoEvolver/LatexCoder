@@ -42,6 +42,43 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("graphics references open project previews and URL references open a safe new tab", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const source = String.raw`\includegraphics[width=\linewidth]{figs/tool_usage.pdf}
+\includegraphics{figs/tool_usage}
+\url{https://example.test/a%20b?q=a,b#section}`;
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: source, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=figs/tool_usage.pdf`, { data: previewPdf(), headers: { "Content-Type": "application/pdf" } });
+    await page.context().route("https://example.test/**", route => route.fulfill({ contentType: "text/html", body: "Linked page" }));
+    for (const needle of ["figs/tool_usage.pdf", "figs/tool_usage}", "https://example.test/"]) {
+      await page.goto(`${base}/projects/${id}?e2e=1`);
+      await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      const point = await page.evaluate(needle => {
+        const { view } = globalThis.__paperE2E.state;
+        const coords = view.coordsAtPos(view.state.doc.toString().indexOf(needle) + 2);
+        return { x: coords.left + 1, y: (coords.top + coords.bottom) / 2 };
+      }, needle);
+      const popup = needle.startsWith("https") ? page.waitForEvent("popup") : null;
+      const modifier = await page.evaluate(() => /Mac/.test(navigator.platform) ? "Meta" : "Control");
+      await page.keyboard.down(modifier);
+      await page.locator(".cm-reference-link").first().waitFor();
+      await page.mouse.click(point.x, point.y);
+      await page.keyboard.up(modifier);
+      if (popup) {
+        const linked = await popup;
+        await linked.waitForLoadState();
+        assert.equal(linked.url(), "https://example.test/a%20b?q=a,b#section");
+        assert.equal(await linked.evaluate(() => window.opener), null);
+        await linked.close();
+      } else {
+        await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "figs/tool_usage.pdf");
+        await page.locator("#file-pdf-document canvas").waitFor();
+      }
+    }
+  });
+});
+
 test("within-file references scroll the definition to the editor center", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
