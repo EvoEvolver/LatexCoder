@@ -24,5 +24,13 @@ export function compileSourceMap(source: string) {
     while (originalOffset < target) if (source[originalOffset++] === "\n") originalLine++;
     lines[index === 0 ? 0 : lines.length] = originalLine;
   }
-  return { text, lines };
+  return { text, lines, offsets };
+}
+
+export function projectedPosition(source: string, originalOffset: number) {
+  const projection = compileSourceMap(source);
+  let offset = projection.offsets.findIndex(value => value >= originalOffset);
+  if (offset < 0) offset = projection.text.length;
+  const prefix = projection.text.slice(0, offset);
+  return { line: prefix.split("\n").length, column: offset - prefix.lastIndexOf("\n") };
 }

@@ -915,6 +915,102 @@ test("file API writes canonical project files", async () => {
   });
 });
 
+test("project settings persist and failed compilation retains a visibly stale cached PDF", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "latexcoder-settings-"));
+  try {
+    const compiler = await createFakeLatexmk(directory);
+    await withServer(async ({ base, database }) => {
+      const project = (await (await fetch(`${base}/v1/project`)).json()).project;
+      await fetch(`${base}/v1/files?path=other.tex`, { method: "PUT", body: "Other source" });
+      const settings = await fetch(`${base}/v1/settings`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main: "other.tex", compiler: "auto", autoCompile: true }) });
+      assert.equal(settings.status, 200);
+      assert.deepEqual(database.getSettings(project.id), { main: "other.tex", compiler: "auto", autoCompile: true });
+      const invalid = await fetch(`${base}/v1/settings`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main: "../oops.tex", compiler: "auto", autoCompile: false }) });
+      assert.equal(invalid.status, 400);
+      const firstPdf = await (await fetch(`${base}/v1/build/pdf`)).text();
+      await fetch(`${base}/v1/files?path=other.tex`, { method: "PUT", body: "Before\n\\cmtbg{one}{Name}Body\\cmted{Comment\non another line}\nAfter" });
+      await writeFile(compiler, '#!/bin/sh\nprintf "other.tex:3: Undefined control sequence\\n"\nexit 1\n');
+      const failure = await fetch(`${base}/v1/compile`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      assert.equal(failure.status, 422);
+      const cached = await fetch(`${base}/v1/build/pdf?cached=1`);
+      assert.equal(cached.status, 200);
+      assert.equal(await cached.text(), firstPdf);
+      const build = (await (await fetch(`${base}/v1/build`)).json()).build;
+      assert.equal(build.stale, true);
+      assert.equal(build.errors[0].path, "other.tex");
+      assert.equal(build.errors[0].line, 4);
+      assert.equal(database.getBuild(project.id).errors[0].line, 4);
+    }, { compiler });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("folders move without overwriting and SQLite trash restores folders and live text", async () => {
+  await withServer(async ({ base, collaboration }) => {
+    const post = (endpoint, body) => fetch(base + endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal((await post("/v1/files/folder", { path: "notes/empty" })).status, 201);
+    await fetch(`${base}/v1/files?path=notes/chapter.tex`, { method: "PUT", body: "original" });
+    collaboration.load("notes/chapter.tex").doc.getText("content").insert(0, "live ");
+    assert.equal((await post("/v1/files/move", { from: "notes", to: "moved" })).status, 200);
+    assert.equal(await (await fetch(`${base}/v1/files?path=moved/chapter.tex`)).text(), "live original");
+    await fetch(`${base}/v1/files?path=occupied.tex`, { method: "PUT", body: "keep me" });
+    assert.equal((await post("/v1/files/move", { from: "moved/chapter.tex", to: "occupied.tex" })).status, 409);
+    assert.equal(await (await fetch(`${base}/v1/files?path=occupied.tex`)).text(), "keep me");
+    assert.equal((await post("/v1/files/move", { from: "moved", to: "moved/child" })).status, 400);
+    const removed = await fetch(`${base}/v1/files?path=moved`, { method: "DELETE" });
+    assert.equal(removed.status, 200);
+    const id = (await removed.json()).deleted.trashId;
+    assert.equal((await fetch(`${base}/v1/files?path=moved/chapter.tex`)).status, 404);
+    const trash = await (await fetch(`${base}/v1/trash`)).json();
+    assert.ok(trash.items.some(item => item.id === id));
+    assert.equal((await post("/v1/trash/restore", { id })).status, 200);
+    assert.equal(await (await fetch(`${base}/v1/files?path=moved/chapter.tex`)).text(), "live original");
+    assert.ok((await (await fetch(`${base}/v1/project`)).json()).project.folders.includes("moved/empty"));
+    assert.equal((await post("/v1/trash/restore", { id })).status, 404);
+    assert.equal((await fetch(`${base}/v1/files?path=main.tex`, { method: "DELETE" })).status, 409);
+  });
+});
+
+test("replace previews span files and stale hashes reject the entire batch", async () => {
+  await withServer(async ({ base }) => {
+    const post = (endpoint, body) => fetch(base + endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    for (const path of ["one.tex", "two.tex"]) await fetch(`${base}/v1/files?path=${path}`, { method: "PUT", body: "needle\nneedle" });
+    const preview = await post("/v1/search/replace/preview", { query: "needle", replacement: "\\section{新😀}" });
+    assert.equal(preview.status, 200);
+    const plan = await preview.json();
+    assert.equal(plan.count, 4);
+    assert.equal(plan.files.length, 2);
+    await fetch(`${base}/v1/files?path=two.tex`, { method: "PUT", body: "human edit" });
+    const stale = await post("/v1/search/replace", { files: plan.files });
+    assert.equal(stale.status, 409);
+    assert.equal(await (await fetch(`${base}/v1/files?path=one.tex`)).text(), "needle\nneedle");
+    const fresh = await (await post("/v1/search/replace/preview", { query: "needle", replacement: "replacement", path: "one.tex" })).json();
+    assert.equal((await post("/v1/search/replace", fresh)).status, 200);
+    assert.equal(await (await fetch(`${base}/v1/files?path=one.tex`)).text(), "replacement\nreplacement");
+    assert.equal(await (await fetch(`${base}/v1/files?path=two.tex`)).text(), "human edit");
+  });
+});
+
+test("Agent conflict diagnostics return the latest source and diff without writing", async () => {
+  await withServer(async ({ base }) => {
+    const before = await fetch(`${base}/v1/files?path=main.tex`);
+    const hash = before.headers.get("x-content-sha256")!;
+    await fetch(`${base}/v1/files?path=main.tex`, { method: "PUT", body: "human content" });
+    const headers = { "X-Base-SHA256": hash, "Content-Type": "text/plain" };
+    const rejected = await fetch(`${base}/v1/files/edit?path=main.tex`, { method: "POST", headers, body: "Agent proposal" });
+    assert.equal(rejected.status, 409);
+    const details = (await rejected.json()).error.details;
+    assert.match(details.conflictUrl, /edit\/conflict/);
+    const diagnostic = await fetch(base + details.conflictUrl, { method: "POST", headers, body: "Agent proposal" });
+    assert.equal(diagnostic.status, 200);
+    const conflict = await diagnostic.json();
+    assert.equal(conflict.currentSource, "human content");
+    assert.equal(conflict.currentSha256, sha256("human content"));
+    assert.match(conflict.diff, /-human content/);
+    assert.match(conflict.diff, /\+Agent proposal/);
+    assert.equal(await (await fetch(`${base}/v1/files?path=main.tex`)).text(), "human content");
+  });
+});
+
 test("full-file edit computes Yjs changes atomically and rejects live stale hashes", async () => {
   await withServer(async ({ base, ws, projectDir, collaboration }) => {
     const room = Buffer.from("main.tex").toString("base64url");

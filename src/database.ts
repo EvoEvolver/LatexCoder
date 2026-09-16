@@ -20,6 +20,7 @@ export type BuildMetadata = {
   log: string;
   pdf: boolean;
   sourceRevision: string | null;
+  errors?: Array<{ path: string; line: number; message: string }>;
 };
 
 const EMPTY_BUILD: BuildMetadata = {
@@ -120,6 +121,30 @@ export class StateDatabase {
         snapshot BLOB NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (project_id, relative_path)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS project_settings (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        compiler TEXT NOT NULL DEFAULT 'auto',
+        auto_compile INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS build_errors (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        errors TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS trash_entries (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        original_path TEXT NOT NULL,
+        directory INTEGER NOT NULL,
+        deleted_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS trash_files (
+        trash_id TEXT NOT NULL REFERENCES trash_entries(id) ON DELETE CASCADE,
+        relative_path TEXT NOT NULL,
+        content BLOB NOT NULL,
+        snapshot BLOB,
+        directory INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (trash_id, relative_path)
       ) STRICT;
     `);
     const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as any[];
@@ -402,7 +427,37 @@ export class StateDatabase {
       log: row.log,
       pdf: Boolean(row.has_pdf),
       sourceRevision: row.source_revision as string | null,
+      errors: JSON.parse((this.db.prepare("SELECT errors FROM build_errors WHERE project_id = ?").get(projectId) as any)?.errors || "[]"),
     };
+  }
+
+  getSettings(projectId: string) {
+    const row = this.db.prepare("SELECT compiler, auto_compile FROM project_settings WHERE project_id = ?").get(projectId) as any;
+    return { main: this.getBuild(projectId).main, compiler: row?.compiler || "auto", autoCompile: Boolean(row?.auto_compile) };
+  }
+
+  saveSettings(projectId: string, settings: { compiler: string; autoCompile: boolean }) {
+    this.db.prepare("INSERT INTO project_settings (project_id, compiler, auto_compile) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET compiler = excluded.compiler, auto_compile = excluded.auto_compile").run(projectId, settings.compiler, settings.autoCompile ? 1 : 0);
+  }
+
+  createTrash(projectId: string, id: string, originalPath: string, directory: boolean, files: Array<{ path: string; content: Uint8Array; snapshot: Uint8Array | null; directory: boolean }>) {
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO trash_entries VALUES (?, ?, ?, ?, ?)").run(id, projectId, originalPath, directory ? 1 : 0, new Date().toISOString());
+      for (const file of files) this.db.prepare("INSERT INTO trash_files VALUES (?, ?, ?, ?, ?)").run(id, file.path, file.content, file.snapshot, file.directory ? 1 : 0);
+    });
+  }
+
+  listTrash(projectId: string) {
+    return this.db.prepare("SELECT id, original_path AS path, directory, deleted_at AS deletedAt FROM trash_entries WHERE project_id = ? ORDER BY deleted_at DESC").all(projectId) as any[];
+  }
+
+  getTrash(projectId: string, id: string) {
+    const entry = this.db.prepare("SELECT original_path AS path, directory FROM trash_entries WHERE project_id = ? AND id = ?").get(projectId, id) as any;
+    return entry ? { ...entry, files: this.db.prepare("SELECT relative_path AS path, content, snapshot, directory FROM trash_files WHERE trash_id = ?").all(id) as any[] } : null;
+  }
+
+  removeTrash(projectId: string, id: string) {
+    this.db.prepare("DELETE FROM trash_entries WHERE project_id = ? AND id = ?").run(projectId, id);
   }
 
   saveBuild(projectId: string, build: BuildMetadata) {
@@ -418,6 +473,7 @@ export class StateDatabase {
         has_pdf = excluded.has_pdf,
         source_revision = excluded.source_revision
     `).run(projectId, build.status, build.main, build.startedAt, build.finishedAt, build.log, build.pdf ? 1 : 0, build.sourceRevision);
+    this.db.prepare("INSERT INTO build_errors VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET errors = excluded.errors").run(projectId, JSON.stringify(build.errors || []));
   }
 
   getYjsSnapshot(projectId: string, relativePath: string) {

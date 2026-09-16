@@ -74,6 +74,9 @@ importers:
       y-codemirror.next:
         specifier: ^0.3.6
         version: 0.3.6(@codemirror/state@6.7.5)(@codemirror/view@6.43.12)(yjs@13.6.32)
+      y-indexeddb:
+        specifier: ^9.0.12
+        version: 9.0.12(yjs@13.6.32)
       y-protocols:
         specifier: ^1.0.7
         version: 1.0.7(yjs@13.6.32)
@@ -1470,6 +1473,12 @@ packages:
       '@codemirror/view': ^6.0.0
       yjs: ^13.5.6
 
+  y-indexeddb@9.0.12:
+    resolution: {integrity: sha512-9oCFRSPPzBK7/w5vOkJBaVCQZKHXB/v6SIT+WYhnJxlEC61juqG0hBrAf+y3gmSMLFLwICNH9nQ53uscuse6Hg==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
+    peerDependencies:
+      yjs: ^13.0.0
+
   y-protocols@1.0.7:
     resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
     engines: {node: '>=16.0.0', npm: '>=8.0.0'}
@@ -2603,6 +2612,11 @@ snapshots:
     dependencies:
       '@codemirror/state': 6.7.5
       '@codemirror/view': 6.43.12
+      lib0: 0.2.117
+      yjs: 13.6.32
+
+  y-indexeddb@9.0.12(yjs@13.6.32):
+    dependencies:
       lib0: 0.2.117
       yjs: 13.6.32
 

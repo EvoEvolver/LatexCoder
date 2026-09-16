@@ -1,5 +1,5 @@
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentWithTab, redo, redoDepth, selectAll, undo, undoDepth } from "@codemirror/commands";
+import { defaultKeymap, indentWithTab, selectAll } from "@codemirror/commands";
 import {
   bracketMatching,
   defaultHighlightStyle,
@@ -25,6 +25,7 @@ import {
   lineNumbers,
   rectangularSelection,
   WidgetType,
+  ViewPlugin,
 } from "@codemirror/view";
 import {
   Archive,
@@ -66,12 +67,17 @@ import {
 } from "lucide";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { yCollab, ySyncAnnotation } from "y-codemirror.next";
+import { yCollab, ySyncAnnotation, yUndoManagerKeymap } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
+import { IndexeddbPersistence } from "y-indexeddb";
+import * as encoding from "lib0/encoding";
+import * as decoding from "lib0/decoding";
+import { diffLines } from "diff";
 import * as Y from "yjs";
 
 import { parseReviews, stripReviewStorage } from "./review.ts";
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "./references.ts";
+import { compileErrors } from "./compile-errors.ts";
 
 declare global {
   interface Window {
@@ -183,6 +189,25 @@ const reviewMutation = Annotation.define();
 // Backspace keystrokes extend it instead of nesting new markers. The record
 // lives per-transaction because positions shift as the document changes.
 const lastDeletion = new WeakMap();
+const editorUndoManagers = new WeakMap<EditorView, Y.UndoManager>();
+let autoCompileTimer: ReturnType<typeof setTimeout>;
+let compileRunning = false;
+let compileQueued = false;
+
+function updateSyncStatus() {
+  if (!state.provider) return;
+  const connected = state.provider.wsconnected;
+  elements.sync_state.textContent = !connected ? state.unsaved ? "Offline - unsynced edits" : "Reconnecting"
+    : !state.provider.synced ? "Synchronizing"
+    : state.unsaved ? "Saving..." : "Saved live";
+}
+
+function scheduleAutoCompile() {
+  clearTimeout(autoCompileTimer);
+  if (state.settings?.autoCompile && state.projectId) autoCompileTimer = setTimeout(() => {
+    if (state.provider?.wsconnected && state.provider.synced) compile();
+  }, 1200);
+}
 
 function hash(value) {
   let result = 0;
@@ -357,6 +382,13 @@ function renderFiles() {
   elements.file_list.replaceChildren();
   type FileTree = { folders: Map<string, FileTree>; files: typeof state.files };
   const root: FileTree = { folders: new Map(), files: [] };
+  for (const path of state.folders || []) {
+    let node = root;
+    for (const name of path.split("/")) {
+      if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), files: [] });
+      node = node.folders.get(name)!;
+    }
+  }
   for (const file of state.files) {
     let node = root;
     const parts = file.path.split("/");
@@ -391,6 +423,9 @@ function renderFiles() {
         newFile(folderPath);
       });
       header.append(create);
+      header.append(folderMenu(folderPath));
+      enableFileDrag(header, folderPath);
+      enableFileDrop(header, folderPath);
       const children = document.createElement("div");
       children.className = "ml-3 border-l pl-1";
       renderTree(child, children, folderPath);
@@ -411,6 +446,7 @@ function renderFiles() {
     button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
     button.querySelector("span").textContent = file.path.split("/").at(-1);
     button.addEventListener("click", () => openFile(file.path));
+    enableFileDrag(row, file.path);
     const menu = document.createElement("details");
     menu.className = "file-actions context-menu relative";
     menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5" title="File actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
@@ -816,12 +852,15 @@ window.addEventListener("keyup", event => { if (event.key === referenceModifier)
 window.addEventListener("blur", () => setReferenceControl(false));
 
 function editorExtensions(ytext, provider) {
-  const undoManager = new Y.UndoManager(ytext);
+  const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
-    history(),
+    ViewPlugin.define(view => {
+      editorUndoManagers.set(view, undoManager);
+      return { destroy() { editorUndoManagers.delete(view); undoManager.destroy(); } };
+    }),
     foldGutter(),
     drawSelection(),
     dropCursor(),
@@ -872,13 +911,15 @@ function editorExtensions(ytext, provider) {
     reviewTooltip,
     protectReviewStorage,
     EditorView.clipboardOutputFilter.of(source => stripReviewStorage(source)),
-    keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
+    keymap.of([...yUndoManagerKeymap, ...defaultKeymap, ...searchKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
       if (update.docChanged || update.selectionSet) closeEditorContextMenu();
       if (update.docChanged) {
         queueReviewRender();
         elements.git_dirty.hidden = false;
+        markPdfStale();
+        scheduleAutoCompile();
       }
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
         queueMicrotask(renderSelectionActions);
@@ -924,6 +965,9 @@ function disconnectEditor() {
   state.provider?.destroy();
   state.view?.destroy();
   state.doc?.destroy();
+  state.persistence?.destroy();
+  state.persistence = null;
+  clearTimeout(autoCompileTimer);
   state.provider = null;
   state.view = null;
   state.doc = null;
@@ -1109,21 +1153,44 @@ async function openFile(relativePath) {
 
   elements.sync_state.textContent = "Connecting";
   const doc = new Y.Doc();
-  const provider = new WebsocketProvider(socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`), encodeRoom(relativePath), doc, { connect: true });
+  const provider = new WebsocketProvider(socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`), encodeRoom(relativePath), doc, { connect: true, params: { saved: "1" } });
   const ytext = doc.getText("content");
   state.doc = doc;
   state.provider = provider;
+  state.persistence = new IndexeddbPersistence(`project:${state.projectId}:${relativePath}`, doc);
+  state.unsaved = true;
+  let nonce = 0;
+  const requestSave = () => {
+    state.unsaved = true;
+    if (provider.wsconnected && provider.synced) {
+      const message = encoding.createEncoder();
+      encoding.writeVarUint(message, 3);
+      encoding.writeVarString(message, String(nonce));
+      provider.ws.send(encoding.toUint8Array(message));
+    }
+    updateSyncStatus();
+  };
+  provider.messageHandlers[3] = (_encoder, decoder) => {
+    const savedNonce = decoding.readVarString(decoder);
+    if (state.provider === provider && savedNonce === String(nonce)) { state.unsaved = false; updateSyncStatus(); }
+  };
+  doc.on("update", (_update, origin) => {
+    if (state.provider !== provider) return;
+    if (origin !== provider) { nonce++; requestSave(); }
+  });
   state.view = new EditorView({
     state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
     parent: elements.editor,
   });
   provider.on("status", ({ status }) => {
-    elements.sync_state.textContent = status === "connected" ? "Saved live" : "Reconnecting";
+    if (state.provider === provider) updateSyncStatus();
   });
   provider.on("sync", synced => {
     if (synced) {
-      elements.sync_state.textContent = "Saved live";
+      if (state.provider !== provider) return;
+      requestSave();
       renderReviews();
+      scheduleAutoCompile();
     }
   });
   provider.awareness.on("change", updatePresence);
@@ -1430,8 +1497,10 @@ async function refreshProject(open = false) {
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
   state.files = data.project.files;
+  state.folders = data.project.folders || [];
+  state.settings = data.project.settings;
   renderFiles();
-  if (data.project.build.log) elements.build_output.textContent = data.project.build.log;
+  if (data.project.build.log) { elements.build_output.textContent = data.project.build.log; renderBuildErrors(data.project.build.log, data.project.build.errors); }
   if (data.project.build.pdf) showPdf();
   if (open) {
     const target = state.files.find(file => file.path === state.activeFile)?.path
@@ -1592,6 +1661,7 @@ async function openProjectPage(projectId, push = true) {
   if (state.pdfLoadingTask) await state.pdfLoadingTask.destroy().catch(() => {});
   state.pdfLoadingTask = null;
   state.pdfDocument = null;
+  state.pdfHighlights = null;
   elements.pdf_document.replaceChildren();
   elements.pdf_document.hidden = true;
   elements.empty_output.hidden = false;
@@ -1622,6 +1692,7 @@ async function renderPdf() {
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     canvas.setAttribute("aria-label", `PDF page ${pageNumber}`);
     canvas.dataset.page = String(pageNumber);
+    canvas.dataset.pdfScale = String(scale);
     canvas.title = `${macReferences ? "Command" : "Ctrl"}+click to open source`;
     const revision = state.pdfSourceRevision;
     const projectId = state.projectId;
@@ -1650,12 +1721,15 @@ async function renderPdf() {
   elements.pdf_document.hidden = false;
   elements.empty_output.hidden = true;
   elements.pdf_status.textContent = "PDF ready";
+  renderPdfHighlights();
+  refreshPdfStatus();
 }
 
 async function showPdf(force = false) {
   const requestVersion = ++state.pdfRequestVersion;
   const downloadUrl = projectApiUrl("v1/build/pdf");
   downloadUrl.searchParams.set("v", String(Date.now()));
+  downloadUrl.searchParams.set("cached", "1");
   elements.pdf_download.href = downloadUrl;
   elements.pdf_status.textContent = "Loading PDF";
   elements.empty_output.hidden = false;
@@ -1690,6 +1764,9 @@ async function showPdf(force = false) {
 }
 
 async function compile() {
+  if (compileRunning) { compileQueued = true; return; }
+  compileRunning = true;
+  const project = state.projectId;
   elements.compile_button.disabled = true;
   elements.compile_button.querySelector("span").textContent = "Compiling";
   elements.compile_button.setAttribute("aria-busy", "true");
@@ -1700,21 +1777,66 @@ async function compile() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ main: state.main }),
     });
+    if (state.projectId !== project) return;
     elements.build_output.textContent = result.build.log;
+    renderBuildErrors(result.build.log, result.build.errors);
     await showPdf(true);
     selectOutput("pdf");
     elements.output_pane.classList.add("mobile-open");
     showToast("PDF compiled.");
   } catch (error) {
     const build = await request("v1/build").catch(() => null);
+    if (state.projectId !== project) return;
     elements.build_output.textContent = build?.build?.log || error.message;
+    renderBuildErrors(build?.build?.log || error.message, build?.build?.errors);
     elements.build_log.hidden = false;
     showToast(error.message);
   } finally {
     elements.compile_button.disabled = false;
     elements.compile_button.querySelector("span").textContent = "Compile";
     elements.compile_button.removeAttribute("aria-busy");
-    elements.sync_state.textContent = state.provider ? "Saved live" : "Stored";
+    compileRunning = false;
+    updateSyncStatus();
+    refreshPdfStatus();
+    if (compileQueued) { compileQueued = false; scheduleAutoCompile(); }
+  }
+}
+
+function markPdfStale() {
+  const freshness = document.getElementById("pdf-freshness")!;
+  if (!state.pdfDocument) return;
+  freshness.hidden = false;
+  freshness.textContent = "PDF outdated - showing last successful compilation";
+  freshness.classList.add("text-amber-700");
+}
+
+async function refreshPdfStatus() {
+  const project = state.projectId;
+  if (!project || !state.pdfDocument) return;
+  try {
+    const { build } = await request("v1/build");
+    if (project !== state.projectId) return;
+    const freshness = document.getElementById("pdf-freshness")!;
+    freshness.hidden = false;
+    const stale = build.stale || state.pdfSourceRevision !== build.sourceRevision;
+    freshness.textContent = stale ? "PDF outdated - showing last successful compilation" : "PDF current";
+    freshness.classList.toggle("text-amber-700", stale);
+  } catch { markPdfStale(); }
+}
+
+function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compileErrors>) {
+  const list = document.getElementById("build-errors")!;
+  list.replaceChildren();
+  const errors = mappedErrors?.length ? mappedErrors : compileErrors(log);
+  list.hidden = !errors.length;
+  for (const error of errors) {
+    const file = state.files.find(file => file.path === error.path || error.path.endsWith(`/${file.path}`));
+    if (!file) continue;
+    const button = document.createElement("button");
+    button.className = "block w-full border-b border-zinc-800 px-3 py-2 text-left text-xs text-red-300 hover:bg-zinc-800";
+    button.textContent = `${file.path}:${error.line} ${error.message}`;
+    button.addEventListener("click", () => { elements.build_log.hidden = true; void revealSource({ path: file.path, line: error.line }).catch(error => showToast(error.message)); });
+    list.append(button);
   }
 }
 
@@ -1803,7 +1925,7 @@ async function runGitAction(endpoint, body, successMessage) {
     return null;
   } finally {
     buttons.forEach(button => { button.disabled = false; });
-    elements.sync_state.textContent = state.provider ? "Saved live" : "Stored";
+    updateSyncStatus();
   }
 }
 
@@ -2164,28 +2286,20 @@ async function renameFile(target) {
   });
   if (!name || name === target) return;
   try {
-    const wasActive = state.activeFile === target;
-    if (wasActive) disconnectEditor();
-    await request("v1/files/move", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: target, to: name }),
-    });
-    if (wasActive) state.activeFile = name;
-    await refreshProject(wasActive);
+    await moveFilePath(target, String(name));
   } catch (error) { showToast(error.message); }
 }
 
 async function deleteFile(target) {
   const confirmed = await openActionDialog({
     title: "Delete file",
-    message: `Delete “${target}”? This cannot be undone.`,
+    message: `Move “${target}” to Recently deleted? It can be restored.`,
     submitLabel: "Delete file",
     danger: true,
   });
   if (!confirmed) return;
   try {
-    const wasActive = state.activeFile === target;
+    const wasActive = state.activeFile === target || state.activeFile.startsWith(`${target}/`);
     if (wasActive) disconnectEditor();
     await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
     if (wasActive) state.activeFile = "";
@@ -2193,9 +2307,127 @@ async function deleteFile(target) {
     showToast("File deleted.");
   } catch (error) {
     showToast(error.message);
-    await refreshProject(state.activeFile === target);
+    await refreshProject(state.activeFile === target || state.activeFile.startsWith(`${target}/`));
   }
 }
+async function moveFilePath(from: string, to: string) {
+  const wasActive = state.activeFile === from || state.activeFile.startsWith(`${from}/`);
+  await request("v1/files/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
+  if (wasActive) { disconnectEditor(); state.activeFile = to + state.activeFile.slice(from.length); }
+  await refreshProject(wasActive);
+  markPdfStale();
+}
+
+function enableFileDrag(element: HTMLElement, path: string) {
+  element.draggable = true;
+  element.addEventListener("dragstart", event => {
+    event.stopPropagation();
+    event.dataTransfer.setData("application/x-project-file", JSON.stringify({ project: state.projectId, path }));
+    event.dataTransfer.effectAllowed = "move";
+  });
+}
+
+function enableFileDrop(element: HTMLElement, folder: string) {
+  element.addEventListener("dragover", event => {
+    if (!event.dataTransfer.types.includes("application/x-project-file")) return;
+    event.preventDefault(); event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    element.classList.add("bg-accent");
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("bg-accent"));
+  element.addEventListener("drop", event => {
+    element.classList.remove("bg-accent");
+    const value = event.dataTransfer.getData("application/x-project-file");
+    if (!value) return;
+    event.preventDefault(); event.stopPropagation();
+    try {
+      const { project, path } = JSON.parse(value);
+      if (project !== state.projectId) return;
+      const to = (folder ? folder + "/" : "") + path.split("/").at(-1);
+      if (path !== to) void moveFilePath(path, to).catch(error => showToast(error.message));
+    } catch (error) { showToast(error.message); }
+  });
+}
+enableFileDrop(elements.file_list, "");
+
+function folderMenu(path: string) {
+  const menu = document.createElement("details");
+  menu.className = "file-actions context-menu relative shrink-0";
+  menu.innerHTML = '<summary title="Folder actions" class="grid size-7 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5"><i data-lucide="more-horizontal"></i></summary><div class="fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
+  const panel = menu.querySelector("div")!;
+  menu.addEventListener("click", event => event.stopPropagation());
+  menu.addEventListener("toggle", () => {
+    if (!menu.open) return;
+    const bounds = menu.querySelector("summary")!.getBoundingClientRect();
+    panel.style.top = `${Math.min(window.innerHeight - panel.offsetHeight - 8, bounds.bottom)}px`;
+    panel.style.left = `${Math.max(8, Math.min(window.innerWidth - 168, bounds.right - 160))}px`;
+  });
+  for (const [label, run] of [["Rename / move folder", () => renameFile(path)], ["New folder", () => newFolder(path)], ["Delete folder", () => deleteFile(path)]] as const) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "block h-8 w-full rounded px-2 text-left text-xs hover:bg-accent disabled:opacity-40";
+    button.textContent = label;
+    if (label === "Delete folder") button.disabled = state.main.startsWith(path + "/");
+    button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); menu.open = false; void run(); });
+    panel.append(button);
+  }
+  return menu;
+}
+
+async function newFolder(prefix = "") {
+  const name = await openActionDialog({ title: "New folder", label: "Folder path", value: prefix ? prefix + "/folder" : "folder", submitLabel: "Create" });
+  if (!name) return;
+  try { await request("v1/files/folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: name }) }); await refreshProject(); }
+  catch (error) { showToast(error.message); }
+}
+document.getElementById("new-folder")!.addEventListener("click", () => newFolder());
+
+const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
+document.getElementById("project-settings")!.addEventListener("click", async () => {
+  try {
+    const { settings } = await request("v1/settings");
+    const main = document.getElementById("settings-main") as HTMLSelectElement;
+    main.replaceChildren();
+    for (const file of state.files.filter(file => file.path.endsWith(".tex"))) main.add(new Option(file.path, file.path));
+    main.value = settings.main;
+    (document.getElementById("settings-compiler") as HTMLSelectElement).value = settings.compiler;
+    (document.getElementById("settings-auto") as HTMLInputElement).checked = settings.autoCompile;
+    settingsDialog.showModal();
+  } catch (error) { showToast(error.message); }
+});
+document.getElementById("settings-close")!.addEventListener("click", () => settingsDialog.close());
+document.getElementById("settings-form")!.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const { settings } = await request("v1/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main: (document.getElementById("settings-main") as HTMLSelectElement).value, compiler: (document.getElementById("settings-compiler") as HTMLSelectElement).value, autoCompile: (document.getElementById("settings-auto") as HTMLInputElement).checked }) });
+    state.settings = settings; state.main = settings.main;
+    settingsDialog.close(); markPdfStale(); scheduleAutoCompile();
+    renderFiles();
+  } catch (error) { showToast(error.message); }
+});
+
+const trashDialog = document.getElementById("trash-dialog") as HTMLDialogElement;
+document.getElementById("trash-close")!.addEventListener("click", () => trashDialog.close());
+async function renderTrash() {
+  const { items } = await request("v1/trash");
+  const list = document.getElementById("trash-list")!;
+  list.replaceChildren();
+  if (!items.length) list.textContent = "No deleted files";
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "flex min-w-0 items-center justify-between gap-2 border-b py-2 text-xs";
+    const label = document.createElement("span"); label.className = "min-w-0 truncate"; label.textContent = item.path;
+    const restore = document.createElement("button"); restore.className = "shrink-0 rounded-md border px-2 py-1 hover:bg-accent"; restore.textContent = "Restore";
+    restore.addEventListener("click", async () => {
+      restore.disabled = true;
+      try { await request("v1/trash/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id }) }); await refreshProject(); await renderTrash(); }
+      catch (error) { showToast(error.message); restore.disabled = false; }
+    });
+    row.append(label, restore); list.append(row);
+  }
+}
+document.getElementById("open-trash")!.addEventListener("click", () => { trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
+
 const editorContextMenu = document.getElementById("editor-context-menu")!;
 let contextView: EditorView | null = null;
 
@@ -2212,8 +2444,9 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   const overlapsReview = parseReviews(view.state.doc.toString()).some(item => selection.from < item.to && selection.to > item.from);
   editorContextMenu.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach(button => {
     const action = button.dataset.editorAction;
-    button.disabled = action === "undo" ? !undoDepth(view.state)
-      : action === "redo" ? !redoDepth(view.state)
+    const manager = editorUndoManagers.get(view);
+    button.disabled = action === "undo" ? !manager?.undoStack.length
+      : action === "redo" ? !manager?.redoStack.length
       : action === "comment" ? selection.empty || overlapsReview
       : action === "copy" || action === "cut" || action === "delete" ? selection.empty
       : action === "select-all" ? !view.state.doc.length
@@ -2238,9 +2471,10 @@ async function goToPdf(view: EditorView) {
   const project = state.projectId;
   const file = state.activeFile;
   const source = view.state.doc.toString();
-  const line = view.state.doc.lineAt(view.state.selection.main.from).number;
+  const { from, to } = view.state.selection.main;
+  const line = view.state.doc.lineAt(from).number;
   const position = await request("v1/build/position", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
   });
   if (state.projectId !== project || state.view !== view) return;
   selectOutput("pdf");
@@ -2254,14 +2488,32 @@ async function goToPdf(view: EditorView) {
   const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
   if (narrowWorkspace.matches) elements.output_pane.classList.add("mobile-open");
   elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
-  elements.pdf_document.querySelector("#pdf-source-marker")?.remove();
-  const marker = document.createElement("div");
-  marker.id = "pdf-source-marker";
-  marker.className = "pointer-events-none absolute z-10 h-6 w-28 -translate-x-1/2 -translate-y-1/2 border-2 border-amber-500 bg-amber-200/30";
-  marker.style.top = `${canvas.offsetTop + y}px`;
-  marker.style.left = `${canvas.offsetLeft + x}px`;
-  elements.pdf_document.append(marker);
-  setTimeout(() => marker.remove(), 2000);
+  const expires = Date.now() + 3000;
+  state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
+  renderPdfHighlights();
+  setTimeout(() => { if (state.pdfHighlights?.expires === expires) { state.pdfHighlights = null; renderPdfHighlights(); } }, 3000);
+}
+
+function renderPdfHighlights() {
+  elements.pdf_document.querySelectorAll("[data-pdf-highlight]").forEach(marker => marker.remove());
+  if (!state.pdfHighlights || state.pdfHighlights.expires < Date.now()) return;
+  const canvases = [...elements.pdf_document.querySelectorAll("canvas")];
+  let index = 0;
+  for (const box of state.pdfHighlights.boxes) {
+    const canvas = canvases.find(canvas => canvas.dataset.page === String(box.page));
+    if (!canvas) continue;
+    // Canvas render scale is independent of device pixel ratio.
+    const scale = Number(canvas.dataset.pdfScale || 1);
+    const marker = document.createElement("div");
+    if (index++ === 0) marker.id = "pdf-source-marker";
+    marker.dataset.pdfHighlight = "true";
+    marker.className = "pointer-events-none absolute z-10 border-2 border-amber-500 bg-amber-200/30";
+    marker.style.top = `${canvas.offsetTop + Math.max(0, box.top) * scale}px`;
+    marker.style.left = `${canvas.offsetLeft + Math.max(0, box.left) * scale}px`;
+    marker.style.width = `${Math.max(4, Math.min(box.width * scale, canvas.clientWidth))}px`;
+    marker.style.height = `${Math.max(4, box.height * scale)}px`;
+    elements.pdf_document.append(marker);
+  }
 }
 
 editorContextMenu.addEventListener("click", async event => {
@@ -2274,8 +2526,8 @@ editorContextMenu.addEventListener("click", async event => {
   closeEditorContextMenu();
   view.focus();
   try {
-    if (action === "undo") { undo(view); return; }
-    if (action === "redo") { redo(view); return; }
+    if (action === "undo") { editorUndoManagers.get(view)?.undo(); return; }
+    if (action === "redo") { editorUndoManagers.get(view)?.redo(); return; }
     if (action === "select-all") { selectAll(view); return; }
     if (action === "comment") { openReviewDialog(); return; }
     if (action === "pdf") { await goToPdf(view); return; }
@@ -2330,12 +2582,53 @@ const searchDialog = document.getElementById("search-dialog") as HTMLDialogEleme
 const searchQuery = document.getElementById("search-query") as HTMLInputElement;
 const searchStatus = document.getElementById("search-status")!;
 const searchResults = document.getElementById("search-results")!;
+let replacementPlan: Array<{ path: string; baseSha256: string; before: string; source: string }> = [];
+let replacementProject = "";
+const applyReplacements = document.getElementById("replace-apply") as HTMLButtonElement;
 let searchVersion = 0;
 const openProjectSearch = () => { searchDialog.showModal(); searchQuery.focus(); };
 document.getElementById("project-search")!.addEventListener("click", openProjectSearch);
 document.getElementById("editor-search")!.addEventListener("click", openProjectSearch);
 document.getElementById("search-close")!.addEventListener("click", () => searchDialog.close());
-searchDialog.addEventListener("close", () => { searchVersion++; });
+searchDialog.addEventListener("close", () => { searchVersion++; replacementPlan = []; applyReplacements.hidden = true; });
+for (const id of ["search-query", "replace-text", "replace-scope", "search-case", "search-regex"]) document.getElementById(id)!.addEventListener("input", () => { searchVersion++; replacementPlan = []; applyReplacements.hidden = true; });
+document.getElementById("replace-preview")!.addEventListener("click", async () => {
+  const version = ++searchVersion;
+  const project = state.projectId;
+  replacementPlan = []; applyReplacements.hidden = true; searchResults.replaceChildren();
+  searchStatus.textContent = "Preparing replacement preview...";
+  try {
+    const result = await request("v1/search/replace/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      query: searchQuery.value, replacement: (document.getElementById("replace-text") as HTMLInputElement).value,
+      caseSensitive: (document.getElementById("search-case") as HTMLInputElement).checked, regex: (document.getElementById("search-regex") as HTMLInputElement).checked,
+      path: (document.getElementById("replace-scope") as HTMLSelectElement).value === "file" ? state.activeFile : undefined,
+    }) });
+    if (version !== searchVersion || project !== state.projectId) return;
+    replacementPlan = result.files; replacementProject = project;
+    searchStatus.textContent = `${result.count} replacements in ${result.files.length} files`;
+    for (const file of result.files) {
+      const heading = document.createElement("strong"); heading.className = "block border-t py-2 text-xs"; heading.textContent = file.path;
+      const preview = document.createElement("pre"); preview.className = "overflow-auto whitespace-pre-wrap break-words font-mono text-xs";
+      for (const part of diffLines(file.before, file.source)) {
+        const row = document.createElement("span"); row.className = "block " + (part.added ? "bg-emerald-100 text-emerald-900" : part.removed ? "bg-red-100 text-red-900" : "text-muted-foreground");
+        row.textContent = part.value.split("\n").map(line => (part.added ? "+ " : part.removed ? "- " : "  ") + line).join("\n");
+        preview.append(row);
+      }
+      searchResults.append(heading, preview);
+    }
+    applyReplacements.hidden = !result.files.length;
+  } catch (error) { if (version === searchVersion) searchStatus.textContent = error.message; }
+});
+applyReplacements.addEventListener("click", async () => {
+  if (!replacementPlan.length || replacementProject !== state.projectId) return;
+  applyReplacements.disabled = true;
+  try {
+    await request("v1/search/replace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ files: replacementPlan.map(({ before, ...file }) => file) }) });
+    replacementPlan = []; applyReplacements.hidden = true; searchStatus.textContent = "Replacements applied";
+    markPdfStale(); await refreshProject();
+  } catch (error) { replacementPlan = []; applyReplacements.hidden = true; searchStatus.textContent = error.message; }
+  finally { applyReplacements.disabled = false; }
+});
 window.addEventListener("keydown", event => {
   if ((macReferences ? event.metaKey : event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f" && !elements.editor_page.hidden) {
     event.preventDefault();
@@ -2345,6 +2638,7 @@ window.addEventListener("keydown", event => {
 document.getElementById("search-form")!.addEventListener("submit", async event => {
   event.preventDefault();
   const version = ++searchVersion;
+  replacementPlan = []; applyReplacements.hidden = true;
   const project = state.projectId;
   searchStatus.textContent = "Searching...";
   searchResults.replaceChildren();

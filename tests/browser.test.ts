@@ -42,6 +42,142 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("collaborative undo preserves remote edits and offline changes recover after reload", async () => {
+  await withEditor(async ({ page, base, browser }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const other = await browser.newPage();
+    try {
+      await other.goto(page.url());
+      await other.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      const insert = (text: string) => {
+        const { view } = globalThis.__paperE2E.state;
+        view.dispatch({ changes: { from: view.state.doc.length, insert: text } });
+      };
+      await page.evaluate(insert, " LOCAL");
+      await other.waitForFunction(() => globalThis.__paperE2E.state.view.state.doc.toString().endsWith(" LOCAL"));
+      await other.evaluate(insert, " REMOTE");
+      await page.waitForFunction(() => globalThis.__paperE2E.state.view.state.doc.toString().endsWith(" REMOTE"));
+      await page.locator(".cm-content").click();
+      await page.keyboard.press(await page.evaluate(() => /Mac/.test(navigator.platform) ? "Meta+z" : "Control+z"));
+      await page.waitForFunction(() => {
+        const source = globalThis.__paperE2E.state.view.state.doc.toString();
+        return source.endsWith(" REMOTE") && !source.includes(" LOCAL");
+      });
+      await page.context().setOffline(true);
+      await page.evaluate(() => globalThis.__paperE2E.state.provider.disconnect());
+      await page.evaluate(insert, " RECOVERED");
+      await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Offline - unsynced edits");
+      await page.waitForTimeout(200);
+      // Ensure the browser cache is persisted before reloading and reconnecting.
+      await page.evaluate(async () => {
+        const persistence = globalThis.__paperE2E.state.persistence;
+        await persistence?.whenSynced;
+      });
+      await page.context().setOffline(false);
+      await page.reload();
+      await page.waitForFunction(() => globalThis.__paperE2E?.state.view?.state.doc.toString().endsWith(" RECOVERED"));
+      await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      await other.waitForFunction(() => globalThis.__paperE2E.state.view.state.doc.toString().endsWith(" RECOVERED"));
+      await page.evaluate(() => {
+        const { view } = globalThis.__paperE2E.state;
+        view.dispatch({ changes: { from: view.state.doc.length - " RECOVERED".length, to: view.state.doc.length } });
+      });
+      await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      assert.ok((await (await page.request.get(`${base}/v1/files?path=main.tex`)).text()).endsWith(" REMOTE"));
+    } finally { await other.close(); }
+  });
+});
+
+test("settings and project replace preview apply through the real UI", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=other.tex`, { data: "needle needle", headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator("#project-settings").click();
+    await page.locator("#settings-main").selectOption("other.tex");
+    await page.locator("#settings-compiler").selectOption("latexmk");
+    await page.locator("#settings-form button[type=submit]").click();
+    assert.equal((await (await page.request.get(`${base}/v1/settings?project=${id}`)).json()).settings.main, "other.tex");
+    await page.locator("#editor-search").click();
+    await page.locator("#search-query").fill("needle");
+    await page.locator("#replace-text").fill("replacement");
+    await page.locator("#replace-scope").selectOption("project");
+    await page.locator("#replace-preview").click();
+    await page.locator("#replace-apply").waitFor();
+    assert.match(await page.locator("#search-results").textContent(), /replacement/);
+    assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=other.tex`)).text(), "needle needle");
+    await page.screenshot({ path: "/tmp/latexcoder-replace-preview.png" });
+    await page.locator("#replace-apply").click();
+    await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "Replacements applied");
+    assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=other.tex`)).text(), "replacement replacement");
+  });
+});
+
+test("folder menus rename, delete and restore complete directories", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=notes/chapter.tex`, { data: "chapter", headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.view);
+    const folder = page.locator('.file-folder[data-path="notes"]');
+    await folder.locator('[title="Folder actions"]').click();
+    await folder.getByRole("button", { name: "Rename / move folder", exact: true }).click();
+    await page.locator("#action-input").fill("renamed");
+    await page.locator("#action-submit").click();
+    const renamed = page.locator('.file-folder[data-path="renamed"]');
+    await renamed.waitFor();
+    await renamed.locator('[title="Folder actions"]').click();
+    await renamed.getByRole("button", { name: "Delete folder", exact: true }).click();
+    await page.locator("#action-submit").click();
+    await renamed.waitFor({ state: "detached" });
+    await page.locator("#open-trash").click();
+    await page.locator("#trash-list button").click();
+    await renamed.waitFor();
+    assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=renamed/chapter.tex`)).text(), "chapter");
+    await page.screenshot({ path: "/tmp/latexcoder-trash.png" });
+    await page.locator("#trash-close").click();
+    await page.locator("#new-folder").click();
+    await page.locator("#action-input").fill("destination");
+    await page.locator("#action-submit").click();
+    const destination = page.locator('.file-folder[data-path="destination"]');
+    await destination.waitFor();
+    await renamed.locator(":scope > summary").click();
+    await page.locator('.file-item').filter({ has: page.locator('[title="renamed/chapter.tex"]') }).dragTo(destination.locator(":scope > summary"));
+    await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "destination/chapter.tex"));
+    assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=destination/chapter.tex`)).text(), "chapter");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator("#project-settings").click();
+    await page.locator("#settings-dialog[open]").waitFor();
+    await page.screenshot({ path: "/tmp/latexcoder-settings-mobile.png" });
+  });
+});
+
+test("automatic compilation is debounced and errors navigate to source", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    let calls = 0;
+    await page.route("**/v1/compile*", route => { calls++; return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { message: "Compilation failed" } }) }); });
+    await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "main.tex:3: Undefined control sequence", stale: true } }) }));
+    await page.locator("#project-settings").click();
+    await page.locator("#settings-auto").check();
+    await page.locator("#settings-form button[type=submit]").click();
+    await page.evaluate(() => {
+      const { view } = globalThis.__paperE2E.state;
+      for (const text of [" A", " B", " C"]) view.dispatch({ changes: { from: view.state.doc.length, insert: text } });
+    });
+    await page.locator("#build-errors button").waitFor();
+    assert.equal(calls, 1);
+    await page.locator("#build-errors button").click();
+    await page.waitForFunction(() => {
+      const { view } = globalThis.__paperE2E.state;
+      return view.state.doc.lineAt(view.state.selection.main.head).number === 3;
+    });
+  });
+});
+
 test("compile button shows Compiling until completion and resets on success or failure", async () => {
   for (const status of [200, 422]) {
     await withEditor(async ({ page }) => {
@@ -249,6 +385,11 @@ test(`${platform} real SyncTeX PDF modifier-click opens included source and reje
     const forward = await positionResponse;
     assert.equal(forward.status(), 200, await forward.text());
     await page.locator("#pdf-source-marker").waitFor();
+    const boxes = (await forward.json()).boxes;
+    assert.ok(boxes.length > 0 && boxes.every(box => box.width > 0 && box.height > 0));
+    const width = (await page.locator("#pdf-source-marker").boundingBox()).width;
+    await page.locator("#pdf-zoom-in").click();
+    await page.waitForFunction(previous => document.querySelector("#pdf-source-marker")?.getBoundingClientRect().width > previous, width);
     await page.screenshot({ path: "/tmp/latexcoder-source-to-pdf.png" });
     const noteOnlyEdit = child.replace("Hidden comment", "Hidden\nupdated comment");
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/intro.tex`, { data: noteOnlyEdit, headers: { "Content-Type": "text/plain" } });

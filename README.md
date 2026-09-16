@@ -201,6 +201,30 @@ files, without changing the Git index or creating a commit.
 
 ## Agent API
 
+### Editing and workspace tools
+
+- Project settings select the main TeX document, Tectonic or latexmk, and optional
+  debounced automatic compilation.
+- Source/PDF navigation uses SyncTeX regions; source selections are highlighted
+  in the PDF and remain aligned when zooming.
+- Compile errors link back to source. Failed builds retain the last successful
+  PDF with an out-of-date indicator; the default Agent PDF endpoint remains fresh.
+- Files and folders can be moved or renamed, including drag-and-drop. Deleted
+  items and their collaborative snapshots are stored in SQLite and can be restored.
+- Search and replace supports the current file or whole project. A diff preview
+  precedes applying changes; stale hashes reject the entire batch without editing.
+- Browser edits are cached in IndexedDB for recovery and synchronize on reconnect.
+  Saved status is acknowledged after server persistence; undo affects only your edits.
+- `POST /v1/files/edit/conflict` accepts the rejected raw upload and original
+  `X-Base-SHA256`, returning current source, its hash, and a read-only unified diff.
+  This is not a three-way merge or permission to overwrite another collaborator.
+
+Replace APIs: `POST /v1/search/replace/preview` accepts `query`, literal
+`replacement`, optional `path`, `regex`, and `caseSensitive`. Its returned files
+contain `path`, `baseSha256`, and `source`; submit those to
+`POST /v1/search/replace` as `{ "files": [...] }`. Replacement text is literal,
+including when matching with a regular expression.
+
 `GET /` with `Accept: text/markdown` returns the live API manual. Project file
 and build routes take a `project=<id>` query parameter. Agents must provide a
 member session or exchange a project share link for a scoped cookie. For example:
