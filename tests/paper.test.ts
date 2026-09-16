@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -76,6 +76,33 @@ function waitFor(testValue: () => boolean, timeout = 3000) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function createFakeLatexmk(directory) {
+  const executable = path.join(directory, "latexmk-fake");
+  await writeFile(executable, [
+    "#!/bin/sh",
+    'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+    'count_file="$root/count"',
+    'out=""',
+    'main=""',
+    'for arg in "$@"; do',
+    '  case "$arg" in',
+    '    -outdir=*) out="${arg#-outdir=}" ;;',
+    '    *.tex) main="$arg" ;;',
+    '  esac',
+    'done',
+    'mkdir -p "$out"',
+    'count=0',
+    '[ ! -f "$count_file" ] || read count < "$count_file"',
+    'count=$((count + 1))',
+    'printf "%s\n" "$count" > "$count_file"',
+    'base=${main##*/}',
+    'base=${base%.tex}',
+    '{ printf "fake-pdf-%s\n" "$count"; cat "$main"; } > "$out/$base.pdf"',
+  ].join("\n"), "utf8");
+  await chmod(executable, 0o755);
+  return executable;
 }
 
 test("path validation contains project access", () => {
@@ -316,6 +343,9 @@ test("invite-only users and project capability sessions enforce access boundarie
     const agentInstructions = await agentWorkspace.text();
     assert.match(agentInstructions, /^# Shared Capability/m);
     assert.match(agentInstructions, /Submit A Yjs Edit/);
+    assert.match(agentInstructions, /Download The Current PDF/);
+    assert.match(agentInstructions, /curl -fsSL '.*\/v1\/build\/pdf\?project=/);
+    assert.match(agentInstructions, /do not call the compile API first/);
     assert.match(agentInstructions, /Reply To An Inline Comment/);
     assert.match(agentInstructions, /\\cmtrpl\{unique-reply-id\}\{Agent Name\}\{Reply text\}/);
     assert.match(agentInstructions, /\/v1\/files\/patch\?project=/);
@@ -462,6 +492,52 @@ test("user and project sessions survive a server restart", async () => {
   } finally {
     if (paper?.server.listening) await stop();
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("PDF download compiles current inputs and caches by source revision", async () => {
+  const compilerDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-fake-compiler-"));
+  const compiler = await createFakeLatexmk(compilerDir);
+  try {
+    await withServer(async ({ base }) => {
+      const first = await fetch(`${base}/v1/build/pdf`);
+      assert.equal(first.status, 200);
+      const firstRevision = first.headers.get("x-latex-coder-source-revision");
+      assert.match(firstRevision, /^[a-f0-9]{64}$/);
+      assert.match(await first.text(), /^fake-pdf-1\n/);
+      assert.equal((await readFile(path.join(compilerDir, "count"), "utf8")).trim(), "1");
+
+      const cached = await fetch(`${base}/v1/build/pdf`);
+      assert.equal(cached.status, 200);
+      assert.equal(cached.headers.get("x-latex-coder-source-revision"), firstRevision);
+      assert.match(await cached.text(), /^fake-pdf-1\n/);
+      assert.equal((await readFile(path.join(compilerDir, "count"), "utf8")).trim(), "1");
+
+      await fetch(`${base}/v1/files?path=main.tex`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: "new source for the current PDF\n",
+      });
+      const [updated, concurrent] = await Promise.all([
+        fetch(`${base}/v1/build/pdf`),
+        fetch(`${base}/v1/build/pdf`),
+      ]);
+      assert.equal(updated.status, 200);
+      assert.equal(concurrent.status, 200);
+      const updatedRevision = updated.headers.get("x-latex-coder-source-revision");
+      assert.match(updatedRevision, /^[a-f0-9]{64}$/);
+      assert.notEqual(updatedRevision, firstRevision);
+      assert.equal(concurrent.headers.get("x-latex-coder-source-revision"), updatedRevision);
+      assert.match(await updated.text(), /^fake-pdf-2\nnew source for the current PDF\n$/);
+      assert.match(await concurrent.text(), /^fake-pdf-2\nnew source for the current PDF\n$/);
+      assert.equal((await readFile(path.join(compilerDir, "count"), "utf8")).trim(), "2");
+
+      const build = await (await fetch(`${base}/v1/build`)).json();
+      assert.equal(build.build.sourceRevision, updatedRevision);
+      assert.equal(build.build.status, "success");
+    }, { compiler });
+  } finally {
+    await rm(compilerDir, { recursive: true, force: true });
   }
 });
 

@@ -30,7 +30,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
   Yjs document and `main` untouched until the content is resolved.
 - Git status, history, checkpoints, and a copy-ready personal Git remote for
   ordinary `clone`, `pull`, and `push` workflows.
-- Local LaTeX compilation with PDF preview, build logs, and PDF download.
+- On-demand LaTeX compilation with content-addressed caching, PDF preview,
+  build logs, and an always-current PDF download endpoint.
 - In-editor previews for project images and PDF files, with zoom and download.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.

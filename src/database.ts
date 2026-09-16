@@ -19,6 +19,7 @@ export type BuildMetadata = {
   finishedAt: string | null;
   log: string;
   pdf: boolean;
+  sourceRevision: string | null;
 };
 
 const EMPTY_BUILD: BuildMetadata = {
@@ -28,6 +29,7 @@ const EMPTY_BUILD: BuildMetadata = {
   finishedAt: null,
   log: "",
   pdf: false,
+  sourceRevision: null,
 };
 
 export class StateDatabase {
@@ -108,7 +110,8 @@ export class StateDatabase {
         started_at TEXT,
         finished_at TEXT,
         log TEXT NOT NULL,
-        has_pdf INTEGER NOT NULL CHECK (has_pdf IN (0, 1))
+        has_pdf INTEGER NOT NULL CHECK (has_pdf IN (0, 1)),
+        source_revision TEXT
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS yjs_snapshots (
@@ -135,6 +138,10 @@ export class StateDatabase {
     }
     if (!projectShareColumns.some(column => column.name === "token")) {
       this.db.exec("ALTER TABLE project_shares ADD COLUMN token TEXT;");
+    }
+    const buildColumns = this.db.prepare("PRAGMA table_info(builds)").all() as any[];
+    if (!buildColumns.some(column => column.name === "source_revision")) {
+      this.db.exec("ALTER TABLE builds ADD COLUMN source_revision TEXT;");
     }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS project_shares_member_idx
@@ -394,21 +401,23 @@ export class StateDatabase {
       finishedAt: row.finished_at,
       log: row.log,
       pdf: Boolean(row.has_pdf),
+      sourceRevision: row.source_revision as string | null,
     };
   }
 
   saveBuild(projectId: string, build: BuildMetadata) {
     this.db.prepare(`
-      INSERT INTO builds (project_id, status, main_file, started_at, finished_at, log, has_pdf)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO builds (project_id, status, main_file, started_at, finished_at, log, has_pdf, source_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id) DO UPDATE SET
         status = excluded.status,
         main_file = excluded.main_file,
         started_at = excluded.started_at,
         finished_at = excluded.finished_at,
         log = excluded.log,
-        has_pdf = excluded.has_pdf
-    `).run(projectId, build.status, build.main, build.startedAt, build.finishedAt, build.log, build.pdf ? 1 : 0);
+        has_pdf = excluded.has_pdf,
+        source_revision = excluded.source_revision
+    `).run(projectId, build.status, build.main, build.startedAt, build.finishedAt, build.log, build.pdf ? 1 : 0, build.sourceRevision);
   }
 
   getYjsSnapshot(projectId: string, relativePath: string) {

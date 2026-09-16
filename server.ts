@@ -480,6 +480,33 @@ async function listFiles(projectDir) {
   return result;
 }
 
+async function compilationSourceRevision(projectDir) {
+  const digest = createHash("sha256");
+  async function visit(directory, prefix = "") {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === ".paper-output") continue;
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        let content = await readFile(absolutePath);
+        if (relativePath.endsWith(".tex")) content = Buffer.from(stripReviewStorage(content.toString("utf8")));
+        digest.update(relativePath);
+        digest.update("\0");
+        digest.update(String(content.length));
+        digest.update("\0");
+        digest.update(content);
+        digest.update("\0");
+      }
+    }
+  }
+  await visit(projectDir);
+  return digest.digest("hex");
+}
+
 function run(command: string, args: string[], options: any): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, shell: false });
@@ -955,7 +982,9 @@ a ZIP, including uncommitted files.
 \`GET /v1/files?path=main.tex\` reads a file as bytes.
 The response includes the current \`X-Content-SHA256\` revision.
 
-\`GET /v1/build/pdf\` downloads the latest successful PDF.
+\`GET /v1/build/pdf\` downloads a PDF for the current project contents. The
+server compiles automatically when the inputs have changed and otherwise reuses
+its matching cached artifact.
 
 ## Mutate
 
@@ -989,6 +1018,7 @@ function agentProjectManual(runtime, files, shareToken, origin) {
   const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
   const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
   const projectUrl = `/v1/project?${capability}`;
+  const pdfUrl = `/v1/build/pdf?${capability}`;
   const gitUrl = endpoint => `/v1/git${endpoint}?${capability}`;
   const cloneUrl = `${origin}/git/${encodeURIComponent(runtime.id)}/${encodeURIComponent(shareToken)}`;
   const main = runtime.build.main || "main.tex";
@@ -1009,6 +1039,13 @@ GET ${fileUrl(main)}
 
 The file response includes X-Content-SHA256. Use that digest when submitting a
 checked edit so a concurrent human or Agent change cannot be overwritten.
+
+## Download The Current PDF
+
+curl -fsSL '${origin}${pdfUrl}' -o latest.pdf
+
+This always downloads a PDF built from the current project inputs. The server
+handles compilation and caching; do not call the compile API first.
 
 ## Submit A Yjs Edit
 
@@ -1265,6 +1302,7 @@ export async function createPaperServer(options: any = {}) {
       database,
       collaboration: createCollaborationStore(id, projectDir, database),
       build,
+      compilePromise: null,
       gitBusy: false,
       gitReaders: 0,
       gitReaderWaiters: [],
@@ -1345,6 +1383,107 @@ export async function createPaperServer(options: any = {}) {
       throw apiError("project_access_required", "a registered member's personal Git URL is required for push", 401);
     }
     return runtime;
+  };
+
+  const performCompile = async (runtime, main) => {
+    let workDir;
+    const previousPdf = runtime.build.pdf;
+    const previousRevision = runtime.build.sourceRevision;
+    try {
+      assertProjectWritable(runtime);
+      const { projectDir, buildDir, collaboration } = runtime;
+      collaboration.flush();
+      main = safeRelativePath(main || runtime.build.main || "main.tex");
+      if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
+      runtime.build = {
+        status: "running",
+        main,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        log: "",
+        pdf: previousPdf,
+        sourceRevision: previousRevision,
+      };
+      database.saveBuild(runtime.id, runtime.build);
+      workDir = path.join(buildDir, `job-${randomUUID()}`);
+      const gitDir = path.join(projectDir, ".git");
+      await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
+      const sourceRevision = await compilationSourceRevision(workDir);
+      for (const file of await listFiles(workDir)) {
+        if (!file.path.endsWith(".tex")) continue;
+        const sourcePath = path.join(workDir, file.path);
+        const source = await readFile(sourcePath, "utf8");
+        await writeFile(sourcePath, stripReviewStorage(source), "utf8");
+      }
+      const outputDir = path.join(workDir, ".paper-output");
+      await mkdir(outputDir, { recursive: true });
+      const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN, stateDir);
+      const executable = path.basename(compiler);
+      const args = executable.startsWith("latexmk")
+        ? ["-pdf", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
+        : ["--keep-logs", "--outdir", outputDir, main];
+      const result = await run(compiler, args, {
+        cwd: workDir,
+        env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
+      });
+      const pdfName = `${path.basename(main, ".tex")}.pdf`;
+      const outputPdf = path.join(outputDir, pdfName);
+      const success = result.code === 0 && existsSync(outputPdf);
+      if (success) await cp(outputPdf, path.join(buildDir, "latest.pdf"));
+      runtime.build = {
+        status: success ? "success" : "error",
+        main,
+        startedAt: runtime.build.startedAt,
+        finishedAt: new Date().toISOString(),
+        log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
+        pdf: success || previousPdf,
+        sourceRevision: success ? sourceRevision : previousRevision,
+      };
+      database.saveBuild(runtime.id, runtime.build);
+      return { success, build: runtime.build };
+    } catch (error) {
+      runtime.build = {
+        ...runtime.build,
+        status: "error",
+        finishedAt: new Date().toISOString(),
+        log: error.message,
+        pdf: previousPdf,
+        sourceRevision: previousRevision,
+      };
+      database.saveBuild(runtime.id, runtime.build);
+      throw error;
+    } finally {
+      if (workDir) await rm(workDir, { recursive: true, force: true });
+    }
+  };
+
+  const compileProject = async (runtime, main) => {
+    if (runtime.compilePromise) return runtime.compilePromise;
+    const promise = performCompile(runtime, main);
+    runtime.compilePromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (runtime.compilePromise === promise) runtime.compilePromise = null;
+    }
+  };
+
+  const ensureLatestPdf = async runtime => {
+    const main = safeRelativePath(runtime.build.main || "main.tex");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      runtime.collaboration.flush();
+      const currentRevision = await compilationSourceRevision(runtime.projectDir);
+      if (
+        runtime.build.pdf
+        && runtime.build.status === "success"
+        && runtime.build.main === main
+        && runtime.build.sourceRevision === currentRevision
+        && existsSync(path.join(runtime.buildDir, "latest.pdf"))
+      ) return runtime.build;
+      const result = await compileProject(runtime, main);
+      if (!result.success) throw apiError("compile_failed", result.build.log || "LaTeX compilation failed", 422);
+    }
+    throw apiError("compile_changed", "the project kept changing while the PDF was compiling; retry the download", 409);
   };
 
   const expressModule = await import("express");
@@ -1784,76 +1923,21 @@ export async function createPaperServer(options: any = {}) {
   app.get("/v1/build/pdf", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      if (!runtime.build.pdf) return next(apiError("pdf_not_found", "no successful PDF build exists", 404));
+      const build = await ensureLatestPdf(runtime);
       response.setHeader("Cache-Control", "no-store");
+      response.setHeader("ETag", `"${build.sourceRevision}"`);
+      response.setHeader("X-LaTeX-Coder-Source-Revision", build.sourceRevision);
       response.sendFile(path.join(runtime.buildDir, "latest.pdf"), { dotfiles: "allow" });
     } catch (error) { next(error); }
   });
   app.post("/v1/compile", express.json({ limit: "16kb" }), async (request, response, next) => {
-    let workDir;
-    let runtime;
     try {
-      runtime = await resolveProject(request);
-      assertProjectWritable(runtime);
-      const { projectDir, buildDir, collaboration } = runtime;
-      if (runtime.build.status === "running") throw apiError("compile_busy", "a compile is already running", 409);
-      collaboration.flush();
+      const runtime = await resolveProject(request);
       const main = safeRelativePath(request.body?.main || runtime.build.main || "main.tex");
-      if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
-      runtime.build = { status: "running", main, startedAt: new Date().toISOString(), finishedAt: null, log: "", pdf: runtime.build.pdf };
-      database.saveBuild(runtime.id, runtime.build);
-      workDir = path.join(buildDir, `job-${randomUUID()}`);
-      const gitDir = path.join(projectDir, ".git");
-      await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
-      // Review storage belongs to the editor, not the rendered document.
-      // Compile a clean temporary projection of every TeX file: comment and
-      // legacy revision bodies remain, additions are accepted, and deletions
-      // disappear. Canonical project files are never rewritten here.
-      for (const file of await listFiles(workDir)) {
-        if (!file.path.endsWith(".tex")) continue;
-        const sourcePath = path.join(workDir, file.path);
-        const source = await readFile(sourcePath, "utf8");
-        await writeFile(sourcePath, stripReviewStorage(source), "utf8");
-      }
-      const outputDir = path.join(workDir, ".paper-output");
-      await mkdir(outputDir, { recursive: true });
-      const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN, stateDir);
-      const executable = path.basename(compiler);
-      const args = executable.startsWith("latexmk")
-        ? ["-pdf", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
-        : ["--keep-logs", "--outdir", outputDir, main];
-      const result = await run(compiler, args, {
-        cwd: workDir,
-        env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
-      });
-      const pdfName = `${path.basename(main, ".tex")}.pdf`;
-      const outputPdf = path.join(outputDir, pdfName);
-      const success = result.code === 0 && existsSync(outputPdf);
-      if (success) await cp(outputPdf, path.join(buildDir, "latest.pdf"));
-      runtime.build = {
-        status: success ? "success" : "error",
-        main,
-        startedAt: runtime.build.startedAt,
-        finishedAt: new Date().toISOString(),
-        log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
-        pdf: success || runtime.build.pdf,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      response.status(success ? 200 : 422).json({ build: runtime.build });
-    } catch (error) {
-      if (runtime) {
-        runtime.build = {
-          ...runtime.build,
-          status: "error",
-          finishedAt: new Date().toISOString(),
-          log: error.message,
-        };
-        database.saveBuild(runtime.id, runtime.build);
-      }
-      next(error);
-    } finally {
-      if (workDir) await rm(workDir, { recursive: true, force: true });
-    }
+      let result = await compileProject(runtime, main);
+      if (result.build.main !== main) result = await compileProject(runtime, main);
+      response.status(result.success ? 200 : 422).json({ build: result.build });
+    } catch (error) { next(error); }
   });
 
   app.use(express.static(path.join(APP_DIR, "dist"), { index: false, maxAge: "1y", immutable: true }));
