@@ -917,7 +917,7 @@ do not store unrelated secrets in project directories.
 }
 
 function safeProjectId(value) {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
     throw apiError("invalid_project", "project id is invalid");
   }
   return value;
@@ -928,15 +928,6 @@ function cleanProjectName(value) {
   const name = value.replace(/\s+/g, " ").trim();
   if (!name || name.length > 80) throw apiError("invalid_project_name", "project name must contain 1 to 80 characters");
   return name;
-}
-
-function projectSlug(name) {
-  const slug = name.toLowerCase().normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
-  return slug || "project";
 }
 
 export async function createPaperServer(options: any = {}) {
@@ -1084,10 +1075,8 @@ export async function createPaperServer(options: any = {}) {
 
   async function createProject(name, ownerUsername) {
     name = cleanProjectName(name);
-    const base = projectSlug(name);
-    let id = base;
-    let suffix = 2;
-    while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = `${base.slice(0, 58)}-${suffix++}`;
+    let id = randomUUID();
+    while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomUUID();
     const projectRoot = path.join(projectsDir, id);
     const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });

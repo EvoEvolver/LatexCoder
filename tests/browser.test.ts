@@ -273,13 +273,14 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#action-input").fill("Compact Project");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Compact Project");
-    await page.waitForURL(/\/projects\/compact-project$/);
-    assert.match(page.url(), /\/projects\/compact-project$/);
+    await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
+    const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
+    assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
-    assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/compact-project/[A-Za-z0-9_-]+$`));
-    assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/compact-project/[A-Za-z0-9_-]+$`));
+    assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
+    assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
     await page.locator("#access-close").click();
 
     await page.locator("#new-file").click();
@@ -330,17 +331,19 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
     const shareLink = await page.locator("#share-link").inputValue();
+    const projectId = new URL(shareLink).pathname.split("/")[2];
+    assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
     const guest = await browser.newPage();
     await guest.goto(shareLink);
-    await guest.waitForURL(/\/projects\/paper$/);
+    await guest.waitForURL(`${base}/projects/${projectId}`);
     await guest.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await guest.locator("#back-projects").isHidden(), true);
     assert.equal(await guest.locator("#editor-login").isVisible(), true);
     assert.equal(await guest.evaluate(() => fetch("/v1/projects").then(response => response.status)), 401);
 
     const uninvited = await browser.newPage();
-    await uninvited.goto(`${base}/projects/paper`);
+    await uninvited.goto(`${base}/projects/${projectId}`);
     await uninvited.locator("#auth-page").waitFor();
     assert.equal(await uninvited.locator("#auth-title").textContent(), "Sign in");
 
@@ -357,7 +360,7 @@ test("login, invitations, and capability links separate members from guests", as
     assert.equal(await invited.locator(".project-row").count(), 0);
 
     await invited.goto(shareLink);
-    await invited.waitForURL(/\/projects\/paper$/);
+    await invited.waitForURL(`${base}/projects/${projectId}`);
     await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await invited.locator("#back-projects").isVisible(), true);
     assert.equal(await invited.locator("#share-project").isHidden(), true);

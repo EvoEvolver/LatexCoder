@@ -84,7 +84,8 @@ additional team members; invitations expire after seven days.
 
 Signed-in users open on a dedicated dashboard containing only projects they own
 and can create new projects under their account. Being signed in does not grant
-access to another user's projects.
+access to another user's projects. Project URLs use generated UUIDs that are
+independent of display names, so renaming a project never changes its URL.
 Guests enter through `/share/<project-id>/<secret>`; the server exchanges that
 secret for a 24-hour, project-scoped HttpOnly session and redirects to the clean
 editor URL `/projects/<project-id>`. Guests can edit that project but cannot list
@@ -136,8 +137,8 @@ and build routes take a `project=<id>` query parameter. Agents must provide a
 member session or exchange a project share link for a scoped cookie. For example:
 
 ```sh
-curl -c session.txt -L 'http://127.0.0.1:8090/share/my-paper/<share-secret>'
-curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=my-paper'
+curl -c session.txt -L 'http://127.0.0.1:8090/share/<project-uuid>/<share-secret>'
+curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=<project-uuid>'
 ```
 
 Agents can submit checked UTF-16 edits through

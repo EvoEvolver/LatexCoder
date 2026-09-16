@@ -123,7 +123,7 @@ test("root negotiates Agent and human representations", async () => {
 
     const browser = await fetch(`${base}/`, { headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" } });
     assert.match(browser.headers.get("content-type"), /^text\/html/);
-    const sharedProject = await fetch(`${base}/projects/paper`);
+    const sharedProject = await fetch(`${base}/projects/00000000-0000-4000-8000-000000000000`);
     assert.match(sharedProject.headers.get("content-type"), /^text\/html/);
     assert.match(await sharedProject.text(), /id="root"/);
     const agentOverride = await fetch(`${base}/`, {
@@ -163,7 +163,8 @@ test("projects isolate files and support lifecycle operations", async () => {
     });
     assert.equal(createdResponse.status, 201);
     const created = (await createdResponse.json()).project;
-    assert.equal(created.id, "second-paper");
+    assert.match(created.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(created.id, "second-paper");
 
     const write = await fetch(`${base}/v1/files?project=${created.id}&path=notes.tex`, {
       method: "PUT",
@@ -179,7 +180,10 @@ test("projects isolate files and support lifecycle operations", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Revised Paper" }),
     });
-    assert.equal((await renamed.json()).project.name, "Revised Paper");
+    const renamedProject = (await renamed.json()).project;
+    assert.equal(renamedProject.name, "Revised Paper");
+    assert.equal(renamedProject.id, created.id);
+    assert.match((await fetch(`${base}/projects/${created.id}`)).headers.get("content-type"), /^text\/html/);
 
     const deleted = await fetch(`${base}/v1/projects/${created.id}`, { method: "DELETE" });
     assert.equal(deleted.status, 200);
@@ -520,9 +524,10 @@ test("SQLite is authoritative and legacy or stray directories are ignored", asyn
   const paper = await createPaperServer({ stateDir, authDisabled: true });
   try {
     const projects = paper.database.listProjects();
-    assert.deepEqual(projects.map(project => project.id), ["paper"]);
-    assert.notEqual(await readFile(path.join(stateDir, "projects", "paper", "project", "main.tex"), "utf8"), "stray source\n");
-    assert.equal(paper.projectDir, path.join(stateDir, "projects", "paper", "project"));
+    assert.equal(projects.length, 1);
+    assert.match(projects[0].id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(await readFile(path.join(stateDir, "projects", projects[0].id, "project", "main.tex"), "utf8"), "stray source\n");
+    assert.equal(paper.projectDir, path.join(stateDir, "projects", projects[0].id, "project"));
   } finally {
     paper.shutdown();
     paper.sockets.close();
@@ -658,7 +663,7 @@ test("patch API validates all ranges before changing a file", async () => {
 });
 
 test("two Yjs clients collaborate and persist plain LaTeX plus a SQLite snapshot", async () => {
-  await withServer(async ({ ws, stateDir, projectDir, collaboration }) => {
+  await withServer(async ({ ws, stateDir, projectDir, collaboration, database: stateDatabase }) => {
     const room = Buffer.from("main.tex").toString("base64url");
     const firstDoc = new Y.Doc();
     const secondDoc = new Y.Doc();
@@ -669,8 +674,9 @@ test("two Yjs clients collaborate and persist plain LaTeX plus a SQLite snapshot
     await waitFor(() => secondDoc.getText("content").toString().endsWith("% collaborative edit\n"));
     collaboration.flush();
     assert.match(await readFile(path.join(projectDir, "main.tex"), "utf8"), /% collaborative edit\n$/);
+    const projectId = stateDatabase.listProjects()[0].id;
     const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
-    const snapshot = database.prepare("SELECT length(snapshot) AS bytes FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?").get("paper", "main.tex") as any;
+    const snapshot = database.prepare("SELECT length(snapshot) AS bytes FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?").get(projectId, "main.tex") as any;
     assert.ok(snapshot.bytes > 0);
     database.close();
     first.destroy();
