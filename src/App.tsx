@@ -5,7 +5,7 @@ import {
   MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, TerminalSquare, Trash2,
   ClipboardPaste, Redo2, Scissors, ScanText, Search, Settings, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";

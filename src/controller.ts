@@ -10,7 +10,7 @@ import {
 } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension, type TransactionSpec } from "@codemirror/state";
 import {
   crosshairCursor,
   Decoration,
@@ -65,17 +65,18 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/build/pdf.mjs";
+import { getDocument, GlobalWorkerOptions, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { yCollab, ySyncAnnotation, yUndoManagerKeymap } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
 import { IndexeddbPersistence } from "y-indexeddb";
+import { Awareness } from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { diffLines } from "diff";
 import * as Y from "yjs";
 
-import { parseReviews, stripReviewStorage } from "./review.ts";
+import { parseReviews, stripReviewStorage, type ReviewItem } from "./review.ts";
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "./references.ts";
 import { compileErrors } from "./compile-errors.ts";
 
@@ -130,7 +131,105 @@ createIcons({ icons: ICONS });
 const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
-const elements: Record<string, any> = Object.fromEntries([
+type ProjectFile = { path: string; size: number; text: boolean };
+type ProjectSummary = { id: string; name: string; createdAt?: string; membership?: string; permissions?: { manage?: boolean; collaborate?: boolean } };
+type CurrentUser = { username: string; displayName: string };
+type EditorSettings = { main: string; autoCompile: boolean; compiler: string };
+type GitFile = { index: string; worktree: string; path: string };
+type GitCommit = { shortId: string; author: string; date: string; subject: string };
+type GitState = {
+  branch: string;
+  dirty: boolean;
+  files: GitFile[];
+  history: GitCommit[];
+  status?: string;
+  conflict?: { branch: string } | null;
+};
+type PdfBox = { page: number; left: number; top: number; width: number; height: number };
+type AppState = {
+  activeFile: string;
+  projectId: string;
+  projects: ProjectSummary[];
+  user: CurrentUser | null;
+  bootstrapReady: boolean;
+  projectCanManage: boolean;
+  accessShareId: string;
+  git: GitState | null;
+  main: string;
+  files: ProjectFile[];
+  folders: string[];
+  settings: EditorSettings | null;
+  view: EditorView | null;
+  doc: Y.Doc | null;
+  provider: WebsocketProvider | null;
+  persistence: IndexeddbPersistence | null;
+  unsaved: boolean;
+  pdfDocument: PDFDocumentProxy | null;
+  pdfLoadingTask: PDFDocumentLoadingTask | null;
+  pdfRequestVersion: number;
+  pdfRenderVersion: number;
+  pdfZoom: number;
+  pdfSourceRevision: string | null;
+  pdfHighlights: { boxes: PdfBox[]; expires: number } | null;
+  filePreviewDocument: PDFDocumentProxy | null;
+  filePreviewLoadingTask: PDFDocumentLoadingTask | null;
+  filePreviewVersion: number;
+  filePreviewZoom: number;
+  reviewSelection: { from: number; to: number; selected: string } | null;
+  selectionSuggestionIds: string[];
+  suggesting: boolean;
+  toastTimer: ReturnType<typeof setTimeout> | null;
+};
+type DialogOptions = {
+  title: string;
+  label?: string;
+  value?: string;
+  maxLength?: number;
+  message?: string;
+  submitLabel: string;
+  danger?: boolean;
+  zip?: boolean;
+};
+type ReviewDecision = "accept" | "reject" | "resolve";
+type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
+type ShareDetails = { id: string; path: string; agentPath: string; clonePath: string };
+type ProjectMember = { username: string; role: string };
+type BuildInfo = { log: string; pdf?: boolean; errors?: ReturnType<typeof compileErrors>; stale?: boolean; sourceRevision?: string | null };
+type ProjectDetail = ProjectSummary & {
+  main: string;
+  files: ProjectFile[];
+  folders: string[];
+  settings: EditorSettings;
+  build: BuildInfo;
+  permissions?: { manage?: boolean; collaborate?: boolean };
+};
+type SourcePosition = { path: string; line: number; from?: number; to?: number };
+type PdfPosition = { page: number; x: number; y: number; revision: string; boxes?: PdfBox[] };
+type ReplacementPreview = { path: string; baseSha256: string; before: string; source: string };
+type SearchMatch = { path: string; line: number; from: number; to: number; text: string };
+type AppElement = HTMLElement & {
+  value: string;
+  disabled: boolean;
+  required: boolean;
+  maxLength: number;
+  href: string;
+  download: string;
+  open: boolean;
+  autocomplete: string;
+  files: FileList | null;
+  naturalWidth: number;
+  naturalHeight: number;
+  src: string;
+  alt: string;
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  showModal(): void;
+  close(): void;
+  select(): void;
+  reportValidity(): boolean;
+};
+
+const elements = Object.fromEntries([
   "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
@@ -144,19 +243,19 @@ const elements: Record<string, any> = Object.fromEntries([
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
-].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
+].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
-const apiUrl = relative => new URL(`/${String(relative).replace(/^\//, "")}`, window.location.origin);
+const apiUrl = (relative: string): URL => new URL(`/${relative.replace(/^\//, "")}`, window.location.origin);
 const IMAGE_PREVIEW_PATTERN = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-const socketUrl = relative => {
+const socketUrl = (relative: string): string => {
   const url = apiUrl(relative);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString().replace(/\/$/, "");
 };
 
 const palette = ["#236b59", "#98602b", "#7455a5", "#2c6e9d", "#a14960", "#55713a", "#855b43", "#39716e"];
-const state: any = {
+const state: AppState = {
   activeFile: "main.tex",
   projectId: "",
   projects: [],
@@ -167,14 +266,20 @@ const state: any = {
   git: null,
   main: "main.tex",
   files: [],
+  folders: [],
+  settings: null,
   view: null,
   doc: null,
   provider: null,
+  persistence: null,
+  unsaved: false,
   pdfDocument: null,
   pdfLoadingTask: null,
   pdfRequestVersion: 0,
   pdfRenderVersion: 0,
   pdfZoom: 1,
+  pdfSourceRevision: null,
+  pdfHighlights: null,
   filePreviewDocument: null,
   filePreviewLoadingTask: null,
   filePreviewVersion: 0,
@@ -209,21 +314,21 @@ function scheduleAutoCompile() {
   }, 1200);
 }
 
-function hash(value) {
+function hash(value: string): number {
   let result = 0;
   for (const character of value) result = ((result << 5) - result + character.charCodeAt(0)) | 0;
   return Math.abs(result);
 }
 
-function colorFor(name) {
+function colorFor(name: string): string {
   return palette[hash(name) % palette.length];
 }
 
-function displayName() {
+function displayName(): string {
   return state.user?.displayName || elements.display_name.value.trim() || "Guest";
 }
 
-function syncAccountUi() {
+function syncAccountUi(): void {
   const registered = Boolean(state.user);
   elements.guest_name_field.hidden = registered;
   elements.editor_account_button.hidden = !registered;
@@ -231,7 +336,7 @@ function syncAccountUi() {
   elements.editor_account_name.textContent = state.user?.displayName || state.user?.username || "";
 }
 
-function openAccountPanel() {
+function openAccountPanel(): void {
   if (!state.user) return;
   elements.account_username.value = state.user.username;
   elements.account_display_name.value = state.user.displayName || state.user.username;
@@ -239,14 +344,14 @@ function openAccountPanel() {
   queueMicrotask(() => elements.account_display_name.select());
 }
 
-function encodeRoom(relativePath) {
+function encodeRoom(relativePath: string): string {
   const bytes = new TextEncoder().encode(relativePath);
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function showToast(message) {
+function showToast(message: string): void {
   if (testMode) return;
   clearTimeout(state.toastTimer);
   elements.toast.textContent = message;
@@ -254,7 +359,7 @@ function showToast(message) {
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
 }
 
-function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false }) {
+function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false }: DialogOptions): Promise<string | boolean | null> {
   document.querySelector("#project-zip-field")?.remove();
   if (zip) {
     const field = document.createElement("label");
@@ -286,7 +391,7 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
 
   return new Promise(resolve => {
     let settled = false;
-    const finish = result => {
+    const finish = (result: string | boolean | null): void => {
       if (settled) return;
       settled = true;
       elements.action_form.removeEventListener("submit", submit);
@@ -296,13 +401,13 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
       elements.action_dialog.close();
       resolve(result);
     };
-    const submit = event => {
+    const submit = (event: Event): void => {
       event.preventDefault();
       const result = hasInput ? elements.action_input.value.trim() : true;
-      if (hasInput && !result) return elements.action_input.reportValidity();
+      if (hasInput && !result) { elements.action_input.reportValidity(); return; }
       finish(result);
     };
-    const cancel = event => {
+    const cancel = (event: Event): void => {
       event.preventDefault();
       finish(null);
     };
@@ -346,7 +451,7 @@ function renderSelectionActions() {
   menu.style.top = `${top}px`;
 }
 
-async function request(relative, options = {}): Promise<any> {
+async function request<T = unknown>(relative: string, options: RequestInit = {}): Promise<T> {
   const url = apiUrl(relative);
   if (state.projectId && url.pathname.startsWith("/v1/") && !url.pathname.startsWith("/v1/projects")) {
     url.searchParams.set("project", state.projectId);
@@ -355,21 +460,23 @@ async function request(relative, options = {}): Promise<any> {
   const type = response.headers.get("content-type") || "";
   const body = type.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
-    const error: any = new Error(body?.error?.message || body || `Request failed (${response.status})`);
-    error.code = body?.error?.code || "request_failed";
-    error.status = response.status;
+    const payload = body && typeof body === "object" ? body as { error?: { message?: string; code?: string } } : null;
+    const error = Object.assign(
+      new Error(payload?.error?.message || (typeof body === "string" ? body : `Request failed (${response.status})`)),
+      { code: payload?.error?.code || "request_failed", status: response.status },
+    );
     throw error;
   }
-  return body;
+  return body as T;
 }
 
-function projectApiUrl(relative) {
+function projectApiUrl(relative: string): URL {
   const url = apiUrl(relative);
   if (state.projectId) url.searchParams.set("project", state.projectId);
   return url;
 }
 
-function fileIcon(file) {
+function fileIcon(file: ProjectFile): string {
   if (IMAGE_PREVIEW_PATTERN.test(file.path)) return "image";
   if (/\.pdf$/i.test(file.path)) return "file-check-2";
   return file.text ? "file-text" : "file";
@@ -505,18 +612,18 @@ class RevisionDeletionWidget extends WidgetType {
   author: string;
   text: string;
 
-  constructor(id, author, text) {
+  constructor(id: string, author: string, text: string) {
     super();
     this.id = id;
     this.author = author;
     this.text = text;
   }
 
-  eq(other) {
+  eq(other: RevisionDeletionWidget): boolean {
     return other.id === this.id && other.author === this.author && other.text === this.text;
   }
 
-  toDOM() {
+  toDOM(): HTMLElement {
     const deletion = document.createElement("span");
     deletion.className = "cm-review-deletion";
     deletion.textContent = this.text;
@@ -524,10 +631,10 @@ class RevisionDeletionWidget extends WidgetType {
     return deletion;
   }
 
-  ignoreEvent() { return true; }
+  ignoreEvent(): boolean { return true; }
 }
 
-function buildReviewDecorations(editorState) {
+function buildReviewDecorations(editorState: EditorState) {
   const ranges = [];
   for (const item of parseReviews(editorState.doc.toString())) {
     ranges.push(Decoration.replace({}).range(item.from, item.bodyFrom));
@@ -556,7 +663,7 @@ const reviewDecorations = StateField.define({
   provide: field => EditorView.decorations.from(field),
 });
 
-function tooltipButton(label, action) {
+function tooltipButton(label: string, action: () => void): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = label;
@@ -620,9 +727,9 @@ const reviewTooltip = hoverTooltip((view, position) => {
   };
 }, { hoverTime: 220, hideOnChange: true });
 
-function trackedSuggestion(transaction, reviews) {
-  const changes = [];
-  transaction.changes.iterChanges((from, to, _newFrom, _newTo, inserted) => {
+function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Transaction | TransactionSpec | readonly TransactionSpec[] {
+  const changes: Array<{ from: number; to: number; inserted: string }> = [];
+  transaction.changes.iterChanges((from: number, to: number, _newFrom: number, _newTo: number, inserted) => {
     changes.push({ from, to, inserted: inserted.toString() });
   });
   if (changes.length !== 1) {
@@ -859,7 +966,7 @@ window.addEventListener("keydown", event => { if (event.key === referenceModifie
 window.addEventListener("keyup", event => { if (event.key === referenceModifier) setReferenceControl(false); }, true);
 window.addEventListener("blur", () => setReferenceControl(false));
 
-function editorExtensions(ytext, provider) {
+function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
     lineNumbers(),
@@ -1045,7 +1152,7 @@ async function renderFilePdf() {
   elements.binary_status.textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`;
 }
 
-function showFilePreviewFallback(relativePath, message = "Preview unavailable") {
+function showFilePreviewFallback(relativePath: string, message = "Preview unavailable"): void {
   elements.binary_kind.textContent = "Binary file";
   elements.binary_status.textContent = message;
   elements.binary_name.textContent = relativePath;
@@ -1054,13 +1161,13 @@ function showFilePreviewFallback(relativePath, message = "Preview unavailable") 
   elements.file_preview_zoom_out.disabled = true;
 }
 
-async function showFilePreview(file) {
+async function showFilePreview(file: ProjectFile): Promise<void> {
   resetFilePreview();
   const relativePath = file.path;
   const url = projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`);
-  elements.binary_download.href = url;
+  elements.binary_download.href = url.toString();
   elements.binary_download.download = relativePath.split("/").at(-1);
-  elements.binary_fallback_download.href = url;
+  elements.binary_fallback_download.href = url.toString();
   elements.binary_fallback_download.download = relativePath.split("/").at(-1);
   elements.file_preview_zoom_in.disabled = false;
   elements.file_preview_zoom_out.disabled = false;
@@ -1134,7 +1241,7 @@ function setAwareness() {
   state.provider.awareness.setLocalStateField("user", { name, color, colorLight: `${color}33` });
 }
 
-async function openFile(relativePath) {
+async function openFile(relativePath: string): Promise<void> {
   const file = state.files.find(candidate => candidate.path === relativePath);
   if (!file) return;
   elements.files_pane.classList.remove("mobile-open");
@@ -1190,7 +1297,7 @@ async function openFile(relativePath) {
     state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
     parent: elements.editor,
   });
-  provider.on("status", ({ status }) => {
+  provider.on("status", () => {
     if (state.provider === provider) updateSyncStatus();
   });
   provider.on("sync", synced => {
@@ -1205,7 +1312,7 @@ async function openFile(relativePath) {
   setAwareness();
 }
 
-function applyReviewDecisions(ids, decision) {
+function applyReviewDecisions(ids: string[], decision: ReviewDecision): void {
   if (!state.view) return;
   const selected = new Set(ids);
   const items = parseReviews(state.view.state.doc.toString()).filter(candidate => selected.has(candidate.id));
@@ -1222,11 +1329,11 @@ function applyReviewDecisions(ids, decision) {
   renderSelectionActions();
 }
 
-function applyReviewDecision(id, decision) {
+function applyReviewDecision(id: string, decision: ReviewDecision): void {
   applyReviewDecisions([id], decision);
 }
 
-function appendCommentReply(threadId, value) {
+function appendCommentReply(threadId: string, value: string): boolean {
   if (!state.view || !value.trim()) return false;
   const thread = parseReviews(state.view.state.doc.toString())
     .find(item => item.kind === "comment" && item.id === threadId);
@@ -1243,20 +1350,20 @@ function appendCommentReply(threadId, value) {
   return true;
 }
 
-function openCommentThread(threadId, reply = false) {
+function openCommentThread(threadId: string, reply = false): void {
   selectOutput("review");
   elements.output_pane.classList.add("mobile-open");
   renderReviews();
-  const article = [...elements.review_list.querySelectorAll(".review-item")]
+  const article = [...elements.review_list.querySelectorAll<HTMLElement>(".review-item")]
     .find(candidate => candidate.dataset.reviewId === threadId && candidate.dataset.filePath === state.activeFile);
   if (!article) return;
   article.scrollIntoView({ block: "nearest", behavior: "smooth" });
   article.classList.add("ring-2", "ring-primary");
   setTimeout(() => article.classList.remove("ring-2", "ring-primary"), 1200);
-  if (reply) article.querySelector("[data-comment-reply]")?.click();
+  if (reply) article.querySelector<HTMLElement>("[data-comment-reply]")?.click();
 }
 
-function reviewButton(label, action) {
+function reviewButton(label: string, action: () => void | Promise<void>): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "h-7 rounded-md border bg-background px-2.5 text-[11px] font-medium hover:bg-accent";
   button.textContent = label;
@@ -1267,7 +1374,7 @@ function reviewButton(label, action) {
   return button;
 }
 
-function openReplyComposer(article, threadId) {
+function openReplyComposer(article: HTMLElement, threadId: string): void {
   const existing = article.querySelector(".comment-reply-form");
   if (existing) return existing.querySelector("textarea").focus();
   const form = document.createElement("form");
@@ -1310,7 +1417,7 @@ function renderReviews() {
   if (!state.projectId) return;
   const projectId = state.projectId;
   const version = ++reviewRequestVersion;
-  request("v1/reviews").then(result => {
+  request<{ files: typeof projectReviewFiles }>("v1/reviews").then(result => {
     if (state.projectId !== projectId || version !== reviewRequestVersion) return;
     projectReviewFiles = result.files;
     drawReviews();
@@ -1331,13 +1438,13 @@ async function selectReviewFile(filePath: string) {
 }
 
 function drawReviews() {
-  const composer = elements.review_list.querySelector(".comment-reply-form");
-  if (composer && composer.closest(".review-item")?.dataset.filePath === state.activeFile) return;
+  const composer = elements.review_list.querySelector<HTMLElement>(".comment-reply-form");
+  if (composer && composer.closest<HTMLElement>(".review-item")?.dataset.filePath === state.activeFile) return;
   const files = projectReviewFiles.filter(file => file.path !== state.activeFile);
   if (state.view) files.unshift({ path: state.activeFile, reviews: parseReviews(state.view.state.doc.toString()) });
-  const groups = [];
+  const groups: ReviewGroup[] = [];
   for (const file of files) {
-    const revisions = new Map();
+    const revisions = new Map<string, ReviewGroup>();
     for (const item of file.reviews) {
     if (item.kind === "comment" || item.kind === "revision") {
       groups.push({ id: item.id, path: file.path, kind: item.kind === "comment" ? "comment" : "revision", items: [item] });
@@ -1372,7 +1479,7 @@ function drawReviews() {
     path.className = "mb-2 truncate font-mono text-[11px] text-muted-foreground";
     path.textContent = group.path;
     path.title = group.path;
-    const decide = async (decision: string) => {
+    const decide = async (decision: ReviewDecision): Promise<void> => {
       if (await selectReviewFile(group.path)) applyReviewDecision(group.id, decision);
     };
     const meta = document.createElement("div");
@@ -1419,7 +1526,7 @@ function drawReviews() {
       const reply = reviewButton("Reply", async () => {
         if (!await selectReviewFile(group.path)) return;
         drawReviews();
-        const current = [...elements.review_list.querySelectorAll(".review-item")].find(candidate => candidate.dataset.reviewId === group.id && candidate.dataset.filePath === group.path);
+        const current = [...elements.review_list.querySelectorAll<HTMLElement>(".review-item")].find(candidate => candidate.dataset.reviewId === group.id && candidate.dataset.filePath === group.path);
         if (current) openReplyComposer(current, group.id);
       });
       reply.dataset.commentReply = "";
@@ -1442,13 +1549,13 @@ function drawReviews() {
   }
 }
 
-let reviewRenderTimer;
-function queueReviewRender() {
+let reviewRenderTimer: ReturnType<typeof setTimeout> | undefined;
+function queueReviewRender(): void {
   clearTimeout(reviewRenderTimer);
   reviewRenderTimer = setTimeout(renderReviews, 120);
 }
 
-function cleanMetadata(value) {
+function cleanMetadata(value: string): string {
   return value.replaceAll("\\", "/").replace(/[{}%#]/g, " ").replace(/\s+/g, " ").trim();
 }
 
@@ -1469,7 +1576,7 @@ function openReviewDialog() {
   elements.review_text.select();
 }
 
-elements.review_form.addEventListener("submit", event => {
+elements.review_form.addEventListener("submit", (event: Event) => {
   event.preventDefault();
   const review = state.reviewSelection;
   const value = elements.review_text.value;
@@ -1493,7 +1600,7 @@ function randomId() {
 }
 
 async function refreshProject(open = false) {
-  const data = await request("v1/project");
+  const data = await request<{ project: ProjectDetail }>("v1/project");
   const known = state.projects.find(project => project.id === data.project.id);
   if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt });
   else if (state.user) {
@@ -1575,14 +1682,14 @@ function renderProjects() {
 }
 
 async function refreshProjects(preferredId = "") {
-  const data = await request("v1/projects");
+  const data = await request<{ projects: ProjectSummary[]; defaultProjectId?: string }>("v1/projects");
   state.projects = data.projects;
   if (preferredId && state.projects.some(project => project.id === preferredId)) state.projectId = preferredId;
   renderProjects();
   return data;
 }
 
-function projectPageUrl(projectId) {
+function projectPageUrl(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
 
@@ -1636,7 +1743,7 @@ function showProjectsPage(push = true) {
   document.title = "Projects · LaTeX Coder";
 }
 
-async function openProjectPage(projectId, push = true) {
+async function openProjectPage(projectId: string, push = true): Promise<void> {
   const project = state.projects.find(candidate => candidate.id === projectId)
     || { id: projectId, name: projectId };
   if (!project) {
@@ -1653,7 +1760,7 @@ async function openProjectPage(projectId, push = true) {
   elements.editor_page.hidden = false;
   state.projectId = projectId;
   elements.project_name.textContent = project.name;
-  elements.download_project.href = projectApiUrl("v1/project/archive");
+  elements.download_project.href = projectApiUrl("v1/project/archive").toString();
   elements.download_project.download = `${project.id}.zip`;
   state.projectCanManage = false;
   elements.share_project.hidden = true;
@@ -1722,7 +1829,7 @@ async function renderPdf(priorityPage?: number) {
     const navigateSource = async (x: number, y: number) => {
       if (state.projectId !== projectId || !canvas.isConnected) return;
       try {
-        const destination = await request("v1/build/source", {
+        const destination = await request<SourcePosition>("v1/build/source", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ page: pageNumber, x, y, revision }),
         });
@@ -1788,7 +1895,7 @@ async function showPdf(force = false, priorityPage?: number) {
   const downloadUrl = projectApiUrl("v1/build/pdf");
   downloadUrl.searchParams.set("v", String(Date.now()));
   downloadUrl.searchParams.set("cached", "1");
-  elements.pdf_download.href = downloadUrl;
+  elements.pdf_download.href = downloadUrl.toString();
   elements.pdf_status.textContent = "Loading PDF";
   elements.empty_output.hidden = false;
   try {
@@ -1831,7 +1938,7 @@ async function compile() {
   elements.compile_button.setAttribute("aria-busy", "true");
   elements.sync_state.textContent = "Compiling";
   try {
-    const result = await request("v1/compile", {
+    const result = await request<{ build: BuildInfo }>("v1/compile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ main: state.main }),
@@ -1844,7 +1951,7 @@ async function compile() {
     elements.output_pane.classList.add("mobile-open");
     showToast("PDF compiled.");
   } catch (error) {
-    const build = await request("v1/build").catch(() => null);
+    const build = await request<{ build: BuildInfo }>("v1/build").catch((): null => null);
     if (state.projectId !== project) return;
     elements.build_output.textContent = build?.build?.log || error.message;
     renderBuildErrors(build?.build?.log || error.message, build?.build?.errors);
@@ -1873,7 +1980,7 @@ async function refreshPdfStatus() {
   const project = state.projectId;
   if (!project || !state.pdfDocument) return;
   try {
-    const { build } = await request("v1/build");
+    const { build } = await request<{ build: BuildInfo }>("v1/build");
     if (project !== state.projectId) return;
     const freshness = document.getElementById("pdf-freshness")!;
     freshness.hidden = false;
@@ -1899,7 +2006,7 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
   }
 }
 
-function selectOutput(name) {
+function selectOutput(name: "pdf" | "review"): void {
   document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.classList.toggle("active", button.dataset.output === name));
   elements.pdf_view.hidden = name !== "pdf";
   elements.review_pane.hidden = name !== "review";
@@ -1910,7 +2017,7 @@ setInterval(() => {
   if (state.projectId && !elements.review_pane.hidden && !document.hidden) renderReviews();
 }, 3000);
 
-function renderGitStatus(gitState) {
+function renderGitStatus(gitState: GitState): void {
   state.git = gitState;
   elements.git_dirty.hidden = !gitState.dirty;
   elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"}`;
@@ -1956,7 +2063,7 @@ function renderGitStatus(gitState) {
 
 async function refreshGit(showErrors = true) {
   try {
-    const result = await request("v1/git");
+    const result = await request<{ git: GitState }>("v1/git");
     renderGitStatus(result.git);
     return result.git;
   } catch (error) {
@@ -1965,12 +2072,12 @@ async function refreshGit(showErrors = true) {
   }
 }
 
-async function runGitAction(endpoint, body, successMessage) {
+async function runGitAction(endpoint: string, body: Record<string, unknown>, successMessage: string) {
   const buttons = [elements.git_commit, elements.git_resolve, elements.git_refresh];
   buttons.forEach(button => { button.disabled = true; });
   elements.sync_state.textContent = "Git operation";
   try {
-    const result = await request(endpoint, {
+    const result = await request<{ git: GitState }>(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1988,14 +2095,14 @@ async function runGitAction(endpoint, body, successMessage) {
   }
 }
 
-function downloadProject(projectId) {
+function downloadProject(projectId: string): void {
   const link = document.createElement("a");
   link.href = `${window.location.origin}/v1/project/archive?project=${encodeURIComponent(projectId)}`;
   link.download = `${projectId}.zip`;
   link.click();
 }
 
-async function renameProject(project) {
+async function renameProject(project: ProjectSummary): Promise<void> {
   const name = await openActionDialog({
     title: "Rename project",
     label: "Project name",
@@ -2012,14 +2119,14 @@ async function renameProject(project) {
     });
     await refreshProjects(project.id);
     if (state.projectId === project.id) {
-      elements.project_name.textContent = name;
+      elements.project_name.textContent = String(name);
       document.title = `${name} · LaTeX Coder`;
     }
     showToast("Project renamed.");
   } catch (error) { showToast(error.message); }
 }
 
-async function deleteProject(project) {
+async function deleteProject(project: ProjectSummary): Promise<void> {
   const confirmed = await openActionDialog({
     title: "Delete project",
     message: `Delete “${project.name}” and all of its files? This cannot be undone.`,
@@ -2037,7 +2144,7 @@ async function deleteProject(project) {
   } catch (error) { showToast(error.message); }
 }
 
-async function copyText(value, message) {
+async function copyText(value: string, message: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
   } catch {
@@ -2051,7 +2158,7 @@ async function copyText(value, message) {
   showToast(message);
 }
 
-function displayAccessShare(share) {
+function displayAccessShare(share: ShareDetails): void {
   state.accessShareId = share.id;
   const shareUrl = `${window.location.origin}${share.path}`;
   const agentUrl = `${window.location.origin}${share.agentPath}`;
@@ -2063,8 +2170,8 @@ function displayAccessShare(share) {
 }
 
 async function refreshProjectMembers() {
-  const result = await request("v1/project/members");
-  elements.collaborator_list.replaceChildren(...result.members.map(member => {
+  const result = await request<{ members: ProjectMember[] }>("v1/project/members");
+  elements.collaborator_list.replaceChildren(...result.members.map((member: ProjectMember) => {
     const row = document.createElement("div");
     row.className = "flex items-center justify-between gap-3 rounded bg-muted px-2 py-1.5";
     const name = document.createElement("span");
@@ -2080,11 +2187,11 @@ async function refreshProjectMembers() {
 async function openAccessDialog() {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
-  const result = await request("v1/project/share", { method: "POST" });
+  const result = await request<{ share: ShareDetails }>("v1/project/share", { method: "POST" });
   displayAccessShare(result.share);
   await refreshProjectMembers();
   elements.access_project_name.textContent = project.name;
-  elements.access_download.href = projectApiUrl("v1/project/archive");
+  elements.access_download.href = projectApiUrl("v1/project/archive").toString();
   elements.access_download.download = `${project.id}.zip`;
   elements.access_dialog.showModal();
 }
@@ -2101,7 +2208,7 @@ async function rotateShareSecret() {
     elements.access_dialog.showModal();
     return;
   }
-  const result = await request("v1/project/share/rotate", { method: "POST" });
+  const result = await request<{ share: ShareDetails }>("v1/project/share/rotate", { method: "POST" });
   displayAccessShare(result.share);
   elements.access_dialog.showModal();
   showToast("Your secret was rotated. Previous links no longer work.");
@@ -2116,7 +2223,7 @@ async function enterProjectDashboard(replace = false) {
 
 async function createInvitation() {
   try {
-    const result = await request("v1/invitations", { method: "POST" });
+    const result = await request<{ invitation: { path: string } }>("v1/invitations", { method: "POST" });
     elements.invite_link.value = `${window.location.origin}${result.invitation.path}`;
     if (!elements.invite_dialog.open) elements.invite_dialog.showModal();
     elements.invite_link.select();
@@ -2133,15 +2240,15 @@ elements.account_button.addEventListener("click", openAccountPanel);
 elements.editor_account_button.addEventListener("click", openAccountPanel);
 elements.account_close.addEventListener("click", () => elements.account_dialog.close());
 elements.account_cancel.addEventListener("click", () => elements.account_dialog.close());
-elements.account_dialog.addEventListener("cancel", event => {
+elements.account_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.account_dialog.close();
 });
-elements.account_form.addEventListener("submit", async event => {
+elements.account_form.addEventListener("submit", async (event: Event) => {
   event.preventDefault();
   elements.account_save.disabled = true;
   try {
-    const result = await request("v1/users/me", {
+    const result = await request<{ user: CurrentUser }>("v1/users/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ displayName: elements.account_display_name.value }),
@@ -2157,13 +2264,13 @@ elements.account_form.addEventListener("submit", async event => {
     elements.account_save.disabled = false;
   }
 });
-elements.auth_form.addEventListener("submit", async event => {
+elements.auth_form.addEventListener("submit", async (event: Event) => {
   event.preventDefault();
   elements.auth_submit.disabled = true;
   elements.auth_error.hidden = true;
   try {
     const token = routeInvitationToken();
-    const result = await request(token ? "v1/auth/register" : "v1/auth/login", {
+    const result = await request<{ user: CurrentUser }>(token ? "v1/auth/register" : "v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2188,13 +2295,13 @@ elements.editor_login.addEventListener("click", () => {
   showAuthPage();
 });
 elements.share_project.addEventListener("click", () => openAccessDialog().catch(error => showToast(error.message)));
-elements.download_project.addEventListener("click", event => {
+elements.download_project.addEventListener("click", (event: Event) => {
   event.preventDefault();
   downloadProject(state.projectId);
 });
 elements.access_close.addEventListener("click", () => elements.access_dialog.close());
 elements.access_done.addEventListener("click", () => elements.access_dialog.close());
-elements.access_dialog.addEventListener("cancel", event => {
+elements.access_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.access_dialog.close();
 });
@@ -2209,13 +2316,13 @@ elements.invite_user.addEventListener("click", createInvitation);
 elements.invite_regenerate.addEventListener("click", createInvitation);
 elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_done.addEventListener("click", () => elements.invite_dialog.close());
-elements.invite_dialog.addEventListener("cancel", event => {
+elements.invite_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.invite_dialog.close();
 });
 elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, "Invitation link copied."));
 async function logout() {
-  await request("v1/auth/logout", { method: "POST" }).catch(() => null);
+  await request("v1/auth/logout", { method: "POST" }).catch((): null => null);
   state.user = null;
   state.projects = [];
   syncAccountUi();
@@ -2230,7 +2337,7 @@ elements.git_button.addEventListener("click", async () => {
   await refreshGit();
 });
 elements.git_close.addEventListener("click", () => elements.git_dialog.close());
-elements.git_dialog.addEventListener("cancel", event => {
+elements.git_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.git_dialog.close();
 });
@@ -2255,7 +2362,7 @@ elements.new_project.addEventListener("click", async () => {
   if (!name) return;
   try {
     const archive = (document.querySelector("#project-zip-input") as HTMLInputElement)?.files?.[0];
-    const result = await request(archive ? `v1/projects?name=${encodeURIComponent(String(name))}` : "v1/projects", {
+    const result = await request<{ project: ProjectSummary }>(archive ? `v1/projects?name=${encodeURIComponent(String(name))}` : "v1/projects", {
       method: "POST",
       headers: { "Content-Type": archive ? "application/zip" : "application/json" },
       body: archive || JSON.stringify({ name }),
@@ -2267,7 +2374,7 @@ elements.new_project.addEventListener("click", async () => {
 });
 elements.compile_button.addEventListener("click", compile);
 elements.add_comment.addEventListener("click", openReviewDialog);
-elements.selection_accept.addEventListener("mousedown", event => event.preventDefault());
+elements.selection_accept.addEventListener("mousedown", (event: Event) => event.preventDefault());
 elements.selection_accept.addEventListener("click", () => {
   applyReviewDecisions(state.selectionSuggestionIds, "accept");
   state.view?.focus();
@@ -2333,10 +2440,10 @@ async function newFile(folderPath = "") {
       body: "",
     });
     await refreshProject();
-    await openFile(name);
+    await openFile(String(name));
   } catch (error) { showToast(error.message); }
 }
-async function renameFile(target) {
+async function renameFile(target: string): Promise<void> {
   const name = await openActionDialog({
     title: "Rename file",
     label: "File path",
@@ -2349,7 +2456,7 @@ async function renameFile(target) {
   } catch (error) { showToast(error.message); }
 }
 
-async function deleteFile(target) {
+async function deleteFile(target: string): Promise<void> {
   const confirmed = await openActionDialog({
     title: "Delete file",
     message: `Move “${target}” to Recently deleted? It can be restored.`,
@@ -2444,7 +2551,7 @@ document.getElementById("new-folder")!.addEventListener("click", () => newFolder
 const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
 document.getElementById("project-settings")!.addEventListener("click", async () => {
   try {
-    const { settings } = await request("v1/settings");
+    const { settings } = await request<{ settings: EditorSettings }>("v1/settings");
     const main = document.getElementById("settings-main") as HTMLSelectElement;
     main.replaceChildren();
     for (const file of state.files.filter(file => file.path.endsWith(".tex"))) main.add(new Option(file.path, file.path));
@@ -2458,7 +2565,7 @@ document.getElementById("settings-close")!.addEventListener("click", () => setti
 document.getElementById("settings-form")!.addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    const { settings } = await request("v1/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main: (document.getElementById("settings-main") as HTMLSelectElement).value, compiler: (document.getElementById("settings-compiler") as HTMLSelectElement).value, autoCompile: (document.getElementById("settings-auto") as HTMLInputElement).checked }) });
+    const { settings } = await request<{ settings: EditorSettings }>("v1/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ main: (document.getElementById("settings-main") as HTMLSelectElement).value, compiler: (document.getElementById("settings-compiler") as HTMLSelectElement).value, autoCompile: (document.getElementById("settings-auto") as HTMLInputElement).checked }) });
     state.settings = settings; state.main = settings.main;
     settingsDialog.close(); markPdfStale(); scheduleAutoCompile();
     renderFiles();
@@ -2468,7 +2575,7 @@ document.getElementById("settings-form")!.addEventListener("submit", async event
 const trashDialog = document.getElementById("trash-dialog") as HTMLDialogElement;
 document.getElementById("trash-close")!.addEventListener("click", () => trashDialog.close());
 async function renderTrash() {
-  const { items } = await request("v1/trash");
+  const { items } = await request<{ items: Array<{ id: string; path: string }> }>("v1/trash");
   const list = document.getElementById("trash-list")!;
   list.replaceChildren();
   if (!items.length) list.textContent = "No deleted files";
@@ -2536,7 +2643,7 @@ async function goToPdf(view: EditorView) {
   elements.pdf_status.textContent = "Locating source; updating PDF if needed...";
   let position;
   try {
-    position = await request("v1/build/position", {
+    position = await request<PdfPosition>("v1/build/position", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
     });
   } finally {
@@ -2567,7 +2674,7 @@ async function goToPdf(view: EditorView) {
 }
 
 function renderPdfHighlights() {
-  elements.pdf_document.querySelectorAll("[data-pdf-highlight]").forEach(marker => marker.remove());
+  elements.pdf_document.querySelectorAll("[data-pdf-highlight]").forEach((marker: Element) => marker.remove());
   if (!state.pdfHighlights || state.pdfHighlights.expires < Date.now()) return;
   const canvases = [...elements.pdf_document.querySelectorAll("canvas")];
   let index = 0;
@@ -2671,7 +2778,7 @@ document.getElementById("replace-preview")!.addEventListener("click", async () =
   replacementPlan = []; applyReplacements.hidden = true; searchResults.replaceChildren();
   searchStatus.textContent = "Preparing replacement preview...";
   try {
-    const result = await request("v1/search/replace/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    const result = await request<{ files: ReplacementPreview[]; count: number }>("v1/search/replace/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       query: searchQuery.value, replacement: (document.getElementById("replace-text") as HTMLInputElement).value,
       caseSensitive: (document.getElementById("search-case") as HTMLInputElement).checked, regex: (document.getElementById("search-regex") as HTMLInputElement).checked,
       path: (document.getElementById("replace-scope") as HTMLSelectElement).value === "file" ? state.activeFile : undefined,
@@ -2716,7 +2823,7 @@ document.getElementById("search-form")!.addEventListener("submit", async event =
   searchStatus.textContent = "Searching...";
   searchResults.replaceChildren();
   try {
-    const result = await request("v1/search/project", {
+    const result = await request<{ matches: SearchMatch[]; truncated: boolean }>("v1/search/project", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: searchQuery.value, caseSensitive: (document.getElementById("search-case") as HTMLInputElement).checked, regex: (document.getElementById("search-regex") as HTMLInputElement).checked }),
     });
@@ -2821,7 +2928,9 @@ elements.toggle_files.addEventListener("click", () => {
 new ResizeObserver(updateWorkspaceLayout).observe(workspace);
 narrowWorkspace.addEventListener("change", updateWorkspaceLayout);
 updateWorkspaceLayout();
-document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
+document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => {
+  if (button.dataset.output === "pdf" || button.dataset.output === "review") selectOutput(button.dataset.output);
+}));
 window.addEventListener("beforeunload", () => {
   disconnectEditor();
   resetFilePreview();
@@ -2830,7 +2939,7 @@ async function routeApp() {
   const invitationToken = routeInvitationToken();
   if (invitationToken) {
     try {
-      const result = await request(`v1/invitations/${encodeURIComponent(invitationToken)}`);
+      const result = await request<{ invitation: { invitedBy: string } }>(`v1/invitations/${encodeURIComponent(invitationToken)}`);
       showAuthPage("register", `Invited by ${result.invitation.invitedBy}. Choose an account to join the core team.`);
     } catch (error) {
       showAuthPage("register", error.message);
@@ -2860,14 +2969,15 @@ if (testMode) {
   elements.editor_page.hidden = false;
   window.__paperTest = {
     state,
-    createEditor(content, suggesting = true) {
+    createEditor(content: string, suggesting = true): EditorView {
       disconnectEditor();
       const doc = new Y.Doc();
       const ytext = doc.getText("content");
-      const provider = { awareness: null, destroy() {} };
+      const awareness = new Awareness(doc);
+      const provider = { awareness, destroy: () => awareness.destroy() };
       state.suggesting = suggesting;
       state.doc = doc;
-      state.provider = provider;
+      state.provider = provider as unknown as WebsocketProvider;
       state.view = new EditorView({
         state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
         parent: elements.editor,
@@ -2880,7 +2990,7 @@ if (testMode) {
   };
 } else {
   if (e2eMode) window.__paperE2E = { state };
-  request("v1/auth/me").then(async auth => {
+  request<{ user: CurrentUser | null; bootstrapReady: boolean }>("v1/auth/me").then(async auth => {
     state.user = auth.user;
     state.bootstrapReady = auth.bootstrapReady;
     syncAccountUi();

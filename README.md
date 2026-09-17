@@ -91,6 +91,15 @@ For development, `pnpm dev` starts the TypeScript server on port 8090 and
 the Vite development server on `http://127.0.0.1:5173/`; Vite proxies API, Git,
 share-link, and collaboration traffic to the backend.
 
+The backend has a thin process entry point in `server.ts`. Its implementation is
+split by responsibility under `src/server/`: `app.ts` composes HTTP routes and
+project runtimes, `collaboration.ts` owns Yjs documents and persistence,
+`project-files.ts` owns project-tree access, `search.ts` implements the search
+service, `process.ts` contains bounded subprocess and bubblewrap execution, and
+`core.ts` contains shared validation and authentication primitives. Domain
+contracts live in `types.ts`; persistent records remain in `src/database.ts`.
+Production TypeScript is checked with `noImplicitAny` and unused-symbol checks.
+
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
 change the listener. State defaults to `.latexcoder/`; set
 `LATEXCODER_STATE_DIR` to move it. `LATEXCODER_LATEX_BIN` may point to Tectonic
