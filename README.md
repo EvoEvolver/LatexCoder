@@ -94,10 +94,14 @@ share-link, and collaboration traffic to the backend.
 The codebase is split into `src/client`, `src/server`, and `src/shared`. The
 backend has a thin process entry point in `src/server/main.ts`; `app.ts` composes HTTP routes and
 project runtimes, `collaboration.ts` owns Yjs documents and persistence,
+`compile-service.ts` owns compilation and cache updates, `compile-queue.ts`
+applies a process-wide concurrency limit,
 `project-files.ts` owns project-tree access, `search.ts` implements the search
 service, `process.ts` contains bounded subprocess and bubblewrap execution, and
 `core.ts` contains shared validation and authentication primitives. Domain
-contracts live in `types.ts`; persistent records remain in `database.ts`.
+contracts live in `types.ts`; request schemas shared by the browser and server
+live in `src/shared/api-schema.ts`. Persistent records remain in `database.ts`,
+with ordered transactional migrations in `src/server/database/migrations.ts`.
 The browser app and its UI components live in `src/client`, while environment-neutral
 parsers and mapping utilities live in `src/shared`. Separate TypeScript projects
 prevent client code from depending on Node APIs and server code from depending on
@@ -107,8 +111,15 @@ unused-symbol checks.
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
 change the listener. State defaults to `.latexcoder/`; set
 `LATEXCODER_STATE_DIR` to move it. `LATEXCODER_LATEX_BIN` may point to Tectonic
-or `latexmk`. The install helper at
+or `latexmk`. `LATEXCODER_COMPILE_CONCURRENCY` controls the process-wide compile
+limit and defaults to `2`. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
+
+The server emits one-line JSON request and compile logs in production. Use
+`GET /health/live` for a liveness probe and `GET /health/ready` for readiness;
+the readiness payload includes the SQLite schema version, compile queue state,
+and detected external tools. Missing optional tools are reported without making
+the editor itself unready.
 
 PDF source navigation requires the `synctex` executable (included in the Docker
 image). Recompile existing PDFs once to generate synchronization data.

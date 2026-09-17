@@ -84,7 +84,7 @@ export async function validatedSearchPaths(projectDir: string, value: unknown): 
   return paths;
 }
 
-async function executablePath(command: string): Promise<string | null> {
+export async function executablePath(command: string): Promise<string | null> {
   const candidates = command.includes(path.sep) ? [command] : (process.env.PATH || "").split(path.delimiter).filter(Boolean).map(directory => path.join(directory, command));
   for (const candidate of candidates) try { await access(candidate, 1); return await realpath(candidate); } catch {}
   return null;

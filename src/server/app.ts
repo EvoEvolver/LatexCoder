@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -10,7 +10,7 @@ import { WebSocketServer } from "ws";
 
 import { StateDatabase } from "./database.ts";
 import { parseReviews } from "../shared/review.ts";
-import { compileSourceMap, projectedPosition } from "../shared/source-map.ts";
+import { projectedPosition } from "../shared/source-map.ts";
 import { syncTexPositions } from "../shared/pdf-map.ts";
 import { compileErrors } from "../shared/compile-errors.ts";
 import { createPatch } from "diff";
@@ -19,8 +19,14 @@ import { checkedContentTarget, compilationSourceRevision, contentEntries, listFi
 import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPaths } from "./process.ts";
 import { createCollaborationStore } from "./collaboration.ts";
 import { createProjectSearch } from "./search.ts";
+import { CompileQueue } from "./compile-queue.ts";
+import { createCompileService } from "./compile-service.ts";
+import { checkDependencies } from "./dependencies.ts";
+import { createLogger, requestLogger } from "./logger.ts";
+import { compileRequestSchema, createProjectRequestSchema, loginRequestSchema, registerRequestSchema, settingsRequestSchema, updateProfileRequestSchema, updateProjectRequestSchema } from "../shared/api-schema.ts";
+import type { ZodType } from "zod";
 import type { NextFunction, Request, Response } from "express";
-import type { BuildMetadata, ProjectMetadata } from "./database.ts";
+import type { ProjectMetadata } from "./database.ts";
 import type { ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
 type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };
@@ -30,6 +36,14 @@ type CookieRequest = { headers: { cookie?: string } };
 type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
 type SharePaths = { id: string; path: string; agentPath: string; clonePath: string };
 export { safeRelativePath } from "./core.ts";
+
+function parseBody<T>(schema: ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  throw apiError("invalid_request", "request body is invalid", 400, {
+    issues: result.error.issues.map(issue => ({ path: issue.path.join("."), message: issue.message })),
+  });
+}
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_DOCUMENT = String.raw`\documentclass[11pt]{article}
@@ -420,23 +434,6 @@ async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Ui
   }
 }
 
-async function findCompiler(configured: string | undefined, stateDir: string): Promise<string> {
-  const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
-  for (const candidate of candidates) {
-    if (candidate.includes("/")) {
-      try {
-        await access(candidate);
-        return candidate;
-      } catch {
-        continue;
-      }
-    }
-    const probe = await run("sh", ["-c", `command -v "$1"`, "paper", candidate], {});
-    if (probe.code === 0) return candidate;
-  }
-  throw apiError("compiler_unavailable", "install Tectonic or latexmk before compiling", 503);
-}
-
 function manual(): string {
   return `# LaTeX Coder
 
@@ -688,6 +685,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   await mkdir(stateDir, { recursive: true });
   await mkdir(projectsDir, { recursive: true });
   const database = new StateDatabase(stateDir);
+  const logger = createLogger(options.logRequests ?? false);
+  const compileConcurrency = options.compileConcurrency ?? Number(process.env.LATEXCODER_COMPILE_CONCURRENCY || 2);
+  const compileQueue = new CompileQueue(compileConcurrency);
+  const dependencies = await checkDependencies(stateDir, options);
+  logger.info("server.dependencies", { dependencies });
 
   const authDisabled = options.authDisabled === true;
   const configuredAdminPassword = options.adminPassword ?? process.env.LATEXCODER_ADMIN_PASSWORD;
@@ -947,128 +949,20 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     return runtime;
   };
 
-  const performCompile = async (runtime: ProjectRuntime, requestedMain: unknown): Promise<{ success: boolean; build: BuildMetadata }> => {
-    let workDir: string | undefined;
-    const previousPdf = runtime.build.pdf;
-    const previousRevision = runtime.build.sourceRevision;
-    try {
-      assertProjectWritable(runtime);
-      const { projectDir, buildDir, collaboration } = runtime;
-      collaboration.flush();
-      const main = safeRelativePath(requestedMain || runtime.build.main || "main.tex");
-      if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
-      runtime.build = {
-        status: "running",
-        main,
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        log: "",
-        pdf: previousPdf,
-        sourceRevision: previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      workDir = path.join(buildDir, `job-${randomUUID()}`);
-      const gitDir = path.join(projectDir, ".git");
-      await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
-      const settings = database.getSettings(runtime.id);
-      const sourceRevision = await compilationSourceRevision(workDir, main, settings.compiler);
-      const sourceMaps: Record<string, { lines: number[]; source: string }> = {};
-      for (const file of await listFiles(workDir)) {
-        if (!file.path.endsWith(".tex")) continue;
-        const sourcePath = path.join(workDir, file.path);
-        const source = await readFile(sourcePath, "utf8");
-        const projection = compileSourceMap(source);
-        sourceMaps[file.path] = { lines: projection.lines, source };
-        await writeFile(sourcePath, projection.text, "utf8");
-      }
-      const outputDir = path.join(workDir, ".paper-output");
-      await mkdir(outputDir, { recursive: true });
-      const compiler = await findCompiler(settings.compiler === "auto" ? options.compiler || process.env.LATEXCODER_LATEX_BIN : settings.compiler, settings.compiler === "latexmk" ? "" : stateDir);
-      if (settings.compiler !== "auto" && !path.basename(compiler).startsWith(settings.compiler)) throw apiError("compiler_unavailable", `The selected compiler ${settings.compiler} is not installed`, 503);
-      const executable = path.basename(compiler);
-      const args = executable.startsWith("latexmk")
-        ? ["-pdf", "-synctex=1", "-file-line-error", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
-        : ["--synctex", "--keep-logs", "--outdir", outputDir, main];
-      const result = await run(compiler, args, {
-        cwd: workDir,
-        env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
-      });
-      const pdfName = `${path.basename(main, ".tex")}.pdf`;
-      const outputPdf = path.join(outputDir, pdfName);
-      const success = result.code === 0 && existsSync(outputPdf);
-      if (success) {
-        await cp(outputPdf, path.join(buildDir, "latest.pdf"));
-        const syncFile = path.join(outputDir, pdfName.replace(/\.pdf$/, ".synctex.gz"));
-        await rm(path.join(buildDir, "latest.synctex.gz"), { force: true });
-        if (existsSync(syncFile)) await cp(syncFile, path.join(buildDir, "latest.synctex.gz"));
-        await writeFile(path.join(buildDir, "source-map.json"), JSON.stringify({ root: await realpath(workDir), files: sourceMaps, revision: sourceRevision }));
-      }
-      runtime.build = {
-        status: success ? "success" : "error",
-        main,
-        startedAt: runtime.build.startedAt,
-        finishedAt: new Date().toISOString(),
-        log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
-        errors: compileErrors(result.output || "").map(error => {
-          const file = Object.keys(sourceMaps).find(file => error.path === file || error.path.endsWith(`/${file}`));
-          return file ? { ...error, path: file, line: sourceMaps[file].lines[error.line - 1] || error.line } : error;
-        }),
-        pdf: success || previousPdf,
-        sourceRevision: success ? sourceRevision : previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      return { success, build: runtime.build };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      runtime.build = {
-        ...runtime.build,
-        status: "error",
-        finishedAt: new Date().toISOString(),
-        log: message,
-        errors: [],
-        pdf: previousPdf,
-        sourceRevision: previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      throw error;
-    } finally {
-      if (workDir) await rm(workDir, { recursive: true, force: true });
-    }
-  };
-
-  const compileProject = async (runtime: ProjectRuntime, main: unknown): Promise<{ success: boolean; build: BuildMetadata }> => {
-    if (runtime.compilePromise) return runtime.compilePromise;
-    const promise = performCompile(runtime, main);
-    runtime.compilePromise = promise;
-    try {
-      return await promise;
-    } finally {
-      if (runtime.compilePromise === promise) runtime.compilePromise = null;
-    }
-  };
-
-  const ensureLatestPdf = async (runtime: ProjectRuntime): Promise<BuildMetadata> => {
-    const main = safeRelativePath(runtime.build.main || "main.tex");
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      runtime.collaboration.flush();
-      const currentRevision = await compilationSourceRevision(runtime.projectDir, main, database.getSettings(runtime.id).compiler);
-      if (
-        runtime.build.pdf
-        && runtime.build.status === "success"
-        && runtime.build.main === main
-        && runtime.build.sourceRevision === currentRevision
-        && existsSync(path.join(runtime.buildDir, "latest.pdf"))
-      ) return runtime.build;
-      const result = await compileProject(runtime, main);
-      if (!result.success) throw apiError("compile_failed", result.build.log || "LaTeX compilation failed", 422);
-    }
-    throw apiError("compile_changed", "the project kept changing while the PDF was compiling; retry the download", 409);
-  };
+  const { compileProject, ensureLatestPdf } = createCompileService({
+    stateDir,
+    database,
+    queue: compileQueue,
+    logger,
+    serverOptions: options,
+    assertWritable: assertProjectWritable,
+  });
 
   const expressModule = await import("express");
   const express = expressModule.default;
   const app = express();
   app.disable("x-powered-by");
+  app.use(requestLogger(logger));
   app.use((request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
@@ -1136,7 +1030,23 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       ));
     } catch (error) { next(error); }
   });
-  app.get("/health", (_request, response) => response.json({ ok: true, name: "latexcoder" }));
+  const readiness = () => {
+    const queue = compileQueue.stats();
+    const databaseReady = database.ping();
+    return {
+      ok: databaseReady && queue.accepting,
+      status: databaseReady && queue.accepting ? "ready" : "not_ready",
+      name: "latexcoder",
+      schemaVersion: database.schemaVersion(),
+      queue,
+      dependencies,
+    };
+  };
+  app.get("/health/live", (_request, response) => response.json({ ok: true, status: "live", name: "latexcoder" }));
+  app.get(["/health", "/health/ready"], (_request, response) => {
+    const health = readiness();
+    response.status(health.ok ? 200 : 503).json(health);
+  });
   app.get("/v1/auth/me", (request, response) => {
     response.json({
       user: currentUser(request),
@@ -1146,6 +1056,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   });
   app.post("/v1/auth/login", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
+      const body = parseBody(loginRequestSchema, request.body);
       const attemptKey = request.ip || request.socket.remoteAddress || "unknown";
       let attempts = loginAttempts.get(attemptKey);
       if (!attempts || attempts.resetAt <= Date.now()) {
@@ -1153,9 +1064,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         loginAttempts.set(attemptKey, attempts);
       }
       if (attempts.count >= 10) throw apiError("login_rate_limited", "too many login attempts; try again later", 429);
-      const username = cleanUsername(request.body?.username);
+      const username = cleanUsername(body.username);
       const user = database.getUser(username);
-      if (!user || !passwordMatches(request.body?.password, user)) {
+      if (!user || !passwordMatches(body.password, user)) {
         attempts.count += 1;
         throw apiError("invalid_credentials", "username or password is incorrect", 401);
       }
@@ -1173,7 +1084,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   app.patch("/v1/users/me", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
       const user = requireUser(request);
-      const displayName = cleanDisplayName(request.body?.displayName);
+      const displayName = cleanDisplayName(parseBody(updateProfileRequestSchema, request.body).displayName);
       if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
       response.json({ user: { username: user.username, displayName } });
     } catch (error) { next(error); }
@@ -1202,15 +1113,16 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   });
   app.post("/v1/auth/register", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
-      const token = String(request.body?.token || "");
+      const body = parseBody(registerRequestSchema, request.body);
+      const token = body.token;
       const tokenHash = sha256(token);
       const invitation = database.getInvitation(tokenHash);
       if (!invitation || invitation.usedAt || invitation.expiresAt <= Date.now()) {
         throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
       }
-      const username = cleanUsername(request.body?.username);
+      const username = cleanUsername(body.username);
       if (database.getUser(username)) throw apiError("username_taken", "username is already registered", 409);
-      const password = validatePassword(request.body?.password);
+      const password = validatePassword(body.password);
       const createdAt = new Date().toISOString();
       database.transaction(() => {
         const current = database.getInvitation(tokenHash);
@@ -1238,7 +1150,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     try {
       const user = requireUser(request);
       const importedFiles = request.is("application/zip") ? readProjectZip(request.body) : [];
-      const runtime = await createProject(request.is("application/zip") ? request.query.name : request.body?.name, user.username, importedFiles);
+      const name = request.is("application/zip") ? request.query.name : parseBody(createProjectRequestSchema, request.body).name;
+      const runtime = await createProject(name, user.username, importedFiles);
       response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
     } catch (error) { next(error); }
   });
@@ -1246,7 +1159,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     try {
       const runtime = await loadProject(request.params.projectId);
       requireProjectOwner(request, runtime);
-      runtime.metadata = { ...runtime.metadata, name: cleanProjectName(request.body?.name) };
+      runtime.metadata = { ...runtime.metadata, name: cleanProjectName(parseBody(updateProjectRequestSchema, request.body).name) };
       database.saveProject(runtime.metadata);
       response.json({ project: publicProjectMetadata(runtime.metadata) });
     } catch (error) { next(error); }
@@ -1296,8 +1209,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const runtime = await resolveProject(request);
       assertProjectWritable(runtime);
       if (runtime.compilePromise) throw apiError("compile_running", "Wait for compilation before changing settings", 409);
-      const main = contentPath(request.body?.main);
-      const { compiler, autoCompile } = request.body || {};
+      const body = parseBody(settingsRequestSchema, request.body);
+      const main = contentPath(body.main);
+      const { compiler, autoCompile } = body;
       if (!main.endsWith(".tex") || !existsSync(path.join(runtime.projectDir, main))) throw apiError("invalid_main", "Select an existing .tex file");
       if (!["auto", "tectonic", "latexmk"].includes(compiler) || typeof autoCompile !== "boolean") throw apiError("invalid_settings", "Invalid compiler or automatic compilation setting");
       database.saveSettings(runtime.id, { compiler, autoCompile });
@@ -1808,7 +1722,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   app.post("/v1/compile", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      const main = safeRelativePath(request.body?.main || runtime.build.main || "main.tex");
+      const body = parseBody(compileRequestSchema, request.body);
+      const main = safeRelativePath(body.main || runtime.build.main || "main.tex");
       let result = await compileProject(runtime, main);
       if (result.build.main !== main) result = await compileProject(runtime, main);
       response.status(result.success ? 200 : 422).json({ build: result.build });
@@ -1825,7 +1740,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     const parseError = failure.type === "entity.parse.failed";
     const code = parseError ? "invalid_json" : (failure.code && typeof failure.code === "string" ? failure.code : "internal_error");
     const message = parseError ? "request body must contain valid JSON" : (status >= 500 ? "internal server error" : failure.message || "request failed");
-    if (status >= 500) console.error(error);
+    if (status >= 500) logger.error("http.error", error, { status });
     const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = { error: { code, message } };
     if (status < 500 && failure.details) body.error.details = failure.details;
     response.status(parseError ? 400 : status).json(body);
@@ -1855,6 +1770,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   let closed = false;
   const shutdown = () => {
     if (closed) return;
+    compileQueue.close();
     for (const runtime of projects.values()) runtime.collaboration.shutdown();
     database.close();
     closed = true;
@@ -1868,7 +1784,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
 }
 
 export async function startPaperServer(options: ServerOptions = {}): Promise<PaperServer> {
-  const paper = await createPaperServer(options);
+  const paper = await createPaperServer({ ...options, logRequests: options.logRequests ?? true });
   const host = options.host || process.env.LATEXCODER_HOST || "0.0.0.0";
   const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PORT || 8090);
   await new Promise<void>((resolve, reject) => {

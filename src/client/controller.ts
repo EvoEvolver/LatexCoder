@@ -65,7 +65,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide";
-import { getDocument, GlobalWorkerOptions, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/build/pdf.mjs";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { yCollab, ySyncAnnotation, yUndoManagerKeymap } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
@@ -79,6 +79,12 @@ import * as Y from "yjs";
 import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { compileErrors } from "../shared/compile-errors.ts";
+import { createApiClient, socketUrl } from "./api.ts";
+import type {
+  AppElement, AppState, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
+  ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
+  SearchMatch, ShareDetails, SourcePosition,
+} from "./types.ts";
 
 declare global {
   interface Window {
@@ -131,104 +137,6 @@ createIcons({ icons: ICONS });
 const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
-type ProjectFile = { path: string; size: number; text: boolean };
-type ProjectSummary = { id: string; name: string; createdAt?: string; membership?: string; permissions?: { manage?: boolean; collaborate?: boolean } };
-type CurrentUser = { username: string; displayName: string };
-type EditorSettings = { main: string; autoCompile: boolean; compiler: string };
-type GitFile = { index: string; worktree: string; path: string };
-type GitCommit = { shortId: string; author: string; date: string; subject: string };
-type GitState = {
-  branch: string;
-  dirty: boolean;
-  files: GitFile[];
-  history: GitCommit[];
-  status?: string;
-  conflict?: { branch: string } | null;
-};
-type PdfBox = { page: number; left: number; top: number; width: number; height: number };
-type AppState = {
-  activeFile: string;
-  projectId: string;
-  projects: ProjectSummary[];
-  user: CurrentUser | null;
-  bootstrapReady: boolean;
-  projectCanManage: boolean;
-  accessShareId: string;
-  git: GitState | null;
-  main: string;
-  files: ProjectFile[];
-  folders: string[];
-  settings: EditorSettings | null;
-  view: EditorView | null;
-  doc: Y.Doc | null;
-  provider: WebsocketProvider | null;
-  persistence: IndexeddbPersistence | null;
-  unsaved: boolean;
-  pdfDocument: PDFDocumentProxy | null;
-  pdfLoadingTask: PDFDocumentLoadingTask | null;
-  pdfRequestVersion: number;
-  pdfRenderVersion: number;
-  pdfZoom: number;
-  pdfSourceRevision: string | null;
-  pdfHighlights: { boxes: PdfBox[]; expires: number } | null;
-  filePreviewDocument: PDFDocumentProxy | null;
-  filePreviewLoadingTask: PDFDocumentLoadingTask | null;
-  filePreviewVersion: number;
-  filePreviewZoom: number;
-  reviewSelection: { from: number; to: number; selected: string } | null;
-  selectionSuggestionIds: string[];
-  suggesting: boolean;
-  toastTimer: ReturnType<typeof setTimeout> | null;
-};
-type DialogOptions = {
-  title: string;
-  label?: string;
-  value?: string;
-  maxLength?: number;
-  message?: string;
-  submitLabel: string;
-  danger?: boolean;
-  zip?: boolean;
-};
-type ReviewDecision = "accept" | "reject" | "resolve";
-type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
-type ShareDetails = { id: string; path: string; agentPath: string; clonePath: string };
-type ProjectMember = { username: string; role: string };
-type BuildInfo = { log: string; pdf?: boolean; errors?: ReturnType<typeof compileErrors>; stale?: boolean; sourceRevision?: string | null };
-type ProjectDetail = ProjectSummary & {
-  main: string;
-  files: ProjectFile[];
-  folders: string[];
-  settings: EditorSettings;
-  build: BuildInfo;
-  permissions?: { manage?: boolean; collaborate?: boolean };
-};
-type SourcePosition = { path: string; line: number; from?: number; to?: number };
-type PdfPosition = { page: number; x: number; y: number; revision: string; boxes?: PdfBox[] };
-type ReplacementPreview = { path: string; baseSha256: string; before: string; source: string };
-type SearchMatch = { path: string; line: number; from: number; to: number; text: string };
-type AppElement = HTMLElement & {
-  value: string;
-  disabled: boolean;
-  required: boolean;
-  maxLength: number;
-  href: string;
-  download: string;
-  open: boolean;
-  autocomplete: string;
-  files: FileList | null;
-  naturalWidth: number;
-  naturalHeight: number;
-  src: string;
-  alt: string;
-  onload: (() => void) | null;
-  onerror: (() => void) | null;
-  showModal(): void;
-  close(): void;
-  select(): void;
-  reportValidity(): boolean;
-};
-
 const elements = Object.fromEntries([
   "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
@@ -245,14 +153,8 @@ const elements = Object.fromEntries([
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
-const apiUrl = (relative: string): URL => new URL(`/${relative.replace(/^\//, "")}`, window.location.origin);
 const IMAGE_PREVIEW_PATTERN = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-const socketUrl = (relative: string): string => {
-  const url = apiUrl(relative);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString().replace(/\/$/, "");
-};
 
 const palette = ["#236b59", "#98602b", "#7455a5", "#2c6e9d", "#a14960", "#55713a", "#855b43", "#39716e"];
 const state: AppState = {
@@ -289,6 +191,7 @@ const state: AppState = {
   suggesting: false,
   toastTimer: null,
 };
+const { request, projectApiUrl } = createApiClient(() => state.projectId);
 const reviewMutation = Annotation.define();
 // Track the deletion block each author created most recently so consecutive
 // Backspace keystrokes extend it instead of nesting new markers. The record
@@ -449,31 +352,6 @@ function renderSelectionActions() {
     : Math.max(8, caret.top - bounds.height - 7);
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
-}
-
-async function request<T = unknown>(relative: string, options: RequestInit = {}): Promise<T> {
-  const url = apiUrl(relative);
-  if (state.projectId && url.pathname.startsWith("/v1/") && !url.pathname.startsWith("/v1/projects")) {
-    url.searchParams.set("project", state.projectId);
-  }
-  const response = await fetch(url, options);
-  const type = response.headers.get("content-type") || "";
-  const body = type.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) {
-    const payload = body && typeof body === "object" ? body as { error?: { message?: string; code?: string } } : null;
-    const error = Object.assign(
-      new Error(payload?.error?.message || (typeof body === "string" ? body : `Request failed (${response.status})`)),
-      { code: payload?.error?.code || "request_failed", status: response.status },
-    );
-    throw error;
-  }
-  return body as T;
-}
-
-function projectApiUrl(relative: string): URL {
-  const url = apiUrl(relative);
-  if (state.projectId) url.searchParams.set("project", state.projectId);
-  return url;
 }
 
 function fileIcon(file: ProjectFile): string {

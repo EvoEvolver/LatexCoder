@@ -40,7 +40,8 @@
     "y-indexeddb": "^9.0.12",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.1.0",
-    "yjs": "^13.6.27"
+    "yjs": "^13.6.27",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
