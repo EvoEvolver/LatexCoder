@@ -139,12 +139,11 @@ export function AppShell() {
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Collaborate</span></Button>
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
           <IconButton id="project-settings" icon="settings" title="Project settings" />
-          <IconButton id="mobile-files" icon="panel-left" title="Files" className="min-[761px]:hidden" />
         </header>
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
-            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><IconButton id="toggle-files" icon="panel-left" title="Hide files" /><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
+            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
               <IconButton id="project-search" icon="search" title="Search project" />
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="new-folder" icon="folder-plus" title="New folder" />
@@ -157,7 +156,7 @@ export function AppShell() {
 
           <section className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] border-r">
             <div className="editor-toolbar flex items-center justify-between border-b bg-muted/20 px-2">
-              <div id="review-actions" className="review-actions flex items-center gap-1"><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
+              <div id="review-actions" className="review-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Hide files" /><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
               <div className="editor-actions flex items-center gap-1"><IconButton id="editor-search" icon="search" title="Search project" /><Button id="toggle-review" data-output="review" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs" aria-expanded="false" title="Review"><Icon name="message-square-plus" />Review <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div>
             </div>
             <div id="editor-body" className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden">

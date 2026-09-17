@@ -51,7 +51,7 @@ test("Review opens beside source independently of PDF and closes back to full ed
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     const width = (await page.locator("#editor").boundingBox()).width;
-    assert.equal(await page.locator("#files-pane #toggle-files").count(), 1);
+    assert.equal(await page.locator("#review-actions #toggle-files + #add-comment").count(), 1);
     assert.equal(await page.locator("#output-pane [data-output=review]").count(), 0);
     await page.locator("#toggle-review").click();
     await page.locator("#review-list .review-item").waitFor();
@@ -376,7 +376,7 @@ test("automatic compilation is debounced and errors navigate to source", async (
     });
     await page.locator("#build-errors button").waitFor();
     assert.equal(await page.locator('[data-output="log"]').getAttribute("class").then(value => value.includes("active")), true);
-    assert.equal(await page.locator("#first-fatal-error").textContent(), "First fatal errormain.tex:3 · Undefined control sequence");
+    assert.match(await page.locator("#first-fatal-error").textContent(), /First fatal errormain.tex:3 · Undefined control sequence/);
     assert.equal(await page.locator("#build-log").isVisible(), true);
     assert.equal(await page.locator("#pdf-view").isVisible(), false);
     await page.screenshot({ path: "/tmp/latexcoder-log-desktop.png" });
@@ -544,6 +544,26 @@ test("project search opens cross-file matches and respects case", async () => {
 });
 
 const realLatexmk = ["/Library/TeX/texbin/latexmk", "/usr/bin/latexmk"].find(existsSync);
+test("real compiler Log errors navigate to an included source file", { skip: !realLatexmk }, async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    for (const [file, source] of [
+      ["main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapters/broken}\n\\end{document}"],
+      ["chapters/broken.tex", "First line\nSecond line\n\\thisCommandDoesNotExist"],
+    ]) await page.request.put(`${base}/v1/files?project=${id}&path=${file}`, { data: source, headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator("#compile-button").click();
+    const error = page.locator("#build-errors button").filter({ hasText: "chapters/broken.tex:3" }).first();
+    await error.waitFor();
+    assert.equal(await error.isEnabled(), true);
+    await error.click();
+    await page.waitForFunction(() => {
+      const { state } = globalThis.__paperE2E;
+      return state.activeFile === "chapters/broken.tex" && state.view.state.doc.lineAt(state.view.state.selection.main.head).number === 3;
+    });
+  }, { compiler: realLatexmk });
+});
 for (const platform of ["MacIntel", "Linux x86_64"]) {
 test(`${platform} real SyncTeX PDF modifier-click opens included source and rejects stale source`, { skip: !realLatexmk }, async () => {
   await withEditor(async ({ page, base }) => {
@@ -652,7 +672,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     assert.ok(await width("#output-pane") > output + 50);
     await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#file-list").isVisible(), false);
-    assert.equal(await width("#files-pane"), 44);
+    assert.equal(await page.locator("#files-pane").isVisible(), false);
     assert.equal(await page.locator("#files-resize").isVisible(), false);
     const collapsedOutput = await page.locator("#output-pane").boundingBox();
     const collapsedEditor = await page.locator(".editor-pane").boundingBox();
@@ -664,7 +684,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     await page.screenshot({ path: "/tmp/latexcoder-collapsed-files-pdf.png" });
     await page.reload();
     await page.waitForFunction(() => globalThis.__paperTest);
-    assert.equal(await width("#files-pane"), 44);
+    assert.equal(await page.locator("#files-pane").isVisible(), false);
     const restoredOutput = await page.locator("#output-pane").boundingBox();
     assert.ok(Math.abs(restoredOutput.x + restoredOutput.width - workspaceBox.x - workspaceBox.width) < 1);
     await page.locator("#toggle-files").click();
@@ -675,7 +695,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     assert.ok(await width("#files-pane") > files + 50);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.locator("#files-resize").isVisible(), false);
-    await page.locator("#mobile-files").click();
+    await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), true);
     await page.screenshot({ path: "/tmp/latexcoder-resizable-mobile.png" });
   });

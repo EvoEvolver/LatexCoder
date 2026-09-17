@@ -7,6 +7,8 @@ import { projectedPosition } from "../src/shared/source-map.ts";
 test("compiler errors resolve file-line output and legacy or Tectonic formats", () => {
   assert.deepEqual(compileErrors("./chapters/one.tex:12: Undefined control sequence\nerror: two.tex:4: missing brace"), [{ path: "chapters/one.tex", line: 12, message: "Undefined control sequence" }, { path: "two.tex", line: 4, message: "missing brace" }]);
   assert.equal(compileErrors("(./sub.tex\n! Failure\nl.7 Bad command")[0].path, "sub.tex");
+  assert.deepEqual(compileErrors("error: Undefined control sequence\n  --> chapters/intro.tex:7:3"), [{ path: "chapters/intro.tex", line: 7, message: "Undefined control sequence" }]);
+  assert.equal(compileErrors("  ./local.sty:5:3: Missing brace")[0].path, "local.sty");
 });
 
 test("build diagnostics prioritize the earliest fatal error without hiding warnings or unlocated errors", () => {

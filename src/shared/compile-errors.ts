@@ -5,13 +5,14 @@ export function compileErrors(log: string) {
   for (const row of log.split("\n")) {
     const opening = /\((?:\.\/)?([^\s()]+\.tex)\b/.exec(row);
     if (opening) current = opening[1];
-    const direct = /^(?:error:\s*)?(?:\.\/)?(.+?\.tex):(\d+):\s*(.*)/.exec(row);
-    if (direct) { errors.push({ path: direct[1], line: Number(direct[2]), message: direct[3] }); continue; }
-    if (row.startsWith("!")) message = row.slice(1).trim();
-    const line = /^l\.(\d+)\s*(.*)/.exec(row);
+    const direct = /^\s*(?:error:\s*)?(?:\.\/)?(.+?\.(?:tex|sty|cls|bib)):(\d+):(?:\d+:)?\s*(.*)/.exec(row);
+    if (direct && !/^\s*(?:-->|→)/.test(row)) { errors.push({ path: direct[1], line: Number(direct[2]), message: direct[3] }); continue; }
+    if (/^\s*!/.test(row)) message = row.trim().slice(1).trim();
+    else if (/^\s*error:/.test(row)) message = row.trim().replace(/^error:\s*/, "");
+    const pointer = /^\s*(?:-->|→)\s*(?:\.\/)?(.+?\.(?:tex|sty|cls|bib)):(\d+)(?::\d+)?/.exec(row);
+    if (pointer && message) { errors.push({ path: pointer[1], line: Number(pointer[2]), message }); message = ""; }
+    const line = /^\s*l\.(\d+)\s*(.*)/.exec(row);
     if (line && message) { errors.push({ path: current, line: Number(line[1]), message }); message = ""; }
-    const tectonic = /^error:\s*(.+?\.tex):(\d+):\s*(.*)/.exec(row);
-    if (tectonic) errors.push({ path: tectonic[1], line: Number(tectonic[2]), message: tectonic[3] });
   }
   return errors;
 }

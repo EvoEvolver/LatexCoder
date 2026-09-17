@@ -1915,6 +1915,10 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
     button.append(message);
     if (file && error.line) {
       button.title = "Go to source";
+      const action = document.createElement("span");
+      action.className = "mt-1 block text-[11px] underline";
+      action.textContent = "Go to source";
+      button.append(action);
       button.addEventListener("click", () => { void revealSource({ path: file.path, line: error.line! }).catch(error => showToast(error.message)); });
     } else button.disabled = true;
     item.append(button);
@@ -2799,7 +2803,7 @@ function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
   // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
   for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
-  elements.files_pane.hidden = false;
+  elements.files_pane.hidden = !mobile && filesHidden;
   elements.file_list.hidden = !mobile && filesHidden;
   document.getElementById("files-heading")!.hidden = !mobile && filesHidden;
   document.getElementById("files-actions")!.hidden = !mobile && filesHidden;
@@ -2807,10 +2811,10 @@ function updateWorkspaceLayout() {
   const width = workspace.clientWidth;
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 576));
-    const remaining = width - (filesHidden ? 44 : filesWidth + 8) - 8;
+    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
     const output = Math.max(320, Math.min(remaining - 240, remaining * outputFraction));
     workspace.style.gridTemplateColumns = filesHidden
-      ? `44px 0px minmax(0,1fr) 8px ${output}px`
+      ? `0px 0px minmax(0,1fr) 8px ${output}px`
       : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
   }
   elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
@@ -2826,7 +2830,7 @@ for (const handle of [filesResize, outputResize]) {
     if (narrowWorkspace.matches) return;
     if (handle === filesResize) filesWidth += delta;
     else {
-      const remaining = workspace.clientWidth - (filesHidden ? 44 : filesWidth + 8) - 8;
+      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
       outputFraction = Math.max(320 / remaining, Math.min(1 - 240 / remaining, outputFraction - delta / remaining));
     }
     updateWorkspaceLayout();
@@ -2857,10 +2861,6 @@ for (const handle of [filesResize, outputResize]) {
 elements.toggle_files.addEventListener("click", () => {
   if (narrowWorkspace.matches) elements.files_pane.classList.toggle("mobile-open");
   else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
-  updateWorkspaceLayout();
-});
-document.getElementById("mobile-files")!.addEventListener("click", () => {
-  elements.files_pane.classList.toggle("mobile-open");
   updateWorkspaceLayout();
 });
 document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
