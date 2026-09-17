@@ -16,6 +16,8 @@ the JSON, Git HTTP, and WebSocket endpoints.
 
 ![LaTeX Coder workspace with project files, collaborative source editing, and PDF preview](docs/images/workspace.png)
 
+Licensed under the [MIT License](LICENSE).
+
 ## Features
 
 - A user-scoped project dashboard with stable, shareable editor URLs.
