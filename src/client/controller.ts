@@ -2778,6 +2778,11 @@ const workspace = document.getElementById("workspace")!;
 const filesResize = document.getElementById("files-resize")!;
 const outputResize = document.getElementById("output-resize")!;
 const narrowWorkspace = window.matchMedia("(max-width: 760px)");
+const workspaceColumns: Array<[HTMLElement, number]> = [
+  [elements.files_pane, 1], [filesResize, 2],
+  [document.querySelector<HTMLElement>(".editor-pane")!, 3],
+  [outputResize, 4], [elements.output_pane, 5],
+];
 let filesWidth = 208;
 let outputFraction = 0.46;
 let filesHidden = false;
@@ -2792,6 +2797,8 @@ try {
 
 function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
+  // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
+  for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
   elements.files_pane.hidden = false;
   elements.file_list.hidden = !mobile && filesHidden;
   document.getElementById("files-heading")!.hidden = !mobile && filesHidden;
