@@ -42,6 +42,51 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("appearance supports persistent Light, Dark, and System themes", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "system");
+    assert.equal(await page.locator("html").getAttribute("class"), null);
+
+    await page.locator("#editor-theme").click();
+    await page.locator('[data-theme-option="dark"]').click();
+    assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem("latexcoder-theme")), "dark");
+    const colors = await page.evaluate(() => ({
+      body: getComputedStyle(document.body).backgroundColor,
+      editor: getComputedStyle(document.querySelector(".cm-editor")).backgroundColor,
+      foreground: getComputedStyle(document.querySelector(".cm-editor")).color,
+    }));
+    assert.notEqual(colors.body, "rgb(255, 255, 255)");
+    assert.notEqual(colors.editor, "rgb(255, 255, 255)");
+    assert.notEqual(colors.editor, colors.foreground);
+    await page.locator("#editor-theme").click();
+    assert.equal(await page.locator('[data-theme-option="dark"]').getAttribute("aria-checked"), "true");
+    await page.screenshot({ path: "/tmp/latexcoder-dark-appearance.png" });
+    await page.locator("#appearance-close").click();
+    await page.locator("#toggle-review").click();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: "/tmp/latexcoder-dark-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.getElementById("files-pane").getBoundingClientRect().right <= 1);
+    await page.screenshot({ path: "/tmp/latexcoder-dark-mobile.png" });
+
+    await page.reload();
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+    await page.locator("#editor-theme").click();
+    await page.locator('[data-theme-option="system"]').click();
+    assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
+    await page.locator("#editor-theme").click();
+    await page.locator('[data-theme-option="light"]').click();
+    assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
+  });
+});
+
 test("Review opens beside source independently of PDF and closes back to full editor width", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();

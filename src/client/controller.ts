@@ -2,12 +2,13 @@ import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
 import { defaultKeymap, indentWithTab, selectAll } from "@codemirror/commands";
 import {
   bracketMatching,
-  defaultHighlightStyle,
   foldGutter,
+  HighlightStyle,
   indentOnInput,
   StreamLanguage,
   syntaxHighlighting,
 } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension, type TransactionSpec } from "@codemirror/state";
@@ -81,6 +82,7 @@ import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shar
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
+import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
 import type {
   AppElement, AppState, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -154,10 +156,46 @@ const elements = Object.fromEntries([
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
+const appearanceDialog = document.getElementById("appearance-dialog") as HTMLDialogElement;
+const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
+function syncThemeControls(): void {
+  const preference = themePreference();
+  for (const button of themeButtons) {
+    const selected = button.dataset.themeOption === preference;
+    button.setAttribute("aria-checked", String(selected));
+    button.classList.toggle("border-primary", selected);
+    button.classList.toggle("bg-accent", selected);
+  }
+  for (const trigger of document.querySelectorAll<HTMLElement>("#auth-theme, #projects-theme, #editor-theme")) {
+    trigger.title = `Appearance: ${preference[0].toUpperCase()}${preference.slice(1)}`;
+  }
+}
+for (const trigger of document.querySelectorAll<HTMLElement>("#auth-theme, #projects-theme, #editor-theme")) {
+  trigger.addEventListener("click", () => { syncThemeControls(); appearanceDialog.showModal(); });
+}
+for (const button of themeButtons) button.addEventListener("click", () => {
+  setThemePreference(button.dataset.themeOption as ThemePreference);
+  syncThemeControls();
+  appearanceDialog.close();
+});
+document.getElementById("appearance-close")!.addEventListener("click", () => appearanceDialog.close());
+appearanceDialog.addEventListener("cancel", event => { event.preventDefault(); appearanceDialog.close(); });
+window.addEventListener("latexcoder-theme-change", syncThemeControls);
+syncThemeControls();
+
 const IMAGE_PREVIEW_PATTERN = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const palette = ["#236b59", "#98602b", "#7455a5", "#2c6e9d", "#a14960", "#55713a", "#855b43", "#39716e"];
+const latexHighlightStyle = HighlightStyle.define([
+  { tag: [tags.keyword, tags.macroName, tags.controlKeyword], color: "var(--syntax-keyword)" },
+  { tag: [tags.name, tags.typeName, tags.className, tags.variableName], color: "var(--syntax-name)" },
+  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "var(--syntax-string)" },
+  { tag: [tags.number, tags.bool, tags.atom], color: "var(--syntax-number)" },
+  { tag: [tags.comment, tags.meta], color: "var(--syntax-comment)", fontStyle: "italic" },
+  { tag: [tags.heading, tags.strong], color: "var(--foreground)", fontWeight: "700" },
+  { tag: tags.link, color: "var(--primary)", textDecoration: "underline" },
+]);
 const state: AppState = {
   activeFile: "main.tex",
   projectId: "",
@@ -860,7 +898,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    syntaxHighlighting(latexHighlightStyle, { fallback: true }),
     bracketMatching(),
     closeBrackets(),
     autocompletion({ override: [projectCompletionSource({
@@ -929,23 +967,23 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       }
     }),
     EditorView.theme({
-      "&": { width: "100%", maxWidth: "100%", minWidth: "0", height: "100%", overflow: "hidden", backgroundColor: "#ffffff", color: "#292b27", fontSize: "13px" },
+      "&": { width: "100%", maxWidth: "100%", minWidth: "0", height: "100%", overflow: "hidden", backgroundColor: "var(--editor-background)", color: "var(--editor-foreground)", fontSize: "13px" },
       ".cm-scroller": { minWidth: "0", overflow: "auto", fontFamily: "SFMono-Regular, Consolas, Liberation Mono, monospace", lineHeight: "1.55" },
-      ".cm-gutters": { borderRight: "1px solid #eceeea", color: "#a0a49d", backgroundColor: "#fafbf9" },
-      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f4f7f3" },
-      ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "#1d6b55" },
+      ".cm-gutters": { borderRight: "1px solid var(--border)", color: "var(--editor-gutter-foreground)", backgroundColor: "var(--editor-gutter)" },
+      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
+      ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "var(--primary)" },
       ".cm-line": { padding: "0 14px" },
-      ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "#1d6b55", cursor: "pointer" },
-      "&.cm-focused .cm-cursor": { borderLeftColor: "#1d6b55" },
-      ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "#fff0aa", cursor: "help" },
-      ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "#dcefe7", color: "#115b48", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
-      ".cm-review-deletion": { marginLeft: "4px", padding: "1px 3px", borderRadius: "3px", backgroundColor: "#f8dddd", color: "#a1373d", textDecoration: "line-through", textDecorationThickness: "1.5px", cursor: "help", whiteSpace: "pre-wrap" },
-      ".cm-review-tooltip": { width: "min(320px, calc(100vw - 32px))", padding: "11px", border: "1px solid #d8dbd5", borderLeft: "3px solid #d28a16", borderRadius: "6px", backgroundColor: "#fff", boxShadow: "0 10px 28px rgb(21 25 20 / 18%)", color: "#292b27", fontFamily: "ui-sans-serif, sans-serif" },
+      ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "var(--primary)", cursor: "pointer" },
+      "&.cm-focused .cm-cursor": { borderLeftColor: "var(--primary)" },
+      ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "var(--editor-comment)", cursor: "help" },
+      ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "var(--editor-insertion)", color: "var(--editor-insertion-foreground)", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
+      ".cm-review-deletion": { marginLeft: "4px", padding: "1px 3px", borderRadius: "3px", backgroundColor: "var(--editor-deletion)", color: "var(--editor-deletion-foreground)", textDecoration: "line-through", textDecorationThickness: "1.5px", cursor: "help", whiteSpace: "pre-wrap" },
+      ".cm-review-tooltip": { width: "min(320px, calc(100vw - 32px))", padding: "11px", border: "1px solid var(--border)", borderLeft: "3px solid #d28a16", borderRadius: "6px", backgroundColor: "var(--card)", boxShadow: "0 10px 28px rgb(0 0 0 / 25%)", color: "var(--card-foreground)", fontFamily: "ui-sans-serif, sans-serif" },
       ".cm-review-tooltip.revision": { borderLeftColor: "#188064" },
       ".cm-review-tooltip strong": { display: "block", marginBottom: "6px", fontSize: "11px" },
       ".cm-review-tooltip p": { maxHeight: "120px", margin: "0", overflow: "auto", fontSize: "12px", lineHeight: "1.45", whiteSpace: "pre-wrap" },
       ".cm-review-tooltip-actions": { display: "flex", justifyContent: "flex-end", gap: "5px", marginTop: "9px" },
-      ".cm-review-tooltip-actions button": { height: "27px", padding: "0 9px", border: "1px solid #d6dad3", borderRadius: "4px", backgroundColor: "#fff", fontSize: "10px", fontWeight: "650" },
+      ".cm-review-tooltip-actions button": { height: "27px", padding: "0 9px", border: "1px solid var(--border)", borderRadius: "4px", backgroundColor: "var(--background)", color: "var(--foreground)", fontSize: "10px", fontWeight: "650" },
       // Keep local selections unmistakable next to comment and revision marks.
       // CodeMirror's default theme is loaded at the same precedence, so the
       // drawn selection layer needs an explicit override.
@@ -1394,7 +1432,7 @@ function drawReviews() {
       note.classList.add("space-y-2");
       for (const message of item.messages) {
         const messageRow = document.createElement("div");
-        messageRow.className = `comment-message rounded-md px-2.5 py-2 ${message.root ? "bg-amber-50" : "bg-muted"}`;
+        messageRow.className = `comment-message rounded-md px-2.5 py-2 ${message.root ? "bg-amber-50 dark:bg-amber-950/40" : "bg-muted"}`;
         const messageAuthor = document.createElement("strong");
         messageAuthor.className = "mb-0.5 block text-[11px]";
         messageAuthor.textContent = message.author || "Guest";
@@ -1902,7 +1940,7 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
     const item = document.createElement("li");
     item.className = "text-xs";
     const button = document.createElement("button");
-    button.className = "block w-full rounded border p-2 text-left whitespace-pre-wrap break-words hover:bg-accent " + (error.severity === "error" ? "border-red-200 text-red-800" : "border-amber-200 text-amber-800");
+    button.className = "block w-full rounded border p-2 text-left whitespace-pre-wrap break-words hover:bg-accent " + (error.severity === "error" ? "border-red-200 text-red-800 dark:border-red-900 dark:text-red-300" : "border-amber-200 text-amber-800 dark:border-amber-900 dark:text-amber-300");
     if (index === 0 && error.severity === "error") {
       button.id = "first-fatal-error";
       const badge = document.createElement("strong");
@@ -2718,7 +2756,7 @@ document.getElementById("replace-preview")!.addEventListener("click", async () =
       const heading = document.createElement("strong"); heading.className = "block border-t py-2 text-xs"; heading.textContent = file.path;
       const preview = document.createElement("pre"); preview.className = "overflow-auto whitespace-pre-wrap break-words font-mono text-xs";
       for (const part of diffLines(file.before, file.source)) {
-        const row = document.createElement("span"); row.className = "block " + (part.added ? "bg-emerald-100 text-emerald-900" : part.removed ? "bg-red-100 text-red-900" : "text-muted-foreground");
+        const row = document.createElement("span"); row.className = "block " + (part.added ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200" : part.removed ? "bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-200" : "text-muted-foreground");
         row.textContent = part.value.split("\n").map(line => (part.added ? "+ " : part.removed ? "- " : "  ") + line).join("\n");
         preview.append(row);
       }
@@ -2768,7 +2806,7 @@ document.getElementById("search-form")!.addEventListener("submit", async event =
       text.className = "mt-1 overflow-hidden text-ellipsis whitespace-pre font-mono text-xs text-muted-foreground";
       text.append(document.createTextNode(match.text.slice(0, match.from)));
       const mark = document.createElement("mark");
-      mark.className = "bg-amber-200 text-foreground";
+      mark.className = "bg-amber-200 text-foreground dark:bg-amber-800/60";
       mark.textContent = match.text.slice(match.from, match.to);
       text.append(mark, document.createTextNode(match.text.slice(match.to)));
       button.append(label, text);

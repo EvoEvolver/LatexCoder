@@ -25,6 +25,8 @@ Licensed under the [MIT License](LICENSE).
   password-bearing share links that establish scoped guest sessions.
 - Persistent member profiles with editable display names used in presence,
   comments, and suggestions.
+- System-aware Light and Dark themes with a persistent per-browser preference,
+  including the source editor, reviews, logs, dialogs, and project dashboard.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Threaded inline comments, replies, and tracked suggestions encoded as explicit
   LaTeX macros. Humans and agents see and edit the same review state through

@@ -2,7 +2,7 @@ import {
   Archive, ArrowLeft, CheckCheck, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
-  MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, TerminalSquare, Trash2,
+  Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, Sun, TerminalSquare, Trash2,
   ClipboardPaste, Redo2, Scissors, ScanText, Search, Settings, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,8 @@ const iconComponents = {
   "log-in": LogIn,
   "log-out": LogOut,
   "message-square-plus": MessageSquarePlus,
+  "monitor": Monitor,
+  "moon": Moon,
   "more-horizontal": MoreHorizontal,
   "panel-left": PanelLeft,
   "pencil": Pencil,
@@ -46,6 +48,7 @@ const iconComponents = {
   "scan-text": ScanText,
   "search": Search,
   "settings": Settings,
+  "sun": Sun,
   "terminal-square": TerminalSquare,
   "trash-2": Trash2,
   "upload": Upload,
@@ -64,6 +67,10 @@ function Icon({ name }: { name: keyof typeof iconComponents }) {
 
 function IconButton({ id, icon, title, className = "", hidden = false }: { id: string; icon: keyof typeof iconComponents; title: string; className?: string; hidden?: boolean }) {
   return <Button id={id} className={cn(iconButton, className)} variant="ghost" size="icon" type="button" title={title} hidden={hidden}><Icon name={icon} /></Button>;
+}
+
+function ThemeButton({ id, className = "" }: { id: string; className?: string }) {
+  return <Button id={id} className={cn(iconButton, "theme-trigger", className)} variant="ghost" size="icon" type="button" title="Appearance"><Monitor className="theme-system" /><Sun className="theme-light" /><Moon className="theme-dark" /></Button>;
 }
 
 function DialogHeader({ title, subtitleId, closeId }: { title: string; subtitleId?: string; closeId: string }) {
@@ -92,6 +99,7 @@ export function AppShell() {
   return (
     <>
       <div id="auth-page" className="auth-page grid min-h-dvh place-items-center bg-muted/60 p-6" hidden>
+        <ThemeButton id="auth-theme" className="fixed right-4 top-4" />
         <main className="w-full max-w-sm space-y-5">
           <div className="flex justify-center"><Brand /></div>
           <Card>
@@ -119,6 +127,7 @@ export function AppShell() {
             <Button id="invite-user" variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
             <Button id="new-project" size="sm"><Icon name="folder-plus" /><span>New project</span></Button>
             <IconButton id="logout-button" icon="log-out" title="Sign out" />
+            <ThemeButton id="projects-theme" />
           </div>
         </header>
         <main className="projects-main mx-auto w-[min(calc(100%-2rem),65rem)] py-10">
@@ -139,6 +148,7 @@ export function AppShell() {
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Collaborate</span></Button>
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
           <IconButton id="project-settings" icon="settings" title="Project settings" />
+          <ThemeButton id="editor-theme" />
         </header>
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
@@ -203,6 +213,7 @@ export function AppShell() {
           ["comment", "message-square-plus", "Add comment"], ["pdf", "file-check-2", "Go to PDF"],
         ] as const).map(([action, icon, label]) => <Button key={action} role="menuitem" data-editor-action={action} variant="ghost" size="sm" className={cn("w-full justify-start rounded-sm px-2 text-xs disabled:pointer-events-auto disabled:opacity-40", (action === "cut" || action === "comment") && "mt-1 border-t") }><Icon name={icon} />{label}</Button>)}
       </div>
+      <dialog id="appearance-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Appearance" closeId="appearance-close" /><div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Color theme"><Button data-theme-option="system" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="monitor" />System</Button><Button data-theme-option="light" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="sun" />Light</Button><Button data-theme-option="dark" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="moon" />Dark</Button></div></div></dialog>
       <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search and replace" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><div className="mt-3 flex flex-wrap gap-2"><Input id="replace-text" className="min-w-0 flex-1" aria-label="Replacement text" placeholder="Replacement text" /><select id="replace-scope" aria-label="Replace scope" className="h-9 rounded-md border bg-background px-2 text-xs"><option value="file">Current file</option><option value="project">Entire project</option></select><Button id="replace-preview" variant="outline" size="sm">Preview</Button><Button id="replace-apply" size="sm" hidden>Apply replacements</Button></div><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[55dvh] overflow-auto" /></div></dialog>
       <dialog id="settings-dialog" className={dialogClass}>
         <form id="settings-form" className="space-y-4 p-5">
