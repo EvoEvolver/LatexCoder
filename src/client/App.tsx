@@ -139,11 +139,12 @@ export function AppShell() {
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Collaborate</span></Button>
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">Git</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
           <IconButton id="project-settings" icon="settings" title="Project settings" />
+          <IconButton id="mobile-files" icon="panel-left" title="Files" className="min-[761px]:hidden" />
         </header>
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
-            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-2.5"><strong className="text-[11px] uppercase text-muted-foreground">Files</strong><div className="flex min-w-0 flex-wrap items-center gap-0.5">
+            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><IconButton id="toggle-files" icon="panel-left" title="Hide files" /><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
               <IconButton id="project-search" icon="search" title="Search project" />
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
               <IconButton id="new-folder" icon="folder-plus" title="New folder" />
@@ -157,24 +158,31 @@ export function AppShell() {
           <section className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)] border-r">
             <div className="editor-toolbar flex items-center justify-between border-b bg-muted/20 px-2">
               <div id="review-actions" className="review-actions flex items-center gap-1"><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" />Comment</Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span>Suggest</span></Button></div>
-              <div className="editor-actions flex items-center gap-1"><IconButton id="editor-search" icon="search" title="Search project" /><IconButton id="toggle-files" icon="panel-left" title="Hide files" /></div>
+              <div className="editor-actions flex items-center gap-1"><IconButton id="editor-search" icon="search" title="Search project" /><Button id="toggle-review" data-output="review" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs" aria-expanded="false" title="Review"><Icon name="message-square-plus" />Review <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div>
             </div>
-            <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
-            <div id="binary-view" className="binary-view absolute inset-x-0 bottom-0 top-11 grid min-h-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-background" hidden>
+            <div id="editor-body" className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden">
+              <div className="relative grid min-h-0 min-w-0 overflow-hidden">
+                <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
+            <div id="binary-view" className="binary-view absolute inset-0 grid min-h-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-background" hidden>
               <div className="flex min-w-0 items-center justify-between border-b bg-muted/20 px-2.5"><div className="min-w-0"><strong id="binary-kind" className="text-xs">File preview</strong><span id="binary-status" className="ml-2 text-[10px] text-muted-foreground" /></div><div className="flex items-center"><IconButton id="file-preview-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="file-preview-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="binary-download" className={iconButton} variant="ghost" size="icon" title="Download file" asChild><a download><Icon name="download" /></a></Button></div></div>
               <div id="file-preview-viewport" className="relative min-h-0 min-w-0 overflow-auto bg-muted/40 p-4"><img id="image-preview" className="mx-auto block max-w-none shadow-sm" alt="" hidden /><div id="file-pdf-document" className="flex min-w-min flex-col items-center gap-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /><div id="binary-fallback" className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Icon name="file" /><strong id="binary-name" /><Button id="binary-fallback-download" variant="outline" asChild><a download><Icon name="download" />Download</a></Button></div></div>
+            </div>
+              </div>
+              <aside id="review-pane" className="grid min-h-0 min-w-0 grid-rows-[2.5rem_minmax(0,1fr)] border-l bg-muted/50" hidden>
+                <div className="flex items-center justify-between border-b px-2.5"><strong className="text-xs">Review</strong><IconButton id="close-review" icon="x" title="Close review" /></div>
+                <div className="min-h-0 overflow-auto p-2.5"><div id="review-list" /></div>
+              </aside>
             </div>
           </section>
           <div id="output-resize" role="separator" aria-label="Resize editor and output" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
 
           <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:inset-0 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
             <div className="pane-header output-header flex min-h-11 flex-wrap items-center justify-between border-b bg-muted px-2.5">
-              <div className="flex min-w-0 items-center gap-1.5"><Button id="compile-button" className="h-8 w-28 shrink-0 px-3 text-xs" size="sm" type="button" title="Compile document"><Icon name="play" /><span>Compile</span></Button><div className="segmented grid w-52 grid-cols-3 rounded-md border bg-muted p-0.5" role="tablist"><Button className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="pdf">PDF</Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="review">Review <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="log">Log <span id="log-error-count" className="text-red-700" hidden /></Button></div></div>
+              <div className="flex min-w-0 items-center gap-1.5"><Button id="compile-button" className="h-8 w-28 shrink-0 px-3 text-xs" size="sm" type="button" title="Compile document"><Icon name="play" /><span>Compile</span></Button><div className="segmented grid w-32 grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist"><Button className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="pdf">PDF</Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="log">Log <span id="log-error-count" className="text-red-700" hidden /></Button></div></div>
               <div className="flex items-center"><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button><IconButton id="close-output" icon="x" title="Back to editor" className="mobile-output-close lg:hidden" /></div>
               <span id="pdf-freshness" className="w-full pb-1 text-[10px] text-muted-foreground" hidden />
             </div>
             <div id="pdf-view" className="pdf-view relative min-h-0 min-w-0 overflow-auto bg-zinc-700"><div id="empty-output" className="empty-output absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-zinc-300"><Icon name="file-check-2" /><span id="pdf-status">No compiled PDF</span></div><div id="pdf-document" className="pdf-document flex min-w-min flex-col items-center gap-4 p-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /></div>
-            <div id="review-pane" className="review-pane min-h-0 overflow-auto bg-muted/50 p-2.5" hidden><div id="review-list" /></div>
             <div id="build-log" className="min-h-0 min-w-0 overflow-auto bg-background" hidden>
               <div id="build-errors" className="border-b p-3" hidden />
               <details className="p-3" open><summary className="cursor-pointer text-xs font-medium text-muted-foreground">Full compiler log</summary><pre id="build-output" className="m-0 whitespace-pre-wrap break-words py-3 font-mono text-xs leading-relaxed">No compilation yet.</pre></details>

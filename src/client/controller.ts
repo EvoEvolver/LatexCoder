@@ -1240,7 +1240,6 @@ function appendCommentReply(threadId: string, value: string): boolean {
 
 function openCommentThread(threadId: string, reply = false): void {
   selectOutput("review");
-  elements.output_pane.classList.add("mobile-open");
   renderReviews();
   const article = [...elements.review_list.querySelectorAll<HTMLElement>(".review-item")]
     .find(candidate => candidate.dataset.reviewId === threadId && candidate.dataset.filePath === state.activeFile);
@@ -1360,7 +1359,7 @@ function drawReviews() {
   for (const group of groups) {
     const item = group.items[0];
     const article = document.createElement("article");
-    article.className = `review-item ${group.kind} mb-2 rounded-md border border-l-[3px] border-l-amber-700 bg-card p-3 [&.revision]:border-l-primary`;
+    article.className = `review-item ${group.kind} mb-2 min-w-0 rounded-md border border-l-[3px] border-l-amber-700 bg-card p-3 [overflow-wrap:anywhere] [&.revision]:border-l-primary`;
     article.dataset.reviewId = group.id;
     article.dataset.filePath = group.path;
     const path = document.createElement("div");
@@ -1409,7 +1408,7 @@ function drawReviews() {
       note.textContent = item.kind === "revision" ? `Before: ${item.note}` : "Tracked change";
     }
     const actions = document.createElement("div");
-    actions.className = "review-buttons flex gap-1.5";
+    actions.className = "review-buttons flex flex-wrap gap-1.5";
     if (group.kind === "comment") {
       const reply = reviewButton("Reply", async () => {
         if (!await selectReviewFile(group.path)) return;
@@ -1923,13 +1922,21 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
   }
 }
 
+function setReviewOpen(open: boolean): void {
+  elements.review_pane.hidden = !open;
+  document.getElementById("editor-body")!.style.gridTemplateColumns = open ? "minmax(0,1fr) minmax(0,42%)" : "minmax(0,1fr)";
+  const button = document.getElementById("toggle-review")!;
+  button.setAttribute("aria-expanded", String(open));
+  button.classList.toggle("bg-accent", open);
+  if (open) renderReviews();
+}
+
 function selectOutput(name: "pdf" | "review" | "log"): void {
-  document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.classList.toggle("active", button.dataset.output === name));
+  if (name === "review") { setReviewOpen(true); return; }
+  document.querySelectorAll<HTMLElement>("[data-output]:not([data-output=review])").forEach(button => button.classList.toggle("active", button.dataset.output === name));
   elements.pdf_view.hidden = name !== "pdf";
-  elements.review_pane.hidden = name !== "review";
   elements.build_log.hidden = name !== "log";
   if (name === "log") elements.build_log.scrollTop = 0;
-  if (name === "review") renderReviews();
 }
 
 setInterval(() => {
@@ -2785,15 +2792,18 @@ try {
 
 function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
-  elements.files_pane.hidden = !mobile && filesHidden;
+  elements.files_pane.hidden = false;
+  elements.file_list.hidden = !mobile && filesHidden;
+  document.getElementById("files-heading")!.hidden = !mobile && filesHidden;
+  document.getElementById("files-actions")!.hidden = !mobile && filesHidden;
   filesResize.hidden = !mobile && filesHidden;
   const width = workspace.clientWidth;
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 576));
-    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
+    const remaining = width - (filesHidden ? 44 : filesWidth + 8) - 8;
     const output = Math.max(320, Math.min(remaining - 240, remaining * outputFraction));
     workspace.style.gridTemplateColumns = filesHidden
-      ? `minmax(0,1fr) 8px ${output}px`
+      ? `44px 0px minmax(0,1fr) 8px ${output}px`
       : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
   }
   elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
@@ -2809,7 +2819,7 @@ for (const handle of [filesResize, outputResize]) {
     if (narrowWorkspace.matches) return;
     if (handle === filesResize) filesWidth += delta;
     else {
-      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
+      const remaining = workspace.clientWidth - (filesHidden ? 44 : filesWidth + 8) - 8;
       outputFraction = Math.max(320 / remaining, Math.min(1 - 240 / remaining, outputFraction - delta / remaining));
     }
     updateWorkspaceLayout();
@@ -2842,10 +2852,16 @@ elements.toggle_files.addEventListener("click", () => {
   else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
   updateWorkspaceLayout();
 });
+document.getElementById("mobile-files")!.addEventListener("click", () => {
+  elements.files_pane.classList.toggle("mobile-open");
+  updateWorkspaceLayout();
+});
+document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
+document.getElementById("close-review")!.addEventListener("click", () => setReviewOpen(false));
 new ResizeObserver(updateWorkspaceLayout).observe(workspace);
 narrowWorkspace.addEventListener("change", updateWorkspaceLayout);
 updateWorkspaceLayout();
-document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => {
+document.querySelectorAll<HTMLElement>("[data-output]:not([data-output=review])").forEach(button => button.addEventListener("click", () => {
   if (button.dataset.output === "pdf" || button.dataset.output === "review" || button.dataset.output === "log") selectOutput(button.dataset.output);
 }));
 window.addEventListener("beforeunload", () => {

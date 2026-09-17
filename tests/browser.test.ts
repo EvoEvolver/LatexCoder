@@ -42,6 +42,35 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("Review opens beside source independently of PDF and closes back to full editor width", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
+      data: "\\cmtbg{thread}{Ada}Claim\\cmted{Please clarify the argument}", headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const width = (await page.locator("#editor").boundingBox()).width;
+    assert.equal(await page.locator("#files-pane #toggle-files").count(), 1);
+    assert.equal(await page.locator("#output-pane [data-output=review]").count(), 0);
+    await page.locator("#toggle-review").click();
+    await page.locator("#review-list .review-item").waitFor();
+    assert.equal(await page.locator("#pdf-view").isVisible(), true);
+    assert.ok((await page.locator("#editor").boundingBox()).width < width);
+    const editor = await page.locator("#editor").boundingBox();
+    const review = await page.locator("#review-pane").boundingBox();
+    assert.ok(review.x >= editor.x + editor.width - 1);
+    await page.screenshot({ path: "/tmp/latexcoder-review-sidebar-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.getElementById("files-pane").getBoundingClientRect().right <= 1);
+    await page.screenshot({ path: "/tmp/latexcoder-review-sidebar-mobile.png" });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator("#close-review").click();
+    assert.equal(await page.locator("#review-pane").isVisible(), false);
+    assert.ok(Math.abs((await page.locator("#editor").boundingBox()).width - width) < 1);
+  });
+});
+
 test("citation autocomplete displays title and authors and inserts only the key", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
@@ -361,7 +390,8 @@ test("automatic compilation is debounced and errors navigate to source", async (
       return view.state.doc.lineAt(view.state.selection.main.head).number === 3;
     });
     await page.locator('[data-output="review"]').click();
-    assert.equal(await page.locator("#build-log").isVisible(), false);
+    assert.equal(await page.locator("#build-log").isVisible(), true);
+    assert.equal(await page.locator("#review-pane").isVisible(), true);
     await page.locator('[data-output="log"]').click();
     assert.equal(await page.locator("#build-log").isVisible(), true);
   });
@@ -621,7 +651,8 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     await drag("#output-resize", -60);
     assert.ok(await width("#output-pane") > output + 50);
     await page.locator("#toggle-files").click();
-    assert.equal(await page.locator("#files-pane").isVisible(), false);
+    assert.equal(await page.locator("#file-list").isVisible(), false);
+    assert.equal(await width("#files-pane"), 44);
     assert.equal(await page.locator("#files-resize").isVisible(), false);
     await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#files-pane").isVisible(), true);
@@ -631,7 +662,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     assert.ok(await width("#files-pane") > files + 50);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.locator("#files-resize").isVisible(), false);
-    await page.locator("#toggle-files").click();
+    await page.locator("#mobile-files").click();
     assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), true);
     await page.screenshot({ path: "/tmp/latexcoder-resizable-mobile.png" });
   });
