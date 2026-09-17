@@ -1,6 +1,6 @@
 export type ReferenceLink = { from: number; to: number; key: string; kind: "file" | "asset" | "url" | "cite" | "label" };
 
-function withoutComments(source: string) {
+export function withoutComments(source: string) {
   // Keep offsets intact while ignoring unescaped TeX comments.
   const characters = source.split("");
   for (let index = 0; index < source.length; index++) {

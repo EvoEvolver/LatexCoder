@@ -42,6 +42,29 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+test("citation autocomplete displays title and authors and inserts only the key", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=refs.bib`, {
+      data: "@article{paper2026, title={A Useful Paper}, author={Doe, Jane and Smith, John}}",
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: "", headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator(".cm-content").click();
+    await page.keyboard.type("\\citep{pap");
+    const candidate = page.locator(".cm-tooltip-autocomplete li").filter({ hasText: "paper2026" });
+    await candidate.waitFor();
+    assert.match(await candidate.textContent(), /A Useful Paper/);
+    assert.match(await candidate.textContent(), /Doe, Jane; Smith, John/);
+    await page.keyboard.press("Enter");
+    const source = await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString());
+    assert.match(source, /\\citep\{paper2026/);
+    assert.ok(!source.includes("A Useful Paper"));
+  });
+});
+
 test("selected file background covers its actions and follows file selection", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();

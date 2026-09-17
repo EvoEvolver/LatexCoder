@@ -80,6 +80,7 @@ import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/rev
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { compileErrors } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
+import { projectCompletionSource } from "./completions.ts";
 import type {
   AppElement, AppState, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -862,7 +863,16 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     bracketMatching(),
     closeBrackets(),
-    autocompletion(),
+    autocompletion({ override: [projectCompletionSource({
+      projectId: () => state.projectId,
+      activeFile: () => state.activeFile,
+      files: () => state.files,
+      readFile: async relativePath => {
+        const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`));
+        if (!response.ok) return "";
+        return response.text();
+      },
+    })] }),
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),
