@@ -401,7 +401,9 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentInstructions, /curl -fsS -X POST '.*\/v1\/search\?project=/);
     assert.match(agentInstructions, /X-Ripgrep-Exit-Code/);
     assert.match(agentInstructions, /Download The Current PDF/);
-    assert.match(agentInstructions, /curl -fsSL '.*\/v1\/build\/pdf\?project=/);
+    assert.match(agentInstructions, /curl -sSL '.*\/v1\/build\/pdf\?project=/);
+    assert.match(agentInstructions, /error.details.log/);
+    assert.match(agentInstructions, /firstFatalError/);
     assert.match(agentInstructions, /do not call the compile API first/);
     assert.match(agentInstructions, /Reply To An Inline Comment/);
     assert.match(agentInstructions, /\\cmtrpl\{unique-reply-id\}\{Agent Name\}\{Reply text\}/);
@@ -555,6 +557,9 @@ test("PDF download compiles current inputs and caches by source revision", async
     await withServer(async ({ base }) => {
       const first = await fetch(`${base}/v1/build/pdf`);
       assert.equal(first.status, 200);
+      assert.equal(first.headers.get("x-build-error-count"), "0");
+      assert.equal(first.headers.get("x-build-warning-count"), "0");
+      assert.match(first.headers.get("link"), /\/v1\/build\?project=/);
       const firstRevision = first.headers.get("x-latex-coder-source-revision");
       assert.match(firstRevision, /^[a-f0-9]{64}$/);
       assert.match(await first.text(), /^fake-pdf-1\n/);
@@ -591,6 +596,38 @@ test("PDF download compiles current inputs and caches by source revision", async
     }, { compiler });
   } finally {
     await rm(compilerDir, { recursive: true, force: true });
+  }
+});
+
+test("Agent PDF download returns structured diagnostics on failure instead of the old PDF", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "latexcoder-pdf-diagnostics-"));
+  const compiler = await createFakeLatexmk(directory);
+  try {
+    await withServer(async ({ base }) => {
+      await writeFile(compiler, await readFile(compiler, "utf8") + '\nprintf "LaTeX Warning: Citation undefined\\n"\n');
+      const successful = await fetch(`${base}/v1/build/pdf`);
+      assert.equal(successful.status, 200);
+      assert.equal(successful.headers.get("x-build-warning-count"), "1");
+      const warningReport = await (await fetch(`${base}/v1/build`)).json();
+      assert.equal(warningReport.build.diagnostics[0].severity, "warning");
+      assert.equal(warningReport.build.firstFatalError, null);
+      await writeFile(compiler, '#!/bin/sh\nprintf "main.tex:3: Undefined control sequence\\n! Emergency stop.\\n"\nexit 1\n');
+      await fetch(`${base}/v1/files?path=main.tex`, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "Changed source\nSecond line\n\\badcommand" });
+      const response = await fetch(`${base}/v1/build/pdf`);
+      assert.equal(response.status, 422);
+      assert.match(response.headers.get("content-type"), /application\/json/);
+      const { error } = await response.json();
+      assert.equal(error.code, "compile_failed");
+      assert.match(error.details.log, /Undefined control sequence/);
+      assert.deepEqual(error.details.firstFatalError, { path: "main.tex", line: 3, message: "Undefined control sequence", severity: "error" });
+      assert.equal(error.details.main, "main.tex");
+      assert.ok(error.details.diagnostics.length >= 1);
+      const { build } = await (await fetch(`${base}/v1/build`)).json();
+      assert.equal(build.stale, true);
+      assert.deepEqual(build.firstFatalError, error.details.firstFatalError);
+    }, { compiler });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

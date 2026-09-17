@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { compileErrors } from "../shared/compile-errors.ts";
+import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { compileSourceMap } from "../shared/source-map.ts";
 import { apiError, safeRelativePath } from "./core.ts";
 import { findCompiler } from "./compiler.ts";
@@ -127,7 +127,16 @@ export function createCompileService({ stateDir, database, queue, logger, server
       if (runtime.build.pdf && runtime.build.status === "success" && runtime.build.main === main
         && runtime.build.sourceRevision === currentRevision && existsSync(path.join(runtime.buildDir, "latest.pdf"))) return runtime.build;
       const result = await compileProject(runtime, main);
-      if (!result.success) throw apiError("compile_failed", result.build.log || "LaTeX compilation failed", 422);
+      if (!result.success) {
+        const diagnostics = buildDiagnostics(result.build.log, result.build.errors);
+        if (!diagnostics.some(item => item.severity === "error")) diagnostics.unshift({ severity: "error", message: result.build.log || "LaTeX compilation failed" });
+        throw apiError("compile_failed", "LaTeX compilation failed; inspect error.details for diagnostics", 422, {
+          main: result.build.main,
+          log: result.build.log,
+          diagnostics,
+          firstFatalError: diagnostics.find(item => item.severity === "error") || null,
+        });
+      }
     }
     throw apiError("compile_changed", "the project kept changing while the PDF was compiling; retry the download", 409);
   };

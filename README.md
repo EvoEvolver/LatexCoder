@@ -239,6 +239,14 @@ files, without changing the Git index or creating a commit.
   in the PDF and remain aligned when zooming.
 - Compile errors link back to source. Failed builds retain the last successful
   PDF with an out-of-date indicator; the default Agent PDF endpoint remains fresh.
+  If current compilation fails, `GET /v1/build/pdf` returns HTTP 422 JSON with
+  `error.details.log`, `diagnostics`, and `firstFatalError` (including source
+  path/line when available), not a stale PDF. Successful downloads include
+  `X-Build-Error-Count`, `X-Build-Warning-Count`, and a `Link` to the log API.
+  `GET /v1/build` exposes the same diagnostics alongside build state. Agents can
+  inspect the failure, submit a checked source edit, then request the PDF again
+  without explicitly managing compilation. Check HTTP status before saving the
+  response as a PDF; the Agent workspace includes a status-aware curl example.
 - Files and folders can be moved or renamed, including drag-and-drop. Deleted
   items and their collaborative snapshots are stored in SQLite and can be restored.
 - Search and replace supports the current file or whole project. A diff preview

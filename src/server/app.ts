@@ -12,7 +12,7 @@ import { StateDatabase } from "./database.ts";
 import { parseReviews } from "../shared/review.ts";
 import { projectedPosition } from "../shared/source-map.ts";
 import { syncTexPositions } from "../shared/pdf-map.ts";
-import { compileErrors } from "../shared/compile-errors.ts";
+import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { createPatch } from "diff";
 import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isWellFormedUtf16, MAX_FILE_BYTES, MAX_TEXT_BYTES, parseCookies, passwordMatches, passwordRecord, pathFromRoomName, randomToken, readProjectZip, safeRelativePath, sessionCookie, sha256, validatePassword } from "./core.ts";
 import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
@@ -493,6 +493,10 @@ matches or 1 for no matches.
 \`GET /v1/build/pdf\` downloads a PDF for the current project contents. The
 server compiles automatically when the inputs have changed and otherwise reuses
 its matching cached artifact.
+Compilation failure returns HTTP 422 JSON with \`error.details.log\`,
+\`error.details.diagnostics\`, and \`error.details.firstFatalError\`.
+Successful PDF responses include diagnostic counts and a \`Link\` header pointing
+to \`GET /v1/build\` for the full log and warnings.
 
 ## Mutate
 
@@ -564,10 +568,24 @@ matches and 1 for no matches.
 
 ## Download The Current PDF
 
-curl -fsSL '${origin}${pdfUrl}' -o latest.pdf
+status=$(curl -sSL '${origin}${pdfUrl}' -D latest.headers -o latest.response -w '%{http_code}')
+if [ "$status" = 200 ]; then mv latest.response latest.pdf; else cat latest.response; fi
 
 This always downloads a PDF built from the current project inputs. The server
 handles compilation and caching; do not call the compile API first.
+Check the HTTP status before treating the response as a PDF. HTTP 422 returns
+JSON: error.details.log contains the compiler output, diagnostics contains
+errors and warnings with source path/line when available, and firstFatalError
+identifies the first fatal error. Fix the source with a checked file upload,
+then request this PDF URL again. Failed compilation does not return a stale PDF.
+On success, X-Build-Error-Count and X-Build-Warning-Count summarize diagnostics;
+the Link header points to the project-scoped log API. You can also inspect:
+
+curl -fsS '${origin}/v1/build?${capability}'
+
+Its build object includes log, diagnostics, and firstFatalError. A failed build
+may still reference a PDF from a previous successful build; that artifact is not
+evidence that the current source compiles.
 
 ## Upload An Updated File
 
@@ -1636,16 +1654,25 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const runtime = await resolveProject(request);
       runtime.collaboration.flush();
       const currentRevision = await compilationSourceRevision(runtime.projectDir, runtime.build.main, database.getSettings(runtime.id).compiler);
-      response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log) } });
+      const diagnostics = buildDiagnostics(runtime.build.log, runtime.build.errors);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log), diagnostics, firstFatalError: diagnostics.find(item => item.severity === "error") || null } });
     }
     catch (error) { next(error); }
   });
   app.get("/v1/build/pdf", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      response.setHeader("Cache-Control", "no-store");
       const build = request.query.cached === "1" ? runtime.build : await ensureLatestPdf(runtime);
       if (!build.pdf || !existsSync(path.join(runtime.buildDir, "latest.pdf"))) throw apiError("pdf_not_found", "No successful PDF yet", 404);
       response.setHeader("Cache-Control", "no-store");
+      const diagnostics = buildDiagnostics(build.log, build.errors);
+      response.setHeader("X-Build-Error-Count", diagnostics.filter(item => item.severity === "error").length);
+      response.setHeader("X-Build-Warning-Count", diagnostics.filter(item => item.severity === "warning").length);
+      const logQuery = new URLSearchParams({ project: runtime.id });
+      if (typeof request.query.access === "string") logQuery.set("access", request.query.access);
+      response.setHeader("Link", `</v1/build?${logQuery}>; rel="describedby"; type="application/json"`);
       response.setHeader("ETag", `"${build.sourceRevision}"`);
       response.setHeader("X-LaTeX-Coder-Source-Revision", build.sourceRevision);
       response.sendFile(path.join(runtime.buildDir, "latest.pdf"), { dotfiles: "allow" });
