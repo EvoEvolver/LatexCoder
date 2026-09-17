@@ -78,7 +78,7 @@ import * as Y from "yjs";
 
 import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
-import { compileErrors } from "../shared/compile-errors.ts";
+import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import type {
@@ -144,11 +144,11 @@ const elements = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-log", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
@@ -1503,7 +1503,8 @@ async function refreshProject(open = false) {
   state.folders = data.project.folders || [];
   state.settings = data.project.settings;
   renderFiles();
-  if (data.project.build.log) { elements.build_output.textContent = data.project.build.log; renderBuildErrors(data.project.build.log, data.project.build.errors); }
+  elements.build_output.textContent = data.project.build.log || "No compilation yet.";
+  renderBuildErrors(data.project.build.log, data.project.build.errors, data.project.build.status === "error");
   if (data.project.build.pdf) showPdf();
   if (open) {
     const target = state.files.find(file => file.path === state.activeFile)?.path
@@ -1842,9 +1843,10 @@ async function compile() {
     const build = await request<{ build: BuildInfo }>("v1/build").catch((): null => null);
     if (state.projectId !== project) return;
     elements.build_output.textContent = build?.build?.log || error.message;
-    renderBuildErrors(build?.build?.log || error.message, build?.build?.errors);
-    elements.build_log.hidden = false;
-    showToast(error.message);
+    renderBuildErrors(build?.build?.log || error.message, build?.build?.errors, true);
+    selectOutput("log");
+    elements.output_pane.classList.add("mobile-open");
+    showToast("Compilation failed. See Log for details.");
   } finally {
     elements.compile_button.disabled = false;
     elements.compile_button.querySelector("span").textContent = "Compile";
@@ -1878,26 +1880,55 @@ async function refreshPdfStatus() {
   } catch { markPdfStale(); }
 }
 
-function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compileErrors>) {
+function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compileErrors>, failed = false) {
   const list = document.getElementById("build-errors")!;
   list.replaceChildren();
-  const errors = mappedErrors?.length ? mappedErrors : compileErrors(log);
+  const errors = buildDiagnostics(log, mappedErrors);
+  if (failed && !errors.some(error => error.severity === "error")) errors.unshift({ severity: "error", message: log.trim() || "Compilation failed." });
+  const count = document.getElementById("log-error-count")!;
+  const fatalCount = errors.filter(error => error.severity === "error").length;
+  count.textContent = String(fatalCount);
+  count.hidden = !fatalCount;
   list.hidden = !errors.length;
-  for (const error of errors) {
-    const file = state.files.find(file => file.path === error.path || error.path.endsWith(`/${file.path}`));
-    if (!file) continue;
+  const heading = document.createElement("h3");
+  heading.className = "mb-2 text-sm font-semibold";
+  const warningCount = errors.length - fatalCount;
+  heading.textContent = `${fatalCount} ${fatalCount === 1 ? "error" : "errors"} · ${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`;
+  list.append(heading);
+  const items = document.createElement("ol");
+  items.className = "list-decimal space-y-2 pl-5";
+  list.append(items);
+  for (const [index, error] of errors.entries()) {
+    const file = error.path ? state.files.find(file => file.path === error.path || error.path!.endsWith(`/${file.path}`)) : undefined;
+    const item = document.createElement("li");
+    item.className = "text-xs";
     const button = document.createElement("button");
-    button.className = "block w-full border-b border-zinc-800 px-3 py-2 text-left text-xs text-red-300 hover:bg-zinc-800";
-    button.textContent = `${file.path}:${error.line} ${error.message}`;
-    button.addEventListener("click", () => { elements.build_log.hidden = true; void revealSource({ path: file.path, line: error.line }).catch(error => showToast(error.message)); });
-    list.append(button);
+    button.className = "block w-full rounded border p-2 text-left whitespace-pre-wrap break-words hover:bg-accent " + (error.severity === "error" ? "border-red-200 text-red-800" : "border-amber-200 text-amber-800");
+    if (index === 0 && error.severity === "error") {
+      button.id = "first-fatal-error";
+      const badge = document.createElement("strong");
+      badge.className = "mb-1 block text-xs";
+      badge.textContent = "First fatal error";
+      button.append(badge);
+    }
+    const message = document.createElement("span");
+    message.textContent = `${error.path ? `${file?.path || error.path}:${error.line} · ` : ""}${error.message}`;
+    button.append(message);
+    if (file && error.line) {
+      button.title = "Go to source";
+      button.addEventListener("click", () => { void revealSource({ path: file.path, line: error.line! }).catch(error => showToast(error.message)); });
+    } else button.disabled = true;
+    item.append(button);
+    items.append(item);
   }
 }
 
-function selectOutput(name: "pdf" | "review"): void {
+function selectOutput(name: "pdf" | "review" | "log"): void {
   document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.classList.toggle("active", button.dataset.output === name));
   elements.pdf_view.hidden = name !== "pdf";
   elements.review_pane.hidden = name !== "review";
+  elements.build_log.hidden = name !== "log";
+  if (name === "log") elements.build_log.scrollTop = 0;
   if (name === "review") renderReviews();
 }
 
@@ -2275,8 +2306,6 @@ elements.suggest_edit.addEventListener("click", () => {
   showToast(state.suggesting ? "Suggestion mode on." : "Suggestion mode off.");
   state.view?.focus();
 });
-elements.show_log.addEventListener("click", () => { elements.build_log.hidden = false; });
-elements.close_log.addEventListener("click", () => { elements.build_log.hidden = true; });
 elements.close_output.addEventListener("click", () => elements.output_pane.classList.remove("mobile-open"));
 elements.pdf_zoom_out.addEventListener("click", () => {
   state.pdfZoom = Math.max(0.5, state.pdfZoom - 0.15);
@@ -2817,7 +2846,7 @@ new ResizeObserver(updateWorkspaceLayout).observe(workspace);
 narrowWorkspace.addEventListener("change", updateWorkspaceLayout);
 updateWorkspaceLayout();
 document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => {
-  if (button.dataset.output === "pdf" || button.dataset.output === "review") selectOutput(button.dataset.output);
+  if (button.dataset.output === "pdf" || button.dataset.output === "review" || button.dataset.output === "log") selectOutput(button.dataset.output);
 }));
 window.addEventListener("beforeunload", () => {
   disconnectEditor();

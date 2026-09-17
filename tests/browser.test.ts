@@ -346,12 +346,24 @@ test("automatic compilation is debounced and errors navigate to source", async (
       for (const text of [" A", " B", " C"]) view.dispatch({ changes: { from: view.state.doc.length, insert: text } });
     });
     await page.locator("#build-errors button").waitFor();
+    assert.equal(await page.locator('[data-output="log"]').getAttribute("class").then(value => value.includes("active")), true);
+    assert.equal(await page.locator("#first-fatal-error").textContent(), "First fatal errormain.tex:3 · Undefined control sequence");
+    assert.equal(await page.locator("#build-log").isVisible(), true);
+    assert.equal(await page.locator("#pdf-view").isVisible(), false);
+    await page.screenshot({ path: "/tmp/latexcoder-log-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: "/tmp/latexcoder-log-mobile.png" });
+    await page.setViewportSize({ width: 1280, height: 720 });
     assert.equal(calls, 1);
     await page.locator("#build-errors button").click();
     await page.waitForFunction(() => {
       const { view } = globalThis.__paperE2E.state;
       return view.state.doc.lineAt(view.state.selection.main.head).number === 3;
     });
+    await page.locator('[data-output="review"]').click();
+    assert.equal(await page.locator("#build-log").isVisible(), false);
+    await page.locator('[data-output="log"]').click();
+    assert.equal(await page.locator("#build-log").isVisible(), true);
   });
 });
 
