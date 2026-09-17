@@ -4,7 +4,7 @@ import type { Application } from "express";
 import type { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import type * as Y from "yjs";
-import type { BuildMetadata, ProjectMetadata, StateDatabase } from "../database.ts";
+import type { BuildMetadata, ProjectMetadata, StateDatabase } from "./database.ts";
 
 export type ApiError = Error & { code: string; status: number; details?: Record<string, unknown> };
 export type PasswordRecord = { salt: string; hash: string };

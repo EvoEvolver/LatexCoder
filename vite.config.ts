@@ -8,7 +8,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": path.resolve(root, "src") } },
+  resolve: { alias: { "@": path.resolve(root, "src/client") } },
   // CodeMirror, Yjs, and PDF.js live in a lazy editor chunk; the dashboard
   // remains small and loads independently.
   build: { chunkSizeWarningLimit: 1_100 },

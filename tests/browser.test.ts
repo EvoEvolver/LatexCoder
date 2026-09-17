@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import { chromium } from "playwright";
 import { zipSync, strToU8 } from "fflate";
 
-import { createPaperServer } from "../server.ts";
+import { createPaperServer } from "../src/server/main.ts";
 
 // Drives the real bundled LaTeX Coder editor in headless Chromium against the real
 // server, so these tests exercise the exact suggesting-mode transaction

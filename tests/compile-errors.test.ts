@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileErrors } from "../src/compile-errors.ts";
-import { syncTexPositions } from "../src/pdf-map.ts";
-import { projectedPosition } from "../src/source-map.ts";
+import { compileErrors } from "../src/shared/compile-errors.ts";
+import { syncTexPositions } from "../src/shared/pdf-map.ts";
+import { projectedPosition } from "../src/shared/source-map.ts";
 
 test("compiler errors resolve file-line output and legacy or Tectonic formats", () => {
   assert.deepEqual(compileErrors("./chapters/one.tex:12: Undefined control sequence\nerror: two.tex:4: missing brace"), [{ path: "chapters/one.tex", line: 12, message: "Undefined control sequence" }, { path: "two.tex", line: 4, message: "missing brace" }]);

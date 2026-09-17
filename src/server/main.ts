@@ -1,12 +1,13 @@
 import { fileURLToPath } from "node:url";
 
-export { createPaperServer, safeRelativePath, startPaperServer } from "./src/server/app.ts";
-import { startPaperServer } from "./src/server/app.ts";
+import { startPaperServer } from "./app.ts";
+
+export { createPaperServer, safeRelativePath, startPaperServer } from "./app.ts";
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const paper = await startPaperServer();
   let closing = false;
-  const stop = () => {
+  const stop = (): void => {
     if (closing) return;
     closing = true;
     paper.shutdown();

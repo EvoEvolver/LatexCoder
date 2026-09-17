@@ -76,9 +76,9 @@ import * as decoding from "lib0/decoding";
 import { diffLines } from "diff";
 import * as Y from "yjs";
 
-import { parseReviews, stripReviewStorage, type ReviewItem } from "./review.ts";
-import { referenceLinks, referenceDefinition, type ReferenceLink } from "./references.ts";
-import { compileErrors } from "./compile-errors.ts";
+import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
+import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
+import { compileErrors } from "../shared/compile-errors.ts";
 
 declare global {
   interface Window {

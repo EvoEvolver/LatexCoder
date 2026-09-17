@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { referenceLinks, referenceDefinition } from "../src/references.ts";
+import { referenceLinks, referenceDefinition } from "../src/shared/references.ts";
 
 test("references support optional arguments, multiple keys, and comments", () => {
   const source = String.raw`\include{chapters/intro}

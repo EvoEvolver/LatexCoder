@@ -15,8 +15,8 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import { zipSync, strToU8 } from "fflate";
 
-import { createPaperServer, safeRelativePath } from "../server.ts";
-import { parseReviews, stripReviewStorage } from "../src/review.ts";
+import { createPaperServer, safeRelativePath } from "../src/server/main.ts";
+import { parseReviews, stripReviewStorage } from "../src/shared/review.ts";
 
 const execFileAsync = promisify(execFile);
 

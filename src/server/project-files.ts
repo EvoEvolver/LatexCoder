@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { stripReviewStorage } from "../review.ts";
+import { stripReviewStorage } from "../shared/review.ts";
 import { apiError, contentPath, isTextFile } from "./core.ts";
 import type { ContentEntry, ProjectFile } from "./types.ts";
 

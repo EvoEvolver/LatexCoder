@@ -8,11 +8,11 @@ import path from "node:path";
 
 import { WebSocketServer } from "ws";
 
-import { StateDatabase } from "../database.ts";
-import { parseReviews } from "../review.ts";
-import { compileSourceMap, projectedPosition } from "../source-map.ts";
-import { syncTexPositions } from "../pdf-map.ts";
-import { compileErrors } from "../compile-errors.ts";
+import { StateDatabase } from "./database.ts";
+import { parseReviews } from "../shared/review.ts";
+import { compileSourceMap, projectedPosition } from "../shared/source-map.ts";
+import { syncTexPositions } from "../shared/pdf-map.ts";
+import { compileErrors } from "../shared/compile-errors.ts";
 import { createPatch } from "diff";
 import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isWellFormedUtf16, MAX_FILE_BYTES, MAX_TEXT_BYTES, parseCookies, passwordMatches, passwordRecord, pathFromRoomName, randomToken, readProjectZip, safeRelativePath, sessionCookie, sha256, validatePassword } from "./core.ts";
 import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
@@ -20,7 +20,7 @@ import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPath
 import { createCollaborationStore } from "./collaboration.ts";
 import { createProjectSearch } from "./search.ts";
 import type { NextFunction, Request, Response } from "express";
-import type { BuildMetadata, ProjectMetadata } from "../database.ts";
+import type { BuildMetadata, ProjectMetadata } from "./database.ts";
 import type { ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
 type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };

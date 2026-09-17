@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fileChanges } from "../src/file-diff.ts";
+import { fileChanges } from "../src/shared/file-diff.ts";
 
 test("full-file diff reconstructs Unicode, empty, and large rewritten files", () => {
   for (const [base, updated] of [["", "new"], ["old", ""], ["unchanged", "unchanged"], ["😀 one 😀 two", "😁 one 🙂 two"], ["same prefix " + "a".repeat(15000) + " same suffix", "same prefix " + "b".repeat(15000) + " same suffix"], ["A\nB\nC", "A!\nB\nC!"]]) {

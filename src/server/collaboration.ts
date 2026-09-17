@@ -7,9 +7,9 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
 import { WebSocket } from "ws";
 import * as Y from "yjs";
-import { fileChanges } from "../file-diff.ts";
-import { parseReviews } from "../review.ts";
-import type { StateDatabase } from "../database.ts";
+import { fileChanges } from "../shared/file-diff.ts";
+import { parseReviews } from "../shared/review.ts";
+import type { StateDatabase } from "./database.ts";
 import { agentAuthor, apiError, atomicWriteSync, isTextFile, isUnicodeBoundary, isWellFormedUtf16, MAX_PATCH_CHANGES, MAX_TEXT_BYTES, roomNameForPath, sha256 } from "./core.ts";
 import type { CollaborationStore, EditMode, EditOptions, EditResult, PatchChange, SharedDocument } from "./types.ts";
 

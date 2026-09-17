@@ -33,7 +33,7 @@ RUN LATEXCODER_STATE_DIR=/opt/latexcoder-compiler ./scripts/install-tectonic.sh 
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json server.ts ./
+COPY package.json ./
 COPY src ./src
 
 ENV NODE_ENV=production \
@@ -45,4 +45,4 @@ RUN mkdir -p /data
 EXPOSE 8090
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["./node_modules/.bin/tsx", "server.ts"]
+CMD ["./node_modules/.bin/tsx", "src/server/main.ts"]

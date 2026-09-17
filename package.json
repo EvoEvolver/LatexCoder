@@ -8,11 +8,11 @@
   "scripts": {
     "build": "vite build",
     "check": "pnpm build && pnpm typecheck",
-    "dev": "concurrently -k -n server,vite \"tsx watch server.ts\" \"vite\"",
+    "dev": "concurrently -k -n server,vite \"tsx watch src/server/main.ts\" \"vite\"",
     "prestart": "pnpm build",
-    "start": "tsx server.ts",
+    "start": "tsx src/server/main.ts",
     "test": "pnpm build && tsx --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json"
+    "typecheck": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json && tsc -p tsconfig.tools.json && tsc -p tsconfig.tests.json"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",

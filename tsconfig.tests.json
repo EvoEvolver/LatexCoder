@@ -1,9 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "noImplicitAny": false,
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    "types": ["node", "vite/client"]
   },
-  "include": ["server.ts", "src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "vite.config.ts"]
 }
