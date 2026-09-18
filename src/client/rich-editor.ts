@@ -220,7 +220,7 @@ export class RichEditor {
     const label = document.createElement('span'); label.textContent = block.env ? `LaTeX · ${block.env}` : 'LaTeX'; const code = document.createElement('pre'); code.textContent = this.source.slice(block.from,block.to);
     raw.append(label,code); this.blockEdit(raw,block,'Edit LaTeX source'); this.page.append(raw);
   }
-  private blockEdit(host: HTMLElement, block: Block, label: string, math = false) {
+  private blockEdit(host: HTMLElement, _block: Block, label: string, math = false) {
     const b = document.createElement('button'); b.className = 'visual-block-edit'; b.title = label; b.setAttribute('aria-label',label); b.textContent = 'Edit';
     b.onclick = () => {
       // Reparse before opening: preceding text edits may have moved this block.

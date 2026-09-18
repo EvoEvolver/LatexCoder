@@ -1,5 +1,7 @@
 # LaTeX Coder
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/latexcoder?referralCode=4KUZ4o&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
 LaTeX Coder is a small, collaborative, filesystem-backed LaTeX editor. One
 Node process serves the browser editor, project APIs, and Yjs WebSocket rooms.
 Each project keeps ordinary source files and build artifacts in an isolated
@@ -12,6 +14,10 @@ Vite, with shadcn-style components and Tailwind CSS v4 utilities. The Node
 server is executed with `tsx` and serves the Vite production build alongside
 the JSON, Git HTTP, and WebSocket endpoints.
 
+![LaTeX Coder workspace with project files, collaborative source editing, and PDF preview](docs/images/workspace.png)
+
+Licensed under the [MIT License](LICENSE).
+
 ## Features
 
 - A user-scoped project dashboard with stable, shareable editor URLs.
@@ -19,10 +25,12 @@ the JSON, Git HTTP, and WebSocket endpoints.
   password-bearing share links that establish scoped guest sessions.
 - Persistent member profiles with editable display names used in presence,
   comments, and suggestions.
+- System-aware Light and Dark themes with a persistent per-browser preference,
+  including the source editor, reviews, logs, dialogs, and project dashboard.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Threaded inline comments, replies, and tracked suggestions encoded as explicit
   LaTeX macros. Humans and agents see and edit the same review state through
-  ordinary source reads and checked patches, including replying, accepting,
+  ordinary source reads and hash-checked full-file uploads, including replying, accepting,
   rejecting, and resolving it.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
@@ -40,8 +48,16 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - In dark mode, PDF downloads always offer original white paper or dark paper.
   Dark export keeps original page content, selectable text and vector formulas;
   it also recolors images and charts. The compiled original is never overwritten.
+- Command-click (Mac) or Ctrl-click compiled PDF content to open its LaTeX source via SyncTeX,
+  including included files and review-aware line mapping.
+- Selection context menus with common editing commands, inline comments, and
+  forward SyncTeX navigation from source to the matching PDF position.
+- Project-wide text search with highlighted matches and cross-file navigation;
+  optional case-sensitive and sandboxed ripgrep regular-expression search.
 - Whole-project ZIP export, including the current uncommitted working tree.
-- A Markdown manual and checked file/patch APIs for coding agents.
+- A Markdown manual and full-file editing API for coding agents. Agents upload
+  raw UTF-8 files with their downloaded base SHA-256; the server computes Yjs
+  changes and rejects stale uploads without overwriting collaborators' edits.
 - A project-scoped ripgrep API with native regex, glob, line-number, and output
   options for coding agents.
 - Project-scoped plain-text Agent workspace links that can submit checked edits
@@ -84,13 +100,42 @@ For development, `pnpm dev` starts the TypeScript server on port 8090 and
 the Vite development server on `http://127.0.0.1:5173/`; Vite proxies API, Git,
 share-link, and collaboration traffic to the backend.
 
+The codebase is split into `src/client`, `src/server`, and `src/shared`. The
+backend has a thin process entry point in `src/server/main.ts`; `app.ts` composes HTTP routes and
+project runtimes, `collaboration.ts` owns Yjs documents and persistence,
+`compile-service.ts` owns compilation and cache updates, `compile-queue.ts`
+applies a process-wide concurrency limit,
+`project-files.ts` owns project-tree access, `search.ts` implements the search
+service, `process.ts` contains bounded subprocess and bubblewrap execution, and
+`core.ts` contains shared validation and authentication primitives. Domain
+contracts live in `types.ts`; request schemas shared by the browser and server
+live in `src/shared/api-schema.ts`. Persistent records remain in `database.ts`,
+with ordered transactional migrations in `src/server/database/migrations.ts`.
+The browser app and its UI components live in `src/client`, while environment-neutral
+parsers and mapping utilities live in `src/shared`. Separate TypeScript projects
+prevent client code from depending on Node APIs and server code from depending on
+browser APIs. Production TypeScript is checked with `noImplicitAny` and
+unused-symbol checks.
+
 Open `http://127.0.0.1:8090/`. Set `LATEXCODER_PORT` or `LATEXCODER_HOST` to
 change the listener. State defaults to `.latexcoder/`; set
 `LATEXCODER_STATE_DIR` to move it. `LATEXCODER_LATEX_BIN` may point to Tectonic
-or `latexmk`. The install helper at
+or `latexmk`. `LATEXCODER_COMPILE_CONCURRENCY` controls the process-wide compile
+limit and defaults to `2`. The install helper at
 `scripts/install-tectonic.sh` installs a local compiler beneath the state root.
 
-Project search requires Linux bubblewrap (`bwrap`) and ripgrep (`rg`). Every
+The server emits one-line JSON request and compile logs in production. Use
+`GET /health/live` for a liveness probe and `GET /health/ready` for readiness;
+the readiness payload includes the SQLite schema version, compile queue state,
+and detected external tools. Missing optional tools are reported without making
+the editor itself unready.
+
+PDF source navigation requires the `synctex` executable (included in the Docker
+image). Recompile existing PDFs once to generate synchronization data.
+
+The agent ripgrep API and regular-expression project search require Linux
+bubblewrap (`bwrap`) and ripgrep (`rg`). Literal project search also works on macOS.
+Every ripgrep
 search runs without network access, with the project mounted read-only, a 15
 second timeout, and a 4 MiB output limit. `LATEXCODER_BWRAP_BIN` and
 `LATEXCODER_RG_BIN` may point to explicit binaries.
@@ -130,6 +175,12 @@ On Railway, attach a persistent volume with mount path `/data` and set
 automatically; no Docker `VOLUME` declaration or custom start command is used.
 
 ## Projects
+
+New project accepts an optional ZIP archive. Uploading a ZIP from the editor
+extracts it into the current project without overwriting existing files. A
+single enclosing directory is removed automatically. Imports reject unsafe
+paths and Git metadata, and are limited to 20 MiB compressed, 100 MiB extracted,
+and 1,000 entries.
 
 Signed-in users open on a dedicated dashboard containing projects they own or
 have joined as registered collaborators, and can create new projects under their
@@ -189,6 +240,38 @@ files, without changing the Git index or creating a commit.
 
 ## Agent API
 
+### Editing and workspace tools
+
+- Project settings select the main TeX document, Tectonic or latexmk, and optional
+  debounced automatic compilation.
+- Source/PDF navigation uses SyncTeX regions; source selections are highlighted
+  in the PDF and remain aligned when zooming.
+- Compile errors link back to source. Failed builds retain the last successful
+  PDF with an out-of-date indicator; the default Agent PDF endpoint remains fresh.
+  If current compilation fails, `GET /v1/build/pdf` returns HTTP 422 JSON with
+  `error.details.log`, `diagnostics`, and `firstFatalError` (including source
+  path/line when available), not a stale PDF. Successful downloads include
+  `X-Build-Error-Count`, `X-Build-Warning-Count`, and a `Link` to the log API.
+  `GET /v1/build` exposes the same diagnostics alongside build state. Agents can
+  inspect the failure, submit a checked source edit, then request the PDF again
+  without explicitly managing compilation. Check HTTP status before saving the
+  response as a PDF; the Agent workspace includes a status-aware curl example.
+- Files and folders can be moved or renamed, including drag-and-drop. Deleted
+  items and their collaborative snapshots are stored in SQLite and can be restored.
+- Search and replace supports the current file or whole project. A diff preview
+  precedes applying changes; stale hashes reject the entire batch without editing.
+- Browser edits are cached in IndexedDB for recovery and synchronize on reconnect.
+  Saved status is acknowledged after server persistence; undo affects only your edits.
+- `POST /v1/files/edit/conflict` accepts the rejected raw upload and original
+  `X-Base-SHA256`, returning current source, its hash, and a read-only unified diff.
+  This is not a three-way merge or permission to overwrite another collaborator.
+
+Replace APIs: `POST /v1/search/replace/preview` accepts `query`, literal
+`replacement`, optional `path`, `regex`, and `caseSensitive`. Its returned files
+contain `path`, `baseSha256`, and `source`; submit those to
+`POST /v1/search/replace` as `{ "files": [...] }`. Replacement text is literal,
+including when matching with a regular expression.
+
 `GET /` with `Accept: text/markdown` returns the live API manual. Project file
 and build routes take a `project=<id>` query parameter. Agents must provide a
 member session or exchange a project share link for a scoped cookie. For example:
@@ -198,15 +281,19 @@ curl -c session.txt -L 'http://127.0.0.1:8090/share/<project-id>/<share-secret>'
 curl -b session.txt 'http://127.0.0.1:8090/v1/project?project=<project-id>'
 ```
 
-Agents can submit checked UTF-16 edits through
-`POST /v1/files/patch?project=<id>&path=main.tex`. Suggesting mode records the
-edit as inline review storage; direct mode bypasses review creation. The Agent
-workspace instructs agents to write raw LaTeX to a temporary file and serialize
-it with `jq --rawfile`, avoiding hand-written JSON escaping errors.
+Agents download a file using `GET /v1/files` and keep its `X-Content-SHA256`
+header. After editing that file locally, upload the complete UTF-8 file to
+`POST /v1/files/edit?project=<id>&path=main.tex` using `--data-binary @file.tex`
+and the header `X-Base-SHA256: <downloaded-hash>`. No JSON escaping or offsets
+are needed. The server computes and applies the diff in one Yjs transaction.
+If the live file changed, it returns HTTP 409 without modifying anything.
+Download the latest version and reapply the edits; never attach a new hash to
+an old edited file. Direct mode is the default; `mode=suggesting` with
+`agentId` and `agentName` query parameters creates inline review suggestions.
 
 Registered project members can copy their own capability-bearing Agent workspace URL from the
 **Collaborate** dialog. Opening `/agent/<project-id>/<share-secret>` returns a
-plain-text project file listing and project-specific read and checked-patch
+plain-text project file listing and project-specific read and checked-upload
 URLs. These URLs do not require an account or cookie; possession of the link
 grants edit access to that project.
 

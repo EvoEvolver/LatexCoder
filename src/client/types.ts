@@ -1,0 +1,40 @@
+import type { EditorView } from "@codemirror/view";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist/build/pdf.mjs";
+import type { IndexeddbPersistence } from "y-indexeddb";
+import type { WebsocketProvider } from "y-websocket";
+import type * as Y from "yjs";
+import type { ReviewItem } from "../shared/review.ts";
+import type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary } from "../shared/api-schema.ts";
+
+export type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary };
+export type GitFile = { index: string; worktree: string; path: string };
+export type GitCommit = { shortId: string; author: string; date: string; subject: string };
+export type GitState = { branch: string; dirty: boolean; files: GitFile[]; history: GitCommit[]; status?: string; conflict?: { branch: string } | null };
+export type PdfBox = { page: number; left: number; top: number; width: number; height: number };
+export type AppState = {
+  activeFile: string; projectId: string; projects: ProjectSummary[]; user: CurrentUser | null; bootstrapReady: boolean;
+  projectCanManage: boolean; accessShareId: string; git: GitState | null; main: string; files: ProjectFile[]; folders: string[];
+  undoManager?: Y.UndoManager; settings: EditorSettings | null; view: EditorView | null; doc: Y.Doc | null; provider: WebsocketProvider | null;
+  persistence: IndexeddbPersistence | null; unsaved: boolean; pdfDocument: PDFDocumentProxy | null;
+  pdfLoadingTask: PDFDocumentLoadingTask | null; pdfRequestVersion: number; pdfRenderVersion: number; pdfZoom: number;
+  pdfSourceRevision: string | null; pdfHighlights: { boxes: PdfBox[]; expires: number } | null;
+  filePreviewDocument: PDFDocumentProxy | null; filePreviewLoadingTask: PDFDocumentLoadingTask | null;
+  filePreviewVersion: number; filePreviewZoom: number; reviewSelection: { from: number; to: number; selected: string } | null;
+  selectionSuggestionIds: string[]; suggesting: boolean; toastTimer: ReturnType<typeof setTimeout> | null;
+};
+export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean };
+export type ReviewDecision = "accept" | "reject" | "resolve";
+export type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
+export type ShareDetails = { id: string; path: string; agentPath: string; clonePath: string };
+export type ProjectMember = { username: string; role: string };
+export type BuildInfo = { log: string; status?: string; pdf?: boolean; errors?: Array<{ path: string; line: number; message: string }>; stale?: boolean; sourceRevision?: string | null };
+export type ProjectDetail = ProjectSummary & { main: string; files: ProjectFile[]; folders: string[]; settings: EditorSettings; build: BuildInfo; permissions?: { manage?: boolean; collaborate?: boolean } };
+export type SourcePosition = { path: string; line: number; from?: number; to?: number };
+export type PdfPosition = { page: number; x: number; y: number; revision: string; boxes?: PdfBox[] };
+export type ReplacementPreview = { path: string; baseSha256: string; before: string; source: string };
+export type SearchMatch = { path: string; line: number; from: number; to: number; text: string };
+export type AppElement = HTMLElement & {
+  value: string; disabled: boolean; required: boolean; maxLength: number; href: string; download: string; open: boolean;
+  autocomplete: string; files: FileList | null; naturalWidth: number; naturalHeight: number; src: string; alt: string;
+  onload: (() => void) | null; onerror: (() => void) | null; showModal(): void; close(): void; select(): void; reportValidity(): boolean;
+};

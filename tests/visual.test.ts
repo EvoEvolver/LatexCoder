@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { parseVisual, group } from '../src/latex-visual';
+import { parseVisual, group } from '../src/client/latex-visual';
 
 test('visual source spans retain nested formatting, math, tables, and document setup', () => {
   const source = readFileSync(new URL('./fixtures/visual-demo.tex', import.meta.url),'utf8');

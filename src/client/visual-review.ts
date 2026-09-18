@@ -1,4 +1,4 @@
-import { parseReviews } from './review';
+import { parseReviews } from '../shared/review';
 
 /** Project review storage into the visible source while retaining both boundary
  * affinities, so edits never include a hidden review marker by accident. */

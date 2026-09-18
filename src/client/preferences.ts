@@ -1,3 +1,4 @@
+import { setThemePreference, themePreference } from "./theme";
 import { Compartment } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -19,6 +20,7 @@ export function readPreferences(): Preferences {
   return result;
 }
 let preferences = readPreferences();
+preferences.theme = themePreference();
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');
 export const editorPreferences = new Compartment();
 export const isDarkTheme = () => preferences.theme === 'dark' || (preferences.theme === 'system' && systemTheme.matches);
@@ -44,6 +46,8 @@ export function setupPreferences(options: {
   const dialog = byId<HTMLDialogElement>('settings-dialog');
   function apply(reconfigure = true) {
     const root = document.documentElement;
+    root.classList.toggle("dark", isDarkTheme());
+    root.dataset.themePreference = preferences.theme;
     root.dataset.theme = isDarkTheme() ? 'dark' : 'light';
     root.dataset.darkEditor = String(isDarkTheme() && preferences.darkEditor);
     root.style.setProperty('--code-font-size', `${preferences.fontSize}px`);
@@ -66,6 +70,7 @@ export function setupPreferences(options: {
   function save(changes: Partial<Preferences>) {
     const beforeDark = isDarkPdf(); preferences = { ...preferences, ...changes };
     try { localStorage.setItem(storageKey, JSON.stringify(preferences)); } catch {}
+    if (changes.theme) setThemePreference(changes.theme);
     apply();
     if (changes.pdfZoom !== undefined) options.zoom(preferences.pdfZoom);
     else if (beforeDark !== isDarkPdf()) void options.renderPdf();
@@ -77,7 +82,11 @@ export function setupPreferences(options: {
   for (const [id, key] of [['font-size','fontSize'],['line-height','lineHeight'],['pdf-zoom','pdfZoom']] as const) {
     const input = byId<HTMLSelectElement>(`setting-${id}`); input.onchange = () => save({ [key]: Number(input.value) });
   }
-  systemTheme.addEventListener('change', () => { if (preferences.theme === 'system') { apply(); void options.renderPdf(); } });
+  window.addEventListener('latexcoder-theme-change', () => {
+    const before = isDarkPdf(); preferences.theme = themePreference(); apply();
+    if (before !== isDarkPdf()) void options.renderPdf();
+  });
+  systemTheme.addEventListener('change' , () => { if (preferences.theme === 'system') { apply(); void options.renderPdf(); } });
 
   const tabs = [...dialog.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')];
   function selectTab(name: string) {

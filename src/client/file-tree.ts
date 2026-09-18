@@ -4,9 +4,9 @@ export type TreeFile = { path: string; text: boolean };
 export function createFileTree(host: HTMLElement, callbacks: {
   open(path: string): void; rename(path: string, folder: boolean): void;
   remove(path: string, folder: boolean): void; create(path: string, folder: boolean): void;
-  move(from: string, to: string): Promise<void>;
+  move(from: string, to: string): Promise<void>; download(path: string): void;
 }) {
-  const closed = new Set<string>();
+  const closed = new Set<string>(), known = new Set<string>();
   let selectedFolder = '', project = '', dragged = '', hoverTimer: ReturnType<typeof setTimeout>;
   let current: { files: TreeFile[]; directories: string[]; active: string; main: string };
   const parent = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -40,6 +40,7 @@ export function createFileTree(host: HTMLElement, callbacks: {
     const root = document.createElement('button'); root.className = 'tree-root'; root.textContent = 'Project files'; root.title = 'Create here or drag files here to move to project root'; root.onclick = () => { selectedFolder = ''; render(); }; target(root, ''); host.append(root);
     const directories = new Set(current.directories);
     for (const file of current.files) { let dir = parent(file.path); while (dir) { directories.add(dir); dir = parent(dir); } }
+    for (const dir of directories) if (!known.has(dir)) { known.add(dir); if (!current.active.startsWith(dir + '/')) closed.add(dir); }
     function branch(directory: string, depth: number) {
       const folders = [...directories].filter(p => parent(p) === directory).sort((a,b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }));
       const files = current.files.filter(f => parent(f.path) === directory).sort((a,b) => basename(a.path).localeCompare(basename(b.path), undefined, { numeric: true }));
@@ -47,6 +48,7 @@ export function createFileTree(host: HTMLElement, callbacks: {
         const expanded = !closed.has(entry.path);
         const row = document.createElement('div'); row.className = 'file-item tree-item'; row.dataset.path = entry.path;
         row.style.setProperty('--depth', String(depth)); row.classList.toggle('active', !entry.folder && entry.path === current.active);
+        row.classList.toggle('bg-accent', !entry.folder && entry.path === current.active);
         row.classList.toggle('folder-selected', entry.folder && entry.path === selectedFolder);
         row.draggable = true;
         row.addEventListener('dragstart', e => { dragged = entry.path; e.dataTransfer!.effectAllowed = 'move'; e.dataTransfer!.setData('text/plain', entry.path); });
@@ -76,7 +78,7 @@ export function createFileTree(host: HTMLElement, callbacks: {
         const actions: [string, () => void, boolean?][] = entry.folder ? [
           ['New file', () => callbacks.create(entry.path, false)], ['New folder', () => callbacks.create(entry.path, true)],
           ['Rename folder', () => callbacks.rename(entry.path, true)], ['Delete folder', () => callbacks.remove(entry.path, true), true],
-        ] : [['Rename', () => callbacks.rename(entry.path, false)], ['Delete file', () => callbacks.remove(entry.path, false), true]];
+        ] : [['Download', () => callbacks.download(entry.path)], ['Rename', () => callbacks.rename(entry.path, false)], ['Delete file', () => callbacks.remove(entry.path, false), true]];
         for (const [label, action, danger] of actions) {
           const item = document.createElement('button'); item.textContent = label; item.className = danger ? 'danger' : '';
           item.disabled = Boolean(danger && (entry.path === current.main || current.main.startsWith(entry.path + '/')));
@@ -102,8 +104,8 @@ export function createFileTree(host: HTMLElement, callbacks: {
   }
   document.addEventListener('click', event => { host.querySelectorAll<HTMLDetailsElement>('details[open]').forEach(menu => { if (!menu.contains(event.target as Node)) menu.open = false; }); });
   return {
-    render(data: typeof current, id: string) { if (project !== id) { closed.clear(); selectedFolder = ''; project = id; } current = data; render(); },
+    render(data: typeof current, id: string) { if (project !== id) { closed.clear(); known.clear(); selectedFolder = ''; project = id; } current = data; render(); },
     get folder() { return selectedFolder; },
-    reveal(path: string) { let dir = parent(path); while (dir) { closed.delete(dir); dir = parent(dir); } },
+    reveal(path: string) { let dir = parent(path); while (dir) { known.add(dir); closed.delete(dir); dir = parent(dir); } },
   };
 }

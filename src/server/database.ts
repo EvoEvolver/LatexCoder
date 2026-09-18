@@ -1,6 +1,7 @@
 import { chmodSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { runMigrations, schemaVersion } from "./database/migrations.ts";
 
 export type ProjectMetadata = {
   id: string;
@@ -9,7 +10,7 @@ export type ProjectMetadata = {
   shareToken: string;
   createdAt: string;
   membershipRole?: string;
-  git?: Record<string, unknown>;
+  git?: { conflict?: { branch: string; incoming: string; base: string; createdAt: string }; [key: string]: unknown };
 };
 
 export type BuildMetadata = {
@@ -20,6 +21,18 @@ export type BuildMetadata = {
   log: string;
   pdf: boolean;
   sourceRevision: string | null;
+  errors?: Array<{ path: string; line: number; message: string }>;
+};
+
+type SqlValue = string | number | bigint | Uint8Array | null;
+type SqlRow = Record<string, SqlValue>;
+type ProjectRow = SqlRow & {
+  id: string;
+  name: string;
+  owner_username: string | null;
+  share_token: string;
+  created_at: string;
+  git_state_json: string | null;
 };
 
 const EMPTY_BUILD: BuildMetadata = {
@@ -40,118 +53,16 @@ export class StateDatabase {
     this.path = path.join(stateDir, "state.sqlite");
     this.db = new DatabaseSync(this.path);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        username TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        password_salt TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        invited_by TEXT REFERENCES users(username)
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS invitations (
-        token_hash TEXT PRIMARY KEY,
-        created_by TEXT NOT NULL REFERENCES users(username),
-        created_at TEXT NOT NULL,
-        expires_at INTEGER NOT NULL,
-        used_at TEXT,
-        used_by TEXT REFERENCES users(username)
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS user_sessions (
-        token_hash TEXT PRIMARY KEY,
-        username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-        expires_at INTEGER NOT NULL
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        owner_username TEXT,
-        share_token TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        git_state_json TEXT
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_username, name);
-
-      CREATE TABLE IF NOT EXISTS project_members (
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        username TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('owner', 'collaborator')),
-        joined_at INTEGER NOT NULL,
-        PRIMARY KEY (project_id, username)
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS project_members_user_idx ON project_members(username, joined_at);
-
-      CREATE TABLE IF NOT EXISTS project_shares (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        username TEXT,
-        token TEXT,
-        token_hash TEXT NOT NULL UNIQUE,
-        created_at INTEGER NOT NULL
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS project_shares_project_idx ON project_shares(project_id, created_at);
-
-      CREATE TABLE IF NOT EXISTS project_sessions (
-        token_hash TEXT NOT NULL,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        share_id TEXT,
-        expires_at INTEGER NOT NULL,
-        PRIMARY KEY (token_hash, project_id)
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS project_sessions_expiry_idx ON project_sessions(expires_at);
-
-      CREATE TABLE IF NOT EXISTS builds (
-        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-        status TEXT NOT NULL,
-        main_file TEXT NOT NULL,
-        started_at TEXT,
-        finished_at TEXT,
-        log TEXT NOT NULL,
-        has_pdf INTEGER NOT NULL CHECK (has_pdf IN (0, 1)),
-        source_revision TEXT
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS yjs_snapshots (
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        relative_path TEXT NOT NULL,
-        snapshot BLOB NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (project_id, relative_path)
-      ) STRICT;
-    `);
-    const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as any[];
-    if (!userColumns.some(column => column.name === "display_name")) {
-      this.db.exec("ALTER TABLE users ADD COLUMN display_name TEXT;");
-      this.db.exec("UPDATE users SET display_name = username WHERE display_name IS NULL;");
-    }
-    const projectSessionColumns = this.db.prepare("PRAGMA table_info(project_sessions)").all() as any[];
-    if (!projectSessionColumns.some(column => column.name === "share_id")) {
-      this.db.exec("ALTER TABLE project_sessions ADD COLUMN share_id TEXT;");
-      this.db.exec("DELETE FROM project_sessions WHERE share_id IS NULL;");
-    }
-    const projectShareColumns = this.db.prepare("PRAGMA table_info(project_shares)").all() as any[];
-    if (!projectShareColumns.some(column => column.name === "username")) {
-      this.db.exec("ALTER TABLE project_shares ADD COLUMN username TEXT;");
-    }
-    if (!projectShareColumns.some(column => column.name === "token")) {
-      this.db.exec("ALTER TABLE project_shares ADD COLUMN token TEXT;");
-    }
-    const buildColumns = this.db.prepare("PRAGMA table_info(builds)").all() as any[];
-    if (!buildColumns.some(column => column.name === "source_revision")) {
-      this.db.exec("ALTER TABLE builds ADD COLUMN source_revision TEXT;");
-    }
-    this.db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS project_shares_member_idx
-      ON project_shares(project_id, username) WHERE username IS NOT NULL;
-      INSERT OR IGNORE INTO project_members (project_id, username, role, joined_at)
-      SELECT id, owner_username, 'owner', CAST(strftime('%s', created_at) AS INTEGER) * 1000
-      FROM projects WHERE owner_username IS NOT NULL;
-      PRAGMA user_version = 4;
-    `);
+    runMigrations(this.db);
     chmodSync(this.path, 0o600);
+  }
+
+  schemaVersion(): number {
+    return schemaVersion(this.db);
+  }
+
+  ping(): boolean {
+    return Number((this.db.prepare("SELECT 1 AS ok").get() as { ok: number }).ok) === 1;
   }
 
   close() {
@@ -171,15 +82,15 @@ export class StateDatabase {
   }
 
   countUsers() {
-    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM users").get() as any).count);
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM users").get() as SqlRow).count);
   }
 
   firstUsername() {
-    return (this.db.prepare("SELECT username FROM users ORDER BY created_at, username LIMIT 1").get() as any)?.username as string | undefined;
+    return (this.db.prepare("SELECT username FROM users ORDER BY created_at, username LIMIT 1").get() as SqlRow | undefined)?.username as string | undefined;
   }
 
   getUser(username: string) {
-    const row = this.db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
+    const row = this.db.prepare("SELECT * FROM users WHERE username = ?").get(username) as SqlRow | undefined;
     if (!row) return null;
     return {
       username: row.username as string,
@@ -204,7 +115,7 @@ export class StateDatabase {
   }
 
   getInvitation(tokenHash: string) {
-    const row = this.db.prepare("SELECT * FROM invitations WHERE token_hash = ?").get(tokenHash) as any;
+    const row = this.db.prepare("SELECT * FROM invitations WHERE token_hash = ?").get(tokenHash) as SqlRow | undefined;
     if (!row) return null;
     return {
       tokenHash: row.token_hash as string,
@@ -233,7 +144,7 @@ export class StateDatabase {
 
   getUserSession(tokenHash: string) {
     this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
-    const row = this.db.prepare("SELECT username, expires_at FROM user_sessions WHERE token_hash = ?").get(tokenHash) as any;
+    const row = this.db.prepare("SELECT username, expires_at FROM user_sessions WHERE token_hash = ?").get(tokenHash) as SqlRow | undefined;
     return row ? { username: row.username as string, expiresAt: Number(row.expires_at) } : null;
   }
 
@@ -250,7 +161,7 @@ export class StateDatabase {
 
   getProjectSession(tokenHash: string) {
     this.db.prepare("DELETE FROM project_sessions WHERE expires_at <= ?").run(Date.now());
-    const rows = this.db.prepare("SELECT project_id, share_id, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as any[];
+    const rows = this.db.prepare("SELECT project_id, share_id, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as SqlRow[];
     if (!rows.length) return null;
     return {
       projects: new Set(rows.map(row => row.project_id as string)),
@@ -281,7 +192,7 @@ export class StateDatabase {
     const row = this.db.prepare(`
       SELECT id, project_id, username, token, created_at FROM project_shares
       WHERE project_id = ? AND username = ?
-    `).get(projectId, username) as any;
+    `).get(projectId, username) as SqlRow | undefined;
     return row ? {
       id: row.id as string,
       projectId: row.project_id as string,
@@ -294,7 +205,7 @@ export class StateDatabase {
   getProjectShareByToken(projectId: string, tokenHash: string) {
     const row = this.db.prepare(`
       SELECT id, project_id, username, created_at FROM project_shares WHERE project_id = ? AND token_hash = ?
-    `).get(projectId, tokenHash) as any;
+    `).get(projectId, tokenHash) as SqlRow | undefined;
     return row ? {
       id: row.id as string,
       projectId: row.project_id as string,
@@ -318,7 +229,7 @@ export class StateDatabase {
   getProjectMember(projectId: string, username: string) {
     const row = this.db.prepare(`
       SELECT project_id, username, role, joined_at FROM project_members WHERE project_id = ? AND username = ?
-    `).get(projectId, username) as any;
+    `).get(projectId, username) as SqlRow | undefined;
     return row ? { projectId: row.project_id as string, username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) } : null;
   }
 
@@ -333,14 +244,14 @@ export class StateDatabase {
     return (this.db.prepare(`
       SELECT username, role, joined_at FROM project_members WHERE project_id = ?
       ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, username COLLATE NOCASE
-    `).all(projectId) as any[]).map(row => ({ username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) }));
+    `).all(projectId) as SqlRow[]).map(row => ({ username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) }));
   }
 
   listProjects(ownerUsername?: string | null) {
     const rows = ownerUsername
       ? this.db.prepare("SELECT * FROM projects WHERE owner_username = ? ORDER BY name COLLATE NOCASE").all(ownerUsername)
       : this.db.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE").all();
-    return (rows as any[]).map(row => this.projectFromRow(row));
+    return (rows as ProjectRow[]).map(row => this.projectFromRow(row));
   }
 
   listProjectsForUser(username: string) {
@@ -348,12 +259,12 @@ export class StateDatabase {
       SELECT projects.*, project_members.role AS membership_role
       FROM project_members JOIN projects ON projects.id = project_members.project_id
       WHERE project_members.username = ? ORDER BY projects.name COLLATE NOCASE
-    `).all(username) as any[];
+    `).all(username) as Array<ProjectRow & { membership_role: string }>;
     return rows.map(row => ({ ...this.projectFromRow(row), membershipRole: row.membership_role as string }));
   }
 
   getProject(id: string) {
-    const row = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as any;
+    const row = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
     return row ? this.projectFromRow(row) : null;
   }
 
@@ -392,17 +303,48 @@ export class StateDatabase {
   }
 
   getBuild(projectId: string): BuildMetadata {
-    const row = this.db.prepare("SELECT * FROM builds WHERE project_id = ?").get(projectId) as any;
+    const row = this.db.prepare("SELECT * FROM builds WHERE project_id = ?").get(projectId) as SqlRow | undefined;
     if (!row) return { ...EMPTY_BUILD };
     return {
-      status: row.status,
-      main: row.main_file,
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-      log: row.log,
+      status: String(row.status),
+      main: String(row.main_file),
+      startedAt: row.started_at === null ? null : String(row.started_at),
+      finishedAt: row.finished_at === null ? null : String(row.finished_at),
+      log: String(row.log),
       pdf: Boolean(row.has_pdf),
       sourceRevision: row.source_revision as string | null,
+      errors: JSON.parse(String((this.db.prepare("SELECT errors FROM build_errors WHERE project_id = ?").get(projectId) as SqlRow | undefined)?.errors || "[]")),
     };
+  }
+
+  getSettings(projectId: string) {
+    const row = this.db.prepare("SELECT compiler, auto_compile FROM project_settings WHERE project_id = ?").get(projectId) as SqlRow | undefined;
+    return { main: this.getBuild(projectId).main, compiler: row?.compiler ? String(row.compiler) : "auto", autoCompile: Boolean(row?.auto_compile) };
+  }
+
+  saveSettings(projectId: string, settings: { compiler: string; autoCompile: boolean }) {
+    this.db.prepare("INSERT INTO project_settings (project_id, compiler, auto_compile) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET compiler = excluded.compiler, auto_compile = excluded.auto_compile").run(projectId, settings.compiler, settings.autoCompile ? 1 : 0);
+  }
+
+  createTrash(projectId: string, id: string, originalPath: string, directory: boolean, files: Array<{ path: string; content: Uint8Array; snapshot: Uint8Array | null; directory: boolean }>) {
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO trash_entries VALUES (?, ?, ?, ?, ?)").run(id, projectId, originalPath, directory ? 1 : 0, new Date().toISOString());
+      for (const file of files) this.db.prepare("INSERT INTO trash_files VALUES (?, ?, ?, ?, ?)").run(id, file.path, file.content, file.snapshot, file.directory ? 1 : 0);
+    });
+  }
+
+  listTrash(projectId: string) {
+    return this.db.prepare("SELECT id, original_path AS path, directory, deleted_at AS deletedAt FROM trash_entries WHERE project_id = ? ORDER BY deleted_at DESC").all(projectId) as Array<{ id: string; path: string; directory: number; deletedAt: string }>;
+  }
+
+  getTrash(projectId: string, id: string) {
+    const entry = this.db.prepare("SELECT original_path AS path, directory FROM trash_entries WHERE project_id = ? AND id = ?").get(projectId, id) as { path: string; directory: number } | undefined;
+    const files = this.db.prepare("SELECT relative_path AS path, content, snapshot, directory FROM trash_files WHERE trash_id = ?").all(id) as Array<{ path: string; content: Uint8Array; snapshot: Uint8Array | null; directory: number }>;
+    return entry ? { ...entry, files } : null;
+  }
+
+  removeTrash(projectId: string, id: string) {
+    this.db.prepare("DELETE FROM trash_entries WHERE project_id = ? AND id = ?").run(projectId, id);
   }
 
   saveBuild(projectId: string, build: BuildMetadata) {
@@ -418,12 +360,13 @@ export class StateDatabase {
         has_pdf = excluded.has_pdf,
         source_revision = excluded.source_revision
     `).run(projectId, build.status, build.main, build.startedAt, build.finishedAt, build.log, build.pdf ? 1 : 0, build.sourceRevision);
+    this.db.prepare("INSERT INTO build_errors VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET errors = excluded.errors").run(projectId, JSON.stringify(build.errors || []));
   }
 
   getYjsSnapshot(projectId: string, relativePath: string) {
     const row = this.db.prepare(`
       SELECT snapshot FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?
-    `).get(projectId, relativePath) as any;
+    `).get(projectId, relativePath) as { snapshot: Uint8Array } | undefined;
     return row ? new Uint8Array(row.snapshot) : null;
   }
 
@@ -441,7 +384,7 @@ export class StateDatabase {
     this.db.prepare("DELETE FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?").run(projectId, relativePath);
   }
 
-  private projectFromRow(row: any): ProjectMetadata {
+  private projectFromRow(row: ProjectRow): ProjectMetadata {
     return {
       id: row.id,
       name: row.name,

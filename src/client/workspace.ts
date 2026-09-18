@@ -14,11 +14,12 @@ export function setupWorkspace() {
     const saved = JSON.parse(localStorage.getItem('paper-workspace') || 'null');
     if (saved) {
       fileWidth = Math.max(160, Math.min(480, Number(saved.fileWidth) || 232));
+      filesHidden = saved.filesHidden === true;
       editorShare = Math.max(.15, Math.min(.85, Number(saved.editorShare) || .5));
     }
   } catch { /* Ignore stale preferences. */ }
   const mobile = matchMedia('(max-width: 760px)');
-  const persist = () => { try { localStorage.setItem('paper-workspace', JSON.stringify({fileWidth, editorShare})); } catch {} };
+  const persist = () => { try { localStorage.setItem('paper-workspace', JSON.stringify({fileWidth, editorShare, filesHidden})); } catch {} };
   function layout() {
     const width = workspace.clientWidth;
     if (!width) return;
@@ -52,7 +53,7 @@ export function setupWorkspace() {
     if (i === 0) filesHidden = !filesHidden;
     if (i === 1) { editorHidden = !editorHidden; if (editorHidden) outputHidden = false; }
     if (i === 2) { outputHidden = !outputHidden; if (outputHidden) editorHidden = false; }
-    layout();
+    layout(); persist();
   }));
   function resize(kind: string, delta: number, startFiles: number, startEditor: number) {
     focusSnapshot = null;
@@ -102,7 +103,7 @@ export function setupWorkspace() {
       focusSnapshot = null;
       if (mobile.matches) files.classList.toggle('mobile-open');
       else filesHidden = !filesHidden;
-      layout();
+      layout(); persist();
     },
     toggleFocus() {
       if (focusSnapshot) {

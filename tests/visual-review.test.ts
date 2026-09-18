@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectReviews } from '../src/visual-review';
+import { projectReviews } from '../src/client/visual-review';
 
 test('visible review projection maps text edits inside marker boundaries', () => {
  const raw='Before \\cmtbg{c1}{Alice}\\textbf{hello}\\cmted{note} after \\delbg{d1}{Bob}old\\deled\\addbg{d1}{Bob}new\\added.';

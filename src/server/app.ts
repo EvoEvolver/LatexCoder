@@ -1,56 +1,51 @@
-import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
-import * as awarenessProtocol from "y-protocols/awareness";
-import * as decoding from "lib0/decoding";
-import * as encoding from "lib0/encoding";
-import * as syncProtocol from "y-protocols/sync";
-import { WebSocketServer, WebSocket } from "ws";
-import * as Y from "yjs";
+import { WebSocketServer } from "ws";
 
-import { StateDatabase } from "./src/database.ts";
-import { parseReviews, stripReviewStorage } from "./src/review.ts";
+import { StateDatabase } from "./database.ts";
+import { parseReviews } from "../shared/review.ts";
+import { projectedPosition } from "../shared/source-map.ts";
+import { syncTexPositions } from "../shared/pdf-map.ts";
+import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
+import { createPatch } from "diff";
+import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isWellFormedUtf16, MAX_FILE_BYTES, MAX_TEXT_BYTES, parseCookies, passwordMatches, passwordRecord, pathFromRoomName, randomToken, readProjectZip, safeRelativePath, sessionCookie, sha256, validatePassword } from "./core.ts";
+import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
+import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPaths } from "./process.ts";
+import { createCollaborationStore } from "./collaboration.ts";
+import { createProjectSearch } from "./search.ts";
+import { CompileQueue } from "./compile-queue.ts";
+import { createCompileService } from "./compile-service.ts";
+import { checkDependencies } from "./dependencies.ts";
+import { createLogger, requestLogger } from "./logger.ts";
+import { compileRequestSchema, createProjectRequestSchema, loginRequestSchema, registerRequestSchema, settingsRequestSchema, updateProfileRequestSchema, updateProjectRequestSchema } from "../shared/api-schema.ts";
+import type { ZodType } from "zod";
+import type { NextFunction, Request, Response } from "express";
+import type { ProjectMetadata } from "./database.ts";
+import type { ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
-const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
-const TEXT_EXTENSIONS = new Set([".bib", ".cls", ".csv", ".json", ".md", ".sty", ".tex", ".txt", ".yaml", ".yml"]);
-const MESSAGE_SYNC = 0;
-const MESSAGE_AWARENESS = 1;
-const MAX_TEXT_BYTES = 2 * 1024 * 1024;
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_PATCH_CHANGES = 1_000;
-const MAX_SEARCH_OUTPUT_BYTES = 4 * 1024 * 1024;
-const DEFAULT_SEARCH_TIMEOUT_MS = 15_000;
-const SEARCH_BOOLEAN_OPTIONS = new Set([
-  "--auto-hybrid-regex", "--block-buffered", "--byte-offset", "--case-sensitive",
-  "--column", "--count", "--count-matches", "--crlf", "--fixed-strings",
-  "--heading", "--hidden", "--ignore-case", "--include-zero", "--invert-match",
-  "--json", "--line-buffered", "--line-number", "--multiline", "--multiline-dotall",
-  "--max-columns-preview",
-  "--no-filename", "--no-heading", "--no-ignore", "--no-ignore-dot",
-  "--no-ignore-exclude", "--no-ignore-files", "--no-ignore-global", "--no-ignore-messages",
-  "--no-ignore-parent", "--no-ignore-vcs", "--no-line-number", "--no-messages",
-  "--no-require-git", "--no-unicode", "--null", "--null-data", "--one-file-system",
-  "--only-matching", "--passthru", "--pcre2", "--pretty", "--quiet",
-  "--smart-case", "--stats", "--stop-on-nonmatch", "--text", "--trim", "--unicode",
-  "--vimgrep", "--with-filename", "--word-regexp", "--line-regexp",
-  "--files-with-matches", "--files-without-match",
-]);
-const SEARCH_VALUE_OPTIONS = new Set([
-  "--after-context", "--before-context", "--context", "--context-separator",
-  "--dfa-size-limit", "--encoding", "--engine", "--field-context-separator",
-  "--field-match-separator", "--glob", "--iglob", "--max-columns",
-  "--max-count", "--max-depth", "--max-filesize",
-  "--path-separator", "--regex-size-limit", "--replace", "--sort", "--sortr",
-  "--type", "--type-not",
-]);
-const SEARCH_SHORT_BOOLEAN_OPTIONS = new Set(["a", "c", "F", "H", "I", "i", "l", "n", "N", "o", "p", "P", "q", "s", "S", "U", "u", "v", "w", "x"]);
-const SEARCH_SHORT_VALUE_OPTIONS = new Set(["A", "B", "C", "E", "g", "j", "m", "M", "r", "t", "T"]);
+type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };
+type AuthenticatedUser = { username: string; displayName: string };
+type CookieSession = { key: string; token: string };
+type CookieRequest = { headers: { cookie?: string } };
+type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
+type SharePaths = { id: string; path: string; agentPath: string; clonePath: string };
+export { safeRelativePath } from "./core.ts";
+
+function parseBody<T>(schema: ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  throw apiError("invalid_request", "request body is invalid", 400, {
+    issues: result.error.issues.map(issue => ({ path: issue.path.join("."), message: issue.message })),
+  });
+}
+
+const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_DOCUMENT = String.raw`\documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
@@ -72,722 +67,6 @@ The canonical source is persisted as ordinary files and can be edited by agents 
 
 \end{document}
 `;
-
-function apiError(code: string, message: string, status = 400, details: Record<string, unknown> | undefined = undefined) {
-  return Object.assign(new Error(message), { code, status, details });
-}
-
-export function safeRelativePath(value) {
-  if (typeof value !== "string" || value.length === 0 || value.length > 512 || value.includes("\0")) {
-    throw apiError("invalid_path", "path is invalid");
-  }
-  const normalized = path.posix.normalize(value.replaceAll("\\", "/")).replace(/^\.\//, "");
-  if (normalized === "." || normalized.startsWith("../") || normalized.startsWith("/") || normalized.includes("/.paper/")) {
-    throw apiError("invalid_path", "path must stay inside the project");
-  }
-  return normalized;
-}
-
-function isTextFile(relativePath) {
-  return TEXT_EXTENSIONS.has(path.extname(relativePath).toLowerCase());
-}
-
-function safeTreePath(value) {
-  const relative = safeRelativePath(value).replace(/\/$/, "");
-  if (relative.split("/").some(part => part.startsWith("."))) throw apiError("invalid_path", "Hidden project paths are reserved", 400);
-  return relative;
-}
-
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function randomToken(bytes = 32) {
-  return randomBytes(bytes).toString("base64url");
-}
-
-function cleanUsername(value) {
-  const username = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) {
-    throw apiError("invalid_username", "username must be 3 to 32 lowercase letters, numbers, dots, dashes, or underscores");
-  }
-  return username;
-}
-
-function cleanDisplayName(value) {
-  if (typeof value !== "string") throw apiError("invalid_display_name", "display name is required");
-  const displayName = value.replace(/\s+/g, " ").trim();
-  if (!displayName || displayName.length > 28) {
-    throw apiError("invalid_display_name", "display name must contain 1 to 28 characters");
-  }
-  return displayName;
-}
-
-function validatePassword(value) {
-  if (typeof value !== "string" || value.length < 10 || value.length > 256) {
-    throw apiError("invalid_password", "password must contain 10 to 256 characters");
-  }
-  return value;
-}
-
-function passwordRecord(password) {
-  const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, 64);
-  return { salt: salt.toString("base64"), hash: hash.toString("base64") };
-}
-
-function passwordMatches(password, record) {
-  try {
-    const expected = Buffer.from(record.hash, "base64");
-    const actual = scryptSync(password, Buffer.from(record.salt, "base64"), expected.length);
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
-  } catch {
-    return false;
-  }
-}
-
-function parseCookies(request) {
-  const result = {};
-  for (const part of String(request.headers.cookie || "").split(";")) {
-    const separator = part.indexOf("=");
-    if (separator < 0) continue;
-    const name = part.slice(0, separator).trim();
-    if (!name) continue;
-    try { result[name] = decodeURIComponent(part.slice(separator + 1).trim()); } catch {}
-  }
-  return result;
-}
-
-function sessionCookie(request, name, value, maxAge) {
-  const secure = request.secure || request.get("x-forwarded-proto") === "https";
-  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
-}
-
-function isUnicodeBoundary(source, offset) {
-  if (offset <= 0 || offset >= source.length) return true;
-  const before = source.charCodeAt(offset - 1);
-  const after = source.charCodeAt(offset);
-  return !(before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff);
-}
-
-function isWellFormedUtf16(value: string) {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function cleanReviewMetadata(value) {
-  return String(value || "").replaceAll("\\", "/").replace(/[{}%#\r\n]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function agentAuthor(agent) {
-  const id = cleanReviewMetadata(agent?.id);
-  const name = cleanReviewMetadata(agent?.name);
-  if (!/^ag_[a-zA-Z0-9]+$/.test(id) || !name || name.length > 64) {
-    throw apiError("invalid_agent", "suggesting patches require agent.id and agent.name");
-  }
-  return `Agent: ${name} [${id}]`;
-}
-
-function atomicWriteSync(target, bytes) {
-  const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`);
-  writeFileSync(temporary, bytes);
-  renameSync(temporary, target);
-}
-
-function roomNameForPath(relativePath) {
-  return Buffer.from(relativePath, "utf8").toString("base64url");
-}
-
-function pathFromRoomName(roomName) {
-  try {
-    return safeRelativePath(Buffer.from(roomName, "base64url").toString("utf8"));
-  } catch {
-    throw apiError("invalid_room", "collaboration room is invalid");
-  }
-}
-
-function createCollaborationStore(projectId, projectDir, database) {
-  const docs = new Map();
-  const connectionShares = new WeakMap();
-  let shuttingDown = false;
-  let suspended = false;
-
-  function persist(shared) {
-    if (shuttingDown || suspended || shared.removed) return;
-    if (shared.persistTimer) clearTimeout(shared.persistTimer);
-    shared.persistTimer = setTimeout(() => {
-      shared.persistTimer = undefined;
-      const text = shared.doc.getText("content").toString();
-      atomicWriteSync(path.join(projectDir, shared.relativePath), text);
-      database.saveYjsSnapshot(projectId, shared.relativePath, Y.encodeStateAsUpdate(shared.doc));
-    }, 180);
-  }
-
-  function broadcast(shared, payload, except = null) {
-    for (const connection of shared.connections.keys()) {
-      if (connection !== except && connection.readyState === WebSocket.OPEN) connection.send(payload);
-    }
-  }
-
-  function load(relativePath) {
-    let shared = docs.get(relativePath);
-    if (shared) return shared;
-    if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be collaboratively edited", 415);
-    const target = path.join(projectDir, relativePath);
-    if (!existsSync(target)) throw apiError("file_not_found", "file does not exist", 404);
-    const doc = new Y.Doc();
-    const snapshot = database.getYjsSnapshot(projectId, relativePath);
-    if (snapshot) {
-      Y.applyUpdate(doc, snapshot);
-    } else {
-      const source = readFileSync(target, "utf8");
-      if (Buffer.byteLength(source) > MAX_TEXT_BYTES) throw apiError("file_too_large", "text file is too large", 413);
-      doc.getText("content").insert(0, source);
-    }
-    shared = {
-      relativePath,
-      doc,
-      awareness: new awarenessProtocol.Awareness(doc),
-      connections: new Map(),
-      persistTimer: undefined,
-      removed: false,
-    };
-    shared.awareness.setLocalState(null);
-    doc.on("update", (update, origin) => {
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, MESSAGE_SYNC);
-      syncProtocol.writeUpdate(encoder, update);
-      broadcast(shared, encoding.toUint8Array(encoder), origin);
-      persist(shared);
-    });
-    shared.awareness.on("update", ({ added, updated, removed }, origin) => {
-      const changed = [...added, ...updated, ...removed];
-      if (origin && shared.connections.has(origin)) {
-        const controlled = shared.connections.get(origin);
-        for (const id of added) controlled.add(id);
-        for (const id of removed) controlled.delete(id);
-      }
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, MESSAGE_AWARENESS);
-      encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(shared.awareness, changed));
-      broadcast(shared, encoding.toUint8Array(encoder), null);
-    });
-    docs.set(relativePath, shared);
-    return shared;
-  }
-
-  function attach(connection, relativePath, shareId = null) {
-    if (suspended) {
-      connection.close(1012, "project is synchronizing with Git");
-      return;
-    }
-    const shared = load(relativePath);
-    shared.connections.set(connection, new Set());
-    connectionShares.set(connection, shareId);
-    connection.binaryType = "arraybuffer";
-    connection.on("message", raw => {
-      try {
-        const decoder = decoding.createDecoder(new Uint8Array(raw));
-        const type = decoding.readVarUint(decoder);
-        if (type === MESSAGE_SYNC) {
-          const encoder = encoding.createEncoder();
-          encoding.writeVarUint(encoder, MESSAGE_SYNC);
-          syncProtocol.readSyncMessage(decoder, encoder, shared.doc, connection);
-          if (encoding.length(encoder) > 1) connection.send(encoding.toUint8Array(encoder));
-        } else if (type === MESSAGE_AWARENESS) {
-          awarenessProtocol.applyAwarenessUpdate(
-            shared.awareness,
-            decoding.readVarUint8Array(decoder),
-            connection,
-          );
-        }
-      } catch (error) {
-        console.error("paper websocket message failed", error);
-        connection.close(1003, "invalid collaboration message");
-      }
-    });
-    let alive = true;
-    connection.on("pong", () => { alive = true; });
-    const heartbeat = setInterval(() => {
-      if (!alive) return connection.terminate();
-      alive = false;
-      connection.ping();
-    }, 30_000);
-    connection.on("close", () => {
-      clearInterval(heartbeat);
-      const controlled = shared.connections.get(connection) || new Set();
-      shared.connections.delete(connection);
-      awarenessProtocol.removeAwarenessStates(shared.awareness, [...controlled], null);
-      persist(shared);
-    });
-
-    const syncEncoder = encoding.createEncoder();
-    encoding.writeVarUint(syncEncoder, MESSAGE_SYNC);
-    syncProtocol.writeSyncStep1(syncEncoder, shared.doc);
-    connection.send(encoding.toUint8Array(syncEncoder));
-    const clients = [...shared.awareness.getStates().keys()];
-    if (clients.length) {
-      const awarenessEncoder = encoding.createEncoder();
-      encoding.writeVarUint(awarenessEncoder, MESSAGE_AWARENESS);
-      encoding.writeVarUint8Array(
-        awarenessEncoder,
-        awarenessProtocol.encodeAwarenessUpdate(shared.awareness, clients),
-      );
-      connection.send(encoding.toUint8Array(awarenessEncoder));
-    }
-  }
-
-  function replaceText(relativePath, source) {
-    const shared = docs.get(relativePath);
-    if (!shared) return false;
-    const text = shared.doc.getText("content");
-    shared.doc.transact(() => {
-      text.delete(0, text.length);
-      text.insert(0, source);
-    }, "rest-api");
-    return true;
-  }
-
-  function importText(relativePath, source) {
-    const target = path.join(projectDir, relativePath);
-    if (!existsSync(target)) {
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, source);
-    }
-    const shared = load(relativePath);
-    const text = shared.doc.getText("content");
-    if (text.toString() === source) return;
-    shared.doc.transact(() => {
-      text.delete(0, text.length);
-      text.insert(0, source);
-    }, "git-sync");
-  }
-
-  function readText(relativePath) {
-    return load(relativePath).doc.getText("content").toString();
-  }
-
-  function patchText(relativePath, baseSha256, requestedChanges, options: any = {}) {
-    if (typeof baseSha256 !== "string" || !/^[a-f0-9]{64}$/.test(baseSha256)) {
-      throw apiError("invalid_base_sha256", "baseSha256 must be a lowercase SHA-256 hex digest");
-    }
-    if (!Array.isArray(requestedChanges) || requestedChanges.length === 0 || requestedChanges.length > MAX_PATCH_CHANGES) {
-      throw apiError("invalid_changes", `changes must contain 1 to ${MAX_PATCH_CHANGES} edits`);
-    }
-    const shared = load(relativePath);
-    const text = shared.doc.getText("content");
-    const source = text.toString();
-    const currentSha256 = sha256(source);
-    if (currentSha256 !== baseSha256) {
-      throw apiError("stale_file", "file changed since it was read; fetch it and retry the patch", 409, {
-        path: relativePath,
-        expectedSha256: baseSha256,
-        currentSha256,
-      });
-    }
-    const changes = requestedChanges.map((change, index) => {
-      const from = change?.from;
-      const to = change?.to;
-      const insert = change?.insert;
-      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > source.length) {
-        throw apiError("invalid_change", `changes[${index}] has an invalid range`);
-      }
-      if (typeof insert !== "string") {
-        throw apiError("invalid_change", `changes[${index}].insert must be a string`);
-      }
-      if (!isWellFormedUtf16(insert)) {
-        throw apiError("invalid_change", `changes[${index}].insert contains an unpaired UTF-16 surrogate`);
-      }
-      if (from === to && insert.length === 0) {
-        throw apiError("invalid_change", `changes[${index}] does not change the document`);
-      }
-      if (!isUnicodeBoundary(source, from) || !isUnicodeBoundary(source, to)) {
-        throw apiError("invalid_change", `changes[${index}] splits a Unicode character`);
-      }
-      return { from, to, insert, index };
-    }).sort((left, right) => left.from - right.from || left.to - right.to);
-    for (let index = 1; index < changes.length; index += 1) {
-      if (changes[index].from < changes[index - 1].to) {
-        throw apiError("overlapping_changes", "patch ranges must not overlap");
-      }
-    }
-    const mode = options.mode ?? "suggesting";
-    if (mode !== "suggesting" && mode !== "direct") {
-      throw apiError("invalid_mode", "mode must be suggesting or direct");
-    }
-    let author = "";
-    const suggestionIds = [];
-    if (mode === "suggesting") {
-      author = agentAuthor(options.agent);
-      const reviews = parseReviews(source);
-      for (const change of changes) {
-        const conflicts = reviews.some(item => change.from < item.to && change.to > item.from);
-        if (conflicts) throw apiError("review_conflict", "suggesting patches cannot overlap an open review", 409);
-        const id = `r${randomUUID().replaceAll("-", "")}`;
-        const deleted = source.slice(change.from, change.to);
-        const deletion = deleted ? `\\delbg{${id}}{${author}}${deleted}\\deled` : "";
-        const addition = change.insert ? `\\addbg{${id}}{${author}}${change.insert}\\added` : "";
-        change.insert = `${deletion}${addition}`;
-        suggestionIds.push(id);
-      }
-    }
-    let projectedBytes = Buffer.byteLength(source);
-    for (const change of changes) {
-      projectedBytes -= Buffer.byteLength(source.slice(change.from, change.to));
-      projectedBytes += Buffer.byteLength(change.insert);
-    }
-    if (projectedBytes > MAX_TEXT_BYTES) throw apiError("file_too_large", "patched text file is too large", 413);
-
-    shared.doc.transact(() => {
-      for (const change of changes.reverse()) {
-        if (change.to > change.from) text.delete(change.from, change.to - change.from);
-        if (change.insert) text.insert(change.from, change.insert);
-      }
-    }, "rest-patch-api");
-    const result = text.toString();
-    return { source: result, sha256: sha256(result), mode, suggestionIds };
-  }
-
-  function flush() {
-    for (const shared of docs.values()) {
-      if (shared.removed) continue;
-      if (shared.persistTimer) clearTimeout(shared.persistTimer);
-      shared.persistTimer = undefined;
-      atomicWriteSync(path.join(projectDir, shared.relativePath), shared.doc.getText("content").toString());
-      database.saveYjsSnapshot(projectId, shared.relativePath, Y.encodeStateAsUpdate(shared.doc));
-    }
-  }
-
-  function remove(relativePath) {
-    const shared = docs.get(relativePath);
-    if (shared) {
-      shared.removed = true;
-      if (shared.persistTimer) clearTimeout(shared.persistTimer);
-      shared.persistTimer = undefined;
-      for (const connection of shared.connections.keys()) connection.close(1000, "file removed");
-      shared.doc.destroy();
-      docs.delete(relativePath);
-    }
-    database.deleteYjsSnapshot(projectId, relativePath);
-    return Promise.resolve();
-  }
-
-  function shutdown() {
-    flush();
-    shuttingDown = true;
-    for (const shared of docs.values()) {
-      if (shared.persistTimer) clearTimeout(shared.persistTimer);
-      for (const connection of shared.connections.keys()) connection.terminate();
-      shared.doc.destroy();
-    }
-    docs.clear();
-  }
-
-  function suspend() {
-    suspended = true;
-    for (const shared of docs.values()) {
-      for (const connection of shared.connections.keys()) connection.close(1012, "project is synchronizing with Git");
-    }
-    flush();
-  }
-
-  function resume() {
-    suspended = false;
-  }
-
-  function disconnectShare(shareId, reason) {
-    for (const shared of docs.values()) {
-      for (const connection of shared.connections.keys()) {
-        if (connectionShares.get(connection) === shareId) connection.close(1008, reason);
-      }
-    }
-  }
-
-  return { attach, disconnectShare, flush, importText, load, patchText, readText, remove, replaceText, resume, roomNameForPath, shutdown, suspend };
-}
-
-async function listFiles(projectDir) {
-  const result = [];
-  async function visit(directory, prefix = "") {
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      if (entry.name.startsWith(".")) continue;
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        await visit(path.join(directory, entry.name), relativePath);
-      } else if (entry.isFile()) {
-        const details = await stat(path.join(directory, entry.name));
-        result.push({ path: relativePath, size: details.size, text: isTextFile(relativePath) });
-      }
-    }
-  }
-  await visit(projectDir);
-  return result;
-}
-async function listDirectories(projectDir) {
-  const result = [];
-  async function visit(directory, prefix = "") {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue;
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) { result.push(relative); await visit(path.join(directory, entry.name), relative); }
-    }
-  }
-  await visit(projectDir); return result.sort();
-}
-
-async function compilationSourceRevision(projectDir) {
-  const digest = createHash("sha256");
-  async function visit(directory, prefix = "") {
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      if (entry.name === ".git" || entry.name === ".paper-output") continue;
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await visit(absolutePath, relativePath);
-      } else if (entry.isFile()) {
-        let content = await readFile(absolutePath);
-        if (relativePath.endsWith(".tex")) content = Buffer.from(stripReviewStorage(content.toString("utf8")));
-        digest.update(relativePath);
-        digest.update("\0");
-        digest.update(String(content.length));
-        digest.update("\0");
-        digest.update(content);
-        digest.update("\0");
-      }
-    }
-  }
-  await visit(projectDir);
-  return digest.digest("hex");
-}
-
-function run(command: string, args: string[], options: any): Promise<{ code: number | null; output: string }> {
-  return new Promise((resolve, reject) => {
-    const { timeoutMs = 60_000, ...spawnOptions } = options;
-    const child = spawn(command, args, { ...spawnOptions, shell: false });
-    let output = "";
-    const append = chunk => { output = (output + chunk.toString()).slice(-300_000); };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
-    child.on("error", reject);
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.on("close", code => {
-      clearTimeout(timer);
-      resolve({ code, output });
-    });
-  });
-}
-
-function validatedSearchOptions(value) {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 64) {
-    throw apiError("invalid_search_args", "args must be an array of at most 64 ripgrep options");
-  }
-  const args = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const argument = value[index];
-    if (typeof argument !== "string" || !argument || argument.length > 512 || argument.includes("\0")) {
-      throw apiError("invalid_search_args", `args[${index}] is invalid`);
-    }
-    if (argument === "--" || !argument.startsWith("-")) {
-      throw apiError("invalid_search_args", `args[${index}] must be a supported ripgrep option`);
-    }
-    if (argument.startsWith("--")) {
-      const equals = argument.indexOf("=");
-      const name = equals === -1 ? argument : argument.slice(0, equals);
-      if (SEARCH_BOOLEAN_OPTIONS.has(name) && equals === -1) {
-        args.push(argument);
-        continue;
-      }
-      if (SEARCH_VALUE_OPTIONS.has(name)) {
-        if (equals !== -1) {
-          if (equals === argument.length - 1) throw apiError("invalid_search_args", `${name} requires a value`);
-          args.push(argument);
-          continue;
-        }
-        const optionValue = value[index + 1];
-        if (typeof optionValue !== "string" || !optionValue || optionValue.length > 512 || optionValue.includes("\0")) {
-          throw apiError("invalid_search_args", `${name} requires a value`);
-        }
-        args.push(argument, optionValue);
-        index += 1;
-        continue;
-      }
-      throw apiError("unsupported_search_option", `${name} is not available through the search API`);
-    }
-    const option = argument[1];
-    if (argument.length === 2 && SEARCH_SHORT_VALUE_OPTIONS.has(option)) {
-      const optionValue = value[index + 1];
-      if (typeof optionValue !== "string" || !optionValue || optionValue.length > 512 || optionValue.includes("\0")) {
-        throw apiError("invalid_search_args", `${argument} requires a value`);
-      }
-      args.push(argument, optionValue);
-      index += 1;
-      continue;
-    }
-    if (SEARCH_SHORT_VALUE_OPTIONS.has(option) && argument.length > 2) {
-      args.push(argument);
-      continue;
-    }
-    if ([...argument.slice(1)].every(character => SEARCH_SHORT_BOOLEAN_OPTIONS.has(character))) {
-      args.push(argument);
-      continue;
-    }
-    throw apiError("unsupported_search_option", `${argument} is not available through the search API`);
-  }
-  return args;
-}
-
-async function validatedSearchPaths(projectDir, value) {
-  if (value === undefined) return ["."];
-  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
-    throw apiError("invalid_search_paths", "paths must contain 1 to 32 project-relative paths");
-  }
-  const paths = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const relativePath = value[index] === "." ? "." : safeRelativePath(value[index]);
-    if (relativePath.split("/").includes(".git")) {
-      throw apiError("invalid_search_paths", "Git metadata cannot be searched");
-    }
-    if (relativePath !== ".") {
-      let current = projectDir;
-      for (const component of relativePath.split("/")) {
-        current = path.join(current, component);
-        try {
-          if ((await lstat(current)).isSymbolicLink()) {
-            throw apiError("invalid_search_paths", "search paths cannot traverse symbolic links");
-          }
-        } catch (error) {
-          if (error.code === "ENOENT") break;
-          throw error;
-        }
-      }
-    }
-    paths.push(relativePath);
-  }
-  return paths;
-}
-
-async function executablePath(command) {
-  const candidates = command.includes(path.sep)
-    ? [command]
-    : (process.env.PATH || "").split(path.delimiter).filter(Boolean).map(directory => path.join(directory, command));
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, 1);
-      return await realpath(candidate);
-    } catch {}
-  }
-  return null;
-}
-
-async function runRipgrep(projectDir, args, options: any = {}): Promise<{ code: number | null; stdout: Buffer; stderr: Buffer }> {
-  const bwrap = await executablePath(options.bwrap || process.env.LATEXCODER_BWRAP_BIN || "bwrap");
-  if (!bwrap) throw apiError("search_sandbox_unavailable", "bubblewrap is required for project search", 503);
-  const rg = await executablePath(options.rg || process.env.LATEXCODER_RG_BIN || "rg");
-  if (!rg) throw apiError("search_unavailable", "ripgrep is not installed", 503);
-  const sandboxArgs = [
-    "--die-with-parent",
-    "--new-session",
-    "--unshare-all",
-    "--cap-drop", "ALL",
-    "--clearenv",
-    "--setenv", "PATH", "/usr/bin",
-    "--setenv", "HOME", "/tmp",
-    "--dir", "/usr",
-    "--dir", "/usr/bin",
-    "--ro-bind", rg, "/usr/bin/rg",
-  ];
-  for (const runtimePath of ["/lib", "/lib64", "/usr/lib", "/usr/lib64"]) {
-    if (existsSync(runtimePath)) sandboxArgs.push("--ro-bind", runtimePath, runtimePath);
-  }
-  sandboxArgs.push(
-    "--tmpfs", "/tmp",
-    "--ro-bind", projectDir, "/project",
-    "--chdir", "/project",
-    "/usr/bin/rg",
-    ...args,
-  );
-  return new Promise((resolve, reject) => {
-    const child = spawn(bwrap, sandboxArgs, {
-      shell: false,
-      env: { PATH: process.env.PATH || "" },
-    });
-    const stdout = [];
-    const stderr = [];
-    let size = 0;
-    let settled = false;
-    let limitExceeded = false;
-    let timedOut = false;
-    const append = target => chunk => {
-      size += chunk.length;
-      if (size > MAX_SEARCH_OUTPUT_BYTES) {
-        limitExceeded = true;
-        child.kill("SIGKILL");
-      } else {
-        target.push(chunk);
-      }
-    };
-    child.stdout.on("data", append(stdout));
-    child.stderr.on("data", append(stderr));
-    child.on("error", error => {
-      if (!settled) reject(apiError("search_unavailable", error.message, 503));
-      settled = true;
-    });
-    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
-      ? Math.min(options.timeoutMs, DEFAULT_SEARCH_TIMEOUT_MS)
-      : DEFAULT_SEARCH_TIMEOUT_MS;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    child.on("close", code => {
-      clearTimeout(timer);
-      if (settled) return;
-      settled = true;
-      if (limitExceeded) return reject(apiError("search_output_too_large", "ripgrep output exceeded 4 MiB", 413));
-      if (timedOut) return reject(apiError("search_timeout", `ripgrep exceeded the ${timeoutMs}ms search limit`, 408));
-      resolve({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
-    });
-  });
-}
-
-function runBinary(command: string, args: string[], options: any = {}, input = Buffer.alloc(0)): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, shell: false });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let settled = false;
-    child.stdout.on("data", chunk => stdout.push(chunk));
-    child.stderr.on("data", chunk => stderr.push(chunk));
-    child.on("error", error => {
-      if (!settled) reject(error);
-      settled = true;
-    });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
-    child.on("close", code => {
-      clearTimeout(timer);
-      if (settled) return;
-      settled = true;
-      if (code === 0) return resolve(Buffer.concat(stdout));
-      reject(apiError("git_failed", Buffer.concat(stderr).toString("utf8").trim() || `Git exited with code ${code}`, 409));
-    });
-    child.stdin.end(input);
-  });
-}
-
 const GIT_IDENTITY_ENV = {
   GIT_AUTHOR_NAME: "Collaborative Editor",
   GIT_AUTHOR_EMAIL: "editor@localhost",
@@ -795,7 +74,7 @@ const GIT_IDENTITY_ENV = {
   GIT_COMMITTER_EMAIL: "editor@localhost",
 };
 
-async function git(projectDir: string, args: string[], options: any = {}) {
+async function git(projectDir: string, args: string[], options: GitRunOptions = {}) {
   const result = await run("git", ["-c", "core.hooksPath=/dev/null", ...args], {
     cwd: projectDir,
     env: { ...process.env, ...GIT_IDENTITY_ENV, ...(options.env || {}) },
@@ -808,7 +87,7 @@ async function git(projectDir: string, args: string[], options: any = {}) {
   return { ...result, output: result.output.trim() };
 }
 
-async function ensureGitRepository(projectDir) {
+async function ensureGitRepository(projectDir: string): Promise<void> {
   if (!existsSync(path.join(projectDir, ".git"))) {
     await git(projectDir, ["init", "-b", "main"]);
     await git(projectDir, ["add", "-A"]);
@@ -818,17 +97,17 @@ async function ensureGitRepository(projectDir) {
   if (branch !== "main") throw apiError("git_branch_invalid", "the collaborative working tree must remain on main", 409);
 }
 
-function cleanCommitMessage(value, fallback = "Collaborative checkpoint") {
+function cleanCommitMessage(value: unknown, fallback = "Collaborative checkpoint"): string {
   const message = typeof value === "string" ? value.replace(/\r/g, "").trim() : "";
   if (message.length > 500) throw apiError("invalid_commit_message", "commit message must not exceed 500 characters");
   return message || fallback;
 }
 
-async function gitHead(projectDir, ref = "HEAD") {
-  return (await git(projectDir, ["rev-parse", "--verify", `${ref}^{commit}`])).output.split("\n").at(-1);
+async function gitHead(projectDir: string, ref = "HEAD"): Promise<string> {
+  return (await git(projectDir, ["rev-parse", "--verify", `${ref}^{commit}`])).output.split("\n").at(-1)!;
 }
 
-async function gitCheckpoint(runtime, message) {
+async function gitCheckpoint(runtime: ProjectRuntime, message: unknown): Promise<{ commit: string; created: boolean }> {
   runtime.collaboration.flush();
   await git(runtime.projectDir, ["add", "-A"]);
   const changed = await git(runtime.projectDir, ["diff", "--cached", "--quiet"], { allowedCodes: [0, 1] });
@@ -836,7 +115,7 @@ async function gitCheckpoint(runtime, message) {
   return { commit: await gitHead(runtime.projectDir), created: changed.code === 1 };
 }
 
-function parseGitStatus(output) {
+function parseGitStatus(output: string): Array<{ index: string; worktree: string; path: string }> {
   if (!output) return [];
   return output.split("\n").filter(Boolean).map(line => ({
     index: line[0],
@@ -845,7 +124,7 @@ function parseGitStatus(output) {
   }));
 }
 
-async function gitStatus(runtime) {
+async function gitStatus(runtime: ProjectRuntime) {
   runtime.collaboration.flush();
   const branch = (await git(runtime.projectDir, ["branch", "--show-current"])).output;
   const files = parseGitStatus((await git(runtime.projectDir, ["status", "--short", "--untracked-files=all"])).output);
@@ -877,11 +156,11 @@ async function gitStatus(runtime) {
   };
 }
 
-function conflictBranchName(date = new Date()) {
+function conflictBranchName(date = new Date()): string {
   return `conflict/${date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").replace("T", "-")}`;
 }
 
-function validateMergedText(relativePath, source) {
+function validateMergedText(relativePath: string, source: string): void {
   if (/^(?:<{7}|={7}|>{7})/m.test(source)) throw apiError("git_merge_invalid", `${relativePath} contains merge markers`, 409);
   if (!relativePath.endsWith(".tex")) return;
   const kinds = [
@@ -906,12 +185,12 @@ function validateMergedText(relativePath, source) {
   }
 }
 
-async function trackedPaths(projectDir) {
+async function trackedPaths(projectDir: string): Promise<string[]> {
   const output = (await git(projectDir, ["ls-files", "-z"])).output;
   return output ? output.split("\0").filter(Boolean) : [];
 }
 
-async function importGitWorktree(runtime, sourceDir) {
+async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string): Promise<void> {
   const before = new Set(await trackedPaths(runtime.projectDir));
   const after = new Set(await trackedPaths(sourceDir));
   if (!after.has(runtime.build.main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
@@ -949,7 +228,7 @@ async function importGitWorktree(runtime, sourceDir) {
   runtime.collaboration.flush();
 }
 
-async function createConflictBranch(runtime, incoming, local) {
+async function createConflictBranch(runtime: ProjectRuntime, incoming: string, local: string) {
   const existing = runtime.metadata.git?.conflict;
   if (existing?.incoming === incoming) return existing;
   let branch = conflictBranchName();
@@ -962,7 +241,7 @@ async function createConflictBranch(runtime, incoming, local) {
   return conflict;
 }
 
-async function withGitOperation(runtime, task) {
+async function withGitOperation<T>(runtime: ProjectRuntime, task: () => Promise<T>): Promise<T> {
   if (runtime.gitBusy || runtime.deleting) throw apiError("git_busy", "another Git operation is already running", 409);
   runtime.gitBusy = true;
   runtime.collaboration.suspend();
@@ -974,7 +253,7 @@ async function withGitOperation(runtime, task) {
   }
 }
 
-async function withGitReader(runtime, task) {
+async function withGitReader<T>(runtime: ProjectRuntime, task: () => Promise<T>): Promise<T> {
   if (runtime.deleting) throw apiError("project_not_found", "project does not exist", 404);
   runtime.gitReaders += 1;
   try {
@@ -987,16 +266,16 @@ async function withGitReader(runtime, task) {
   }
 }
 
-async function waitForGitReaders(runtime) {
+async function waitForGitReaders(runtime: ProjectRuntime): Promise<void> {
   runtime.deleting = true;
   if (runtime.gitReaders > 0) await new Promise(resolve => runtime.gitReaderWaiters.push(resolve));
 }
 
-function assertProjectWritable(runtime) {
+function assertProjectWritable(runtime: ProjectRuntime): void {
   if (runtime.gitBusy) throw apiError("git_busy", "the project is synchronizing with Git", 409);
 }
 
-async function withTemporaryWorktree(runtime, commit, task) {
+async function withTemporaryWorktree<T>(runtime: ProjectRuntime, commit: string, task: (directory: string) => Promise<T>): Promise<T> {
   // The worktree target itself must not exist when `git worktree add` runs.
   const parent = await mkdtemp(path.join(os.tmpdir(), "paper-git-"));
   const worktree = path.join(parent, "worktree");
@@ -1009,7 +288,7 @@ async function withTemporaryWorktree(runtime, commit, task) {
   }
 }
 
-async function gitSyncLocked(runtime, requestedRef) {
+async function gitSyncLocked(runtime: ProjectRuntime, requestedRef: string) {
     await ensureGitRepository(runtime.projectDir);
     const checkpoint = await gitCheckpoint(runtime, "Checkpoint before sync");
     const local = checkpoint.commit;
@@ -1032,7 +311,7 @@ async function gitSyncLocked(runtime, requestedRef) {
     const localIsAncestor = await git(runtime.projectDir, ["merge-base", "--is-ancestor", local, incoming], { allowedCodes: [0, 1] });
     let mergedCommit = incoming;
     let mergeConflict = false;
-    let semanticConflict = null;
+    let semanticConflict: Error | null = null;
 
     await withTemporaryWorktree(runtime, localIsAncestor.code === 0 ? incoming : local, async worktree => {
       if (localIsAncestor.code !== 0) {
@@ -1046,7 +325,7 @@ async function gitSyncLocked(runtime, requestedRef) {
       try {
         await importGitWorktree(runtime, worktree);
       } catch (error) {
-        semanticConflict = error;
+        semanticConflict = error instanceof Error ? error : new Error(String(error));
       }
     });
 
@@ -1057,7 +336,7 @@ async function gitSyncLocked(runtime, requestedRef) {
         commit: local,
         incoming,
         conflict,
-        reason: semanticConflict?.message || "Git could not merge the incoming version automatically",
+        reason: semanticConflict instanceof Error ? semanticConflict.message : "Git could not merge the incoming version automatically",
       };
     }
 
@@ -1066,11 +345,11 @@ async function gitSyncLocked(runtime, requestedRef) {
     return { status: localIsAncestor.code === 0 ? "fast_forward" : "merged", commit: mergedCommit, incoming };
 }
 
-async function gitSync(runtime, requestedRef) {
+async function gitSync(runtime: ProjectRuntime, requestedRef: string) {
   return withGitOperation(runtime, () => gitSyncLocked(runtime, requestedRef));
 }
 
-async function gitResolve(runtime, message) {
+async function gitResolve(runtime: ProjectRuntime, message: unknown) {
   return withGitOperation(runtime, async () => {
     await ensureGitRepository(runtime.projectDir);
     const conflict = runtime.metadata.git?.conflict;
@@ -1093,7 +372,7 @@ async function gitResolve(runtime, message) {
   });
 }
 
-async function createProjectArchive(runtime) {
+async function createProjectArchive(runtime: ProjectRuntime): Promise<{ archive: string; temporary: string }> {
   assertProjectWritable(runtime);
   runtime.collaboration.flush();
   const temporary = await mkdtemp(path.join(os.tmpdir(), "paper-archive-"));
@@ -1112,7 +391,7 @@ async function createProjectArchive(runtime) {
   }
 }
 
-async function gitUploadPack(runtime, args, input, protocol) {
+async function gitUploadPack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string) {
   const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
   if (protocol) env.GIT_PROTOCOL = protocol;
   return runBinary("git", ["-c", "core.hooksPath=/dev/null", "upload-pack", "--stateless-rpc", ...args, runtime.projectDir], {
@@ -1121,7 +400,7 @@ async function gitUploadPack(runtime, args, input, protocol) {
   }, input);
 }
 
-async function syncGitIngress(runtime) {
+async function syncGitIngress(runtime: ProjectRuntime): Promise<{ ingressDir: string; head: string }> {
   const ingressDir = path.join(runtime.projectRoot, "receive.git");
   if (!existsSync(ingressDir)) await git(runtime.projectDir, ["init", "--bare", ingressDir]);
   const head = await gitHead(runtime.projectDir);
@@ -1130,7 +409,7 @@ async function syncGitIngress(runtime) {
   return { ingressDir, head };
 }
 
-async function gitReceivePack(runtime, args, input, protocol) {
+async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string) {
   const { ingressDir, head: before } = await syncGitIngress(runtime);
   const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
   if (protocol) env.GIT_PROTOCOL = protocol;
@@ -1155,36 +434,7 @@ async function gitReceivePack(runtime, args, input, protocol) {
   }
 }
 
-const compilerInstallations = new Map<string, Promise<string>>();
-async function findCompiler(configured, stateDir) {
-  const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
-  for (const candidate of candidates) {
-    if (candidate.includes("/")) {
-      try {
-        await access(candidate);
-        return candidate;
-      } catch {
-        continue;
-      }
-    }
-    const probe = await run("sh", ["-c", `command -v "$1"`, "paper", candidate], {});
-    if (probe.code === 0) return candidate;
-  }
-  if (!compilerInstallations.has(stateDir)) {
-    const installation = (async () => {
-      const result = await run("sh", [path.join(APP_DIR, "scripts/install-tectonic.sh")], {
-        cwd: APP_DIR, env: { ...process.env, LATEXCODER_STATE_DIR: stateDir }, timeoutMs: 180_000,
-      });
-      if (result.code !== 0) throw apiError("compiler_install_failed", `Automatic Tectonic installation failed. Retry compilation after checking the network.\n${result.output}`, 503);
-      return path.join(stateDir, "bin", "tectonic");
-    })();
-    compilerInstallations.set(stateDir, installation);
-    installation.finally(() => compilerInstallations.delete(stateDir)).catch(() => {});
-  }
-  return compilerInstallations.get(stateDir)!;
-}
-
-function manual() {
+function manual(): string {
   return `# LaTeX Coder
 
 LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams. Browsers receive the editor at this same URL; Agents receive this Markdown manual and use the JSON and file APIs below.
@@ -1243,16 +493,21 @@ matches or 1 for no matches.
 \`GET /v1/build/pdf\` downloads a PDF for the current project contents. The
 server compiles automatically when the inputs have changed and otherwise reuses
 its matching cached artifact.
+Compilation failure returns HTTP 422 JSON with \`error.details.log\`,
+\`error.details.diagnostics\`, and \`error.details.firstFatalError\`.
+Successful PDF responses include diagnostic counts and a \`Link\` header pointing
+to \`GET /v1/build\` for the full log and warnings.
 
 ## Mutate
 
 \`PUT /v1/files?path=chapters/intro.tex\` writes the raw request body.
 
-\`POST /v1/files/patch?path=main.tex\` applies checked UTF-16 ranges in one
-Yjs transaction. It defaults to Suggesting mode and requires Agent identity:
-\`{"baseSha256":"...","agent":{"id":"ag_...","name":"writer"},"changes":[{"from":10,"to":14,"insert":"replacement"}]}\`.
-Use \`"mode":"direct"\` only when an unreviewed edit is explicitly intended.
-Overlapping, stale, or Unicode-splitting edits are rejected without changing the file.
+\`POST /v1/files/edit?path=main.tex\` uploads the complete updated UTF-8 file
+as raw bytes. Supply the downloaded file's \`X-Content-SHA256\` in the
+\`X-Base-SHA256\` request header. The server checks the live Yjs revision,
+calculates the diff, and applies it in one transaction. Stale uploads return
+HTTP 409 without changing the file. Direct editing is the default.
+To create suggestions, add \`&mode=suggesting&agentId=ag_unique&agentName=writer\`.
 
 \`DELETE /v1/files?path=chapters/intro.tex\` removes a file.
 
@@ -1271,14 +526,14 @@ do not store unrelated secrets in project directories.
 `;
 }
 
-function agentProjectManual(runtime, files, shareToken, origin) {
+function agentProjectManual(runtime: ProjectRuntime, files: ProjectFile[], shareToken: string, origin: string): string {
   const capability = new URLSearchParams({ project: runtime.id, access: shareToken });
-  const fileUrl = relativePath => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
-  const patchUrl = relativePath => `/v1/files/patch?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const fileUrl = (relativePath: string): string => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const editUrl = (relativePath: string): string => `/v1/files/edit?${capability}&path=${encodeURIComponent(relativePath)}`;
   const projectUrl = `/v1/project?${capability}`;
   const searchUrl = `/v1/search?${capability}`;
   const pdfUrl = `/v1/build/pdf?${capability}`;
-  const gitUrl = endpoint => `/v1/git${endpoint}?${capability}`;
+  const gitUrl = (endpoint: string): string => `/v1/git${endpoint}?${capability}`;
   const cloneUrl = `${origin}/git/${encodeURIComponent(runtime.id)}/${encodeURIComponent(shareToken)}`;
   const main = runtime.build.main || "main.tex";
   const fileList = files.map(file => `- ${JSON.stringify(file.path)}${file.text ? " (text)" : " (binary)"}`).join("\n");
@@ -1313,57 +568,64 @@ matches and 1 for no matches.
 
 ## Download The Current PDF
 
-curl -fsSL '${origin}${pdfUrl}' -o latest.pdf
+status=$(curl -sSL '${origin}${pdfUrl}' -D latest.headers -o latest.response -w '%{http_code}')
+if [ "$status" = 200 ]; then mv latest.response latest.pdf; else cat latest.response; fi
 
 This always downloads a PDF built from the current project inputs. The server
 handles compilation and caching; do not call the compile API first.
+Check the HTTP status before treating the response as a PDF. HTTP 422 returns
+JSON: error.details.log contains the compiler output, diagnostics contains
+errors and warnings with source path/line when available, and firstFatalError
+identifies the first fatal error. Fix the source with a checked file upload,
+then request this PDF URL again. Failed compilation does not return a stale PDF.
+On success, X-Build-Error-Count and X-Build-Warning-Count summarize diagnostics;
+the Link header points to the project-scoped log API. You can also inspect:
 
-## Submit A Yjs Edit
+curl -fsS '${origin}/v1/build?${capability}'
 
-Never construct patch JSON by hand. LaTeX backslashes such as \\section,
-\\begin, \\text, and \\newcommand are JSON escapes or invalid JSON when pasted
-directly into a JSON string. Write the exact LaTeX to a file, then use a JSON
-encoder so it is escaped correctly.
+Its build object includes log, diagnostics, and firstFatalError. A failed build
+may still reference a PDF from a previous successful build; that artifact is not
+evidence that the current source compiles.
+
+## Upload An Updated File
+
+Download the file and its revision, edit the downloaded file locally, then
+upload the complete updated file as raw UTF-8 bytes. No JSON escaping, base64,
+or character offsets are needed. Keep all unchanged content, including review
+macros and replies, intact.
 
 curl -fsS -D /tmp/latexcoder-headers '${origin}${fileUrl(main)}' \\
   -o /tmp/latexcoder-current.tex
 SHA=$(awk 'tolower($1) == "x-content-sha256:" { gsub("\\r", "", $2); print $2 }' \\
   /tmp/latexcoder-headers)
 
-cat > /tmp/latexcoder-insert.tex <<'LATEX'
-\\section{Introduction}
-Write the exact LaTeX here. Backslashes, quotes, and newlines stay unchanged.
-LATEX
+cp /tmp/latexcoder-current.tex /tmp/latexcoder-updated.tex
+# Edit /tmp/latexcoder-updated.tex with your local file-editing tool.
 
-FROM=0
-TO=0
-jq -n \\
-  --arg sha "$SHA" \\
-  --argjson from "$FROM" \\
-  --argjson to "$TO" \\
-  --rawfile insert /tmp/latexcoder-insert.tex \\
-  '{baseSha256: $sha, mode: "direct", changes: [{from: $from, to: $to, insert: $insert}]}' \\
-  > /tmp/latexcoder-patch.json
+curl -fsS -X POST '${origin}${editUrl(main)}' \\
+  -H 'Content-Type: text/plain; charset=utf-8' \\
+  -H "X-Base-SHA256: $SHA" \\
+  --data-binary @/tmp/latexcoder-updated.tex
 
-curl -fsS -X POST '${origin}${patchUrl(main)}' \\
-  -H 'Content-Type: application/json' \\
-  --data-binary @/tmp/latexcoder-patch.json
+The server computes Yjs operations automatically and broadcasts them to
+connected editors. It checks the hash of the live collaborative content, not
+an older disk copy. Missing or invalid hashes are rejected; stale hashes return
+HTTP 409 with error.details.currentSha256. Download the latest file, reapply
+your intended changes to that version, and retry. Never just substitute a new
+hash onto an old edited file: that would overwrite others' changes.
 
-If jq is unavailable, use another real JSON serializer. Never interpolate raw
-LaTeX into JSON with shell string concatenation. Set FROM and TO to UTF-16
-code-unit offsets into /tmp/latexcoder-current.tex.
+For a read-only conflict report, POST the same proposed file and original
+X-Base-SHA256 to ${origin}${editUrl(main).replace("/edit?", "/edit/conflict?")}.
+The JSON response includes currentSource, currentSha256, and a unified diff
+comparing the current source with your proposed upload. This is NOT a three-way
+merge: the diff may include other collaborators' edits. Read the latest source,
+reapply only your intended changes, and upload using its currentSha256.
+The diagnostic endpoint never writes or automatically retries an edit.
 
-Patch ranges use UTF-16 code-unit offsets into the version identified by
-baseSha256. All ranges are checked against that original version, then applied
-together in one Yjs transaction. Ranges must be non-overlapping. A stale digest
-is rejected with HTTP 409 and the response includes
-error.details.currentSha256; read the file again, recalculate the offsets, and
-retry.
-
-To create a reviewable suggestion instead of a direct edit, omit mode or use
-"mode":"suggesting" and include:
-
-{"agent":{"id":"ag_uniqueid","name":"Agent Name"}}
+Uploads are direct edits by default. To create reviewable suggestions, append
+&mode=suggesting&agentId=ag_uniqueid&agentName=Agent%20Name to the upload URL.
+The response returns the resulting file hash and generated suggestion IDs.
+Suggestion uploads may not overlap existing open reviews.
 
 ## Reply To An Inline Comment
 
@@ -1371,25 +633,25 @@ Comments are stored as:
 
 \\cmtbg{thread-id}{Author}selected text\\cmted{initial comment}
 
-To reply, use the checked patch API to append this immediately before the final
+To reply, edit the downloaded file to append this immediately before the final
 closing brace of that comment's \\cmted argument:
 
 \\cmtrpl{unique-reply-id}{Agent Name}{Reply text}
 
 Keep the existing comment and replies intact unless the user explicitly asks
-to resolve or rewrite them. Read the latest file revision before patching.
+to resolve or rewrite them. Upload the updated file with its original base hash.
 
-## Replace Or Create A File
+## Create A File
 
 PUT ${fileUrl(main)}
 Content-Type: text/plain; charset=utf-8
 
-The raw request body becomes the file content. Prefer the checked patch API for
-existing text because it detects concurrent edits.
+Use PUT only for new files or binary uploads. For existing text files, use the
+checked full-file upload above; do not use an unchecked PUT to bypass a conflict.
 
 ## Git (Only When The User Explicitly Requests It)
 
-Do not use Git by default. For normal editing, use the checked Yjs patch API
+Do not use Git by default. For normal editing, use the checked full-file upload
 above. Only inspect Git status, create a commit, resolve a conflict, clone, or
 push the repository when the user explicitly requests that Git operation.
 
@@ -1411,35 +673,41 @@ checkpoints current Yjs changes, then automatically merges the pushed commit
 into Yjs-backed main. If it cannot merge safely, the incoming commit is kept on
 a conflict branch and the live document stays unchanged. The remote may not
 contain uncommitted Yjs changes until the checkpoint created by a push or web
-commit. Use the checked Yjs patch API unless the user specifically asks for a
+commit. Use the checked full-file upload unless the user specifically asks for a
 Git workflow.
 `;
 }
 
-function safeProjectId(value) {
+function safeProjectId(value: unknown): string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{12}$/.test(value)) {
     throw apiError("invalid_project", "project id is invalid");
   }
   return value;
 }
 
-function randomProjectId() {
+function randomProjectId(): string {
   return randomBytes(9).toString("base64url");
 }
 
-function cleanProjectName(value) {
+function cleanProjectName(value: unknown): string {
   if (typeof value !== "string") throw apiError("invalid_project_name", "project name is required");
   const name = value.replace(/\s+/g, " ").trim();
   if (!name || name.length > 80) throw apiError("invalid_project_name", "project name must contain 1 to 80 characters");
   return name;
 }
 
-export async function createPaperServer(options: any = {}) {
+export async function createPaperServer(options: ServerOptions = {}): Promise<PaperServer> {
+  const projectSearch = createProjectSearch(options);
   const stateDir = path.resolve(options.stateDir || process.env.LATEXCODER_STATE_DIR || path.join(process.cwd(), ".latexcoder"));
   const projectsDir = path.join(stateDir, "projects");
   await mkdir(stateDir, { recursive: true });
   await mkdir(projectsDir, { recursive: true });
   const database = new StateDatabase(stateDir);
+  const logger = createLogger(options.logRequests ?? false);
+  const compileConcurrency = options.compileConcurrency ?? Number(process.env.LATEXCODER_COMPILE_CONCURRENCY || 2);
+  const compileQueue = new CompileQueue(compileConcurrency);
+  const dependencies = await checkDependencies(stateDir, options);
+  logger.info("server.dependencies", { dependencies });
 
   const authDisabled = options.authDisabled === true;
   const configuredAdminPassword = options.adminPassword ?? process.env.LATEXCODER_ADMIN_PASSWORD;
@@ -1454,32 +722,32 @@ export async function createPaperServer(options: any = {}) {
     });
   }
 
-  const loginAttempts = new Map();
+  const loginAttempts = new Map<string, { count: number; resetAt: number }>();
   const USER_SESSION_SECONDS = 7 * 24 * 60 * 60;
   const PROJECT_SESSION_SECONDS = 24 * 60 * 60;
   const INVITATION_SECONDS = 7 * 24 * 60 * 60;
 
-  function cookieSession(request, cookieName) {
+  function cookieSession(request: CookieRequest, cookieName: string): CookieSession | null {
     const token = parseCookies(request)[cookieName];
     if (!token) return null;
     return { key: sha256(token), token };
   }
 
-  function userSession(request) {
+  function userSession(request: CookieRequest) {
     const session = cookieSession(request, "lc_user");
     if (!session) return null;
     const record = database.getUserSession(session.key);
     return record ? { ...session, record } : null;
   }
 
-  function projectSession(request) {
+  function projectSession(request: CookieRequest) {
     const session = cookieSession(request, "lc_access");
     if (!session) return null;
     const record = database.getProjectSession(session.key);
     return record ? { ...session, record } : null;
   }
 
-  function currentUser(request) {
+  function currentUser(request: CookieRequest): AuthenticatedUser | null {
     if (authDisabled) return { username: "test-user", displayName: "Test User" };
     const session = userSession(request);
     if (!session) return null;
@@ -1487,85 +755,85 @@ export async function createPaperServer(options: any = {}) {
     return user ? { username: user.username, displayName: user.displayName } : null;
   }
 
-  function requireUser(request) {
+  function requireUser(request: CookieRequest): AuthenticatedUser {
     const user = currentUser(request);
     if (!user) throw apiError("authentication_required", "sign in to continue", 401);
     return user;
   }
 
-  function isProjectOwner(request, runtime) {
+  function isProjectOwner(request: CookieRequest, runtime: ProjectRuntime): boolean {
     return currentUser(request)?.username === runtime.metadata.ownerUsername;
   }
 
-  function projectMembership(request, runtime) {
+  function projectMembership(request: CookieRequest, runtime: ProjectRuntime) {
     const user = currentUser(request);
     return user ? database.getProjectMember(runtime.id, user.username) : null;
   }
 
-  function hasProjectAccess(request, runtime) {
+  function hasProjectAccess(request: ProjectAccessRequest, runtime: ProjectRuntime): boolean {
     if (projectMembership(request, runtime)) return true;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return true;
     return Boolean(findProjectShare(runtime, request.query?.access));
   }
 
-  function projectAccessShareId(request, runtime) {
+  function projectAccessShareId(request: ProjectAccessRequest, runtime: ProjectRuntime): string | null {
     if (projectMembership(request, runtime)) return null;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return session.record.shares.get(runtime.id) || null;
     return findProjectShare(runtime, request.query?.access)?.id || null;
   }
 
-  function requireProjectAccess(request, runtime) {
+  function requireProjectAccess(request: ProjectAccessRequest, runtime: ProjectRuntime): void {
     if (!hasProjectAccess(request, runtime)) {
       throw apiError("project_access_required", "open a valid project share link or sign in as the project owner", 401);
     }
   }
 
-  function requireProjectOwner(request, runtime) {
+  function requireProjectOwner(request: Request, runtime: ProjectRuntime): void {
     if (!isProjectOwner(request, runtime)) {
       throw apiError("project_owner_required", "only the project owner can manage this project", 403);
     }
   }
 
-  function requireProjectMember(request, runtime) {
+  function requireProjectMember(request: Request, runtime: ProjectRuntime) {
     const membership = projectMembership(request, runtime);
     if (!membership) throw apiError("project_member_required", "sign in as a project member to continue", 403);
     return membership;
   }
 
-  function issueUserSession(request, response, username) {
+  function issueUserSession(request: Request, response: Response, username: string): void {
     const token = randomToken();
     database.createUserSession(sha256(token), username, Date.now() + USER_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_user", token, USER_SESSION_SECONDS));
   }
 
-  function issueProjectSession(request, response, projectId, shareId) {
+  function issueProjectSession(request: Request, response: Response, projectId: string, shareId: string | null): void {
     const existing = projectSession(request);
     const token = existing?.token || randomToken();
     database.addProjectSession(sha256(token), projectId, shareId, Date.now() + PROJECT_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_access", token, PROJECT_SESSION_SECONDS));
   }
 
-  const projects = new Map();
+  const projects = new Map<string, ProjectRuntime>();
   const initialOwnerUsername = authDisabled
     ? "test-user"
     : database.getUser("admin")
       ? "admin"
       : database.firstUsername() || null;
-  function publicProjectMetadata(metadata) {
+  function publicProjectMetadata(metadata: ProjectMetadata): Omit<ProjectMetadata, "shareToken" | "ownerUsername"> {
     const result = { ...metadata };
     delete result.shareToken;
     delete result.ownerUsername;
     return result;
   }
 
-  function findProjectShare(runtime, supplied) {
+  function findProjectShare(runtime: ProjectRuntime, supplied: unknown) {
     if (typeof supplied !== "string" || !supplied) return null;
     return database.getProjectShareByToken(runtime.id, sha256(supplied));
   }
 
-  function sharePaths(runtime, shareId, shareToken) {
+  function sharePaths(runtime: ProjectRuntime, shareId: string, shareToken: string): SharePaths {
     return {
       id: shareId,
       path: `/share/${encodeURIComponent(runtime.id)}/${shareToken}`,
@@ -1574,7 +842,7 @@ export async function createPaperServer(options: any = {}) {
     };
   }
 
-  function memberProjectShare(runtime, username) {
+  function memberProjectShare(runtime: ProjectRuntime, username: string): SharePaths {
     const existing = database.getProjectShareForUser(runtime.id, username);
     if (existing) return sharePaths(runtime, existing.id, existing.token);
     const id = randomProjectId();
@@ -1583,26 +851,27 @@ export async function createPaperServer(options: any = {}) {
     return sharePaths(runtime, id, token);
   }
 
-  async function loadProject(id) {
-    id = safeProjectId(id);
-    if (projects.has(id)) return projects.get(id);
-    const metadata = database.getProject(id);
+  async function loadProject(id: unknown): Promise<ProjectRuntime> {
+    const projectId = safeProjectId(id);
+    const cached = projects.get(projectId);
+    if (cached) return cached;
+    const metadata = database.getProject(projectId);
     if (!metadata) throw apiError("project_not_found", "project does not exist", 404);
-    const projectRoot = path.join(projectsDir, id);
+    const projectRoot = path.join(projectsDir, projectId);
     if (!existsSync(projectRoot)) throw apiError("project_not_found", "project does not exist", 404);
     const projectDir = path.join(projectRoot, "project");
     const buildDir = path.join(projectRoot, "build");
     await mkdir(projectDir, { recursive: true });
     await mkdir(buildDir, { recursive: true });
     const mainPath = path.join(projectDir, "main.tex");
-    if (!existsSync(mainPath)) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
+    if (!(await listFiles(projectDir)).length) await writeFile(mainPath, DEFAULT_DOCUMENT, "utf8");
     await ensureGitRepository(projectDir);
-    const build = database.getBuild(id);
+    const build = database.getBuild(projectId);
     build.pdf = build.pdf && existsSync(path.join(buildDir, "latest.pdf"));
-    const runtime = {
-      id, metadata, projectRoot, projectDir, buildDir,
+    const runtime: ProjectRuntime = {
+      id: projectId, metadata, projectRoot, projectDir, buildDir,
       database,
-      collaboration: createCollaborationStore(id, projectDir, database),
+      collaboration: createCollaborationStore(projectId, projectDir, database),
       build,
       compilePromise: null,
       gitBusy: false,
@@ -1610,12 +879,12 @@ export async function createPaperServer(options: any = {}) {
       gitReaderWaiters: [],
       deleting: false,
     };
-    projects.set(id, runtime);
+    projects.set(projectId, runtime);
     return runtime;
   }
 
-  async function projectSummaries(username = null) {
-    const summaries = [];
+  async function projectSummaries(username: string | null = null) {
+    const summaries: Array<ReturnType<typeof publicProjectMetadata> & { build: { status: string; pdf: boolean }; membership: string; permissions: { manage: boolean } }> = [];
     const records = username ? database.listProjectsForUser(username) : database.listProjects();
     for (const metadata of records) {
       const runtime = await loadProject(metadata.id);
@@ -1629,16 +898,27 @@ export async function createPaperServer(options: any = {}) {
     return summaries.sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async function createProject(name, ownerUsername) {
-    name = cleanProjectName(name);
+  async function createProject(name: unknown, ownerUsername: string | null, importedFiles: ImportedProjectFile[] = []): Promise<ProjectRuntime> {
+    const projectName = cleanProjectName(name);
     let id = randomProjectId();
     while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomProjectId();
     const projectRoot = path.join(projectsDir, id);
-    const metadata = { id, name, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
+    const metadata: ProjectMetadata = { id, name: projectName, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
     try {
+      for (const file of importedFiles) {
+        const target = path.join(projectRoot, "project", file.relativePath);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content);
+      }
       database.createProject(metadata);
-      return await loadProject(id);
+      const runtime = await loadProject(id);
+      if (importedFiles.length) {
+        const main = importedFiles.find(file => file.relativePath === "main.tex")
+          || importedFiles.find(file => file.relativePath.endsWith(".tex"));
+        if (main) { runtime.build.main = main.relativePath; database.saveBuild(id, runtime.build); }
+      }
+      return runtime;
     } catch (error) {
       projects.delete(id);
       database.deleteProject(id);
@@ -1653,7 +933,7 @@ export async function createPaperServer(options: any = {}) {
     existing = await projectSummaries();
   }
   let defaultProjectId = existing[0]?.id || null;
-  const defaultProjectForRequest = async request => {
+  const defaultProjectForRequest = async (request: CookieRequest): Promise<string> => {
     const user = currentUser(request);
     if (user) {
       const accessible = await projectSummaries(user.username);
@@ -1667,18 +947,18 @@ export async function createPaperServer(options: any = {}) {
     }
     throw apiError("project_not_found", "no accessible project was selected", 404);
   };
-  const resolveProject = async request => {
+  const resolveProject = async (request: Request): Promise<ProjectRuntime> => {
     const runtime = await loadProject(request.query.project || await defaultProjectForRequest(request));
     requireProjectAccess(request, runtime);
     return runtime;
   };
-  const resolveGitProject = async request => {
+  const resolveGitProject = async (request: Request): Promise<ProjectRuntime> => {
     const runtime = await loadProject(request.params.projectId);
     if (hasProjectAccess(request, runtime)) return runtime;
     if (!findProjectShare(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
     return runtime;
   };
-  const resolveGitPushProject = async request => {
+  const resolveGitPushProject = async (request: Request): Promise<ProjectRuntime> => {
     const runtime = await loadProject(request.params.projectId);
     const share = findProjectShare(runtime, request.params.shareToken);
     if (!share?.username || !database.getProjectMember(runtime.id, share.username)) {
@@ -1687,112 +967,20 @@ export async function createPaperServer(options: any = {}) {
     return runtime;
   };
 
-  const performCompile = async (runtime, main) => {
-    let workDir;
-    const previousPdf = runtime.build.pdf;
-    const previousRevision = runtime.build.sourceRevision;
-    try {
-      assertProjectWritable(runtime);
-      const { projectDir, buildDir, collaboration } = runtime;
-      collaboration.flush();
-      main = safeRelativePath(main || runtime.build.main || "main.tex");
-      if (!main.endsWith(".tex")) throw apiError("invalid_main", "main document must be a .tex file");
-      runtime.build = {
-        status: "running",
-        main,
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        log: "",
-        pdf: previousPdf,
-        sourceRevision: previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      workDir = path.join(buildDir, `job-${randomUUID()}`);
-      const gitDir = path.join(projectDir, ".git");
-      await cp(projectDir, workDir, { recursive: true, filter: source => source !== gitDir && !source.startsWith(`${gitDir}${path.sep}`) });
-      const sourceRevision = await compilationSourceRevision(workDir);
-      for (const file of await listFiles(workDir)) {
-        if (!file.path.endsWith(".tex")) continue;
-        const sourcePath = path.join(workDir, file.path);
-        const source = await readFile(sourcePath, "utf8");
-        await writeFile(sourcePath, stripReviewStorage(source), "utf8");
-      }
-      const outputDir = path.join(workDir, ".paper-output");
-      await mkdir(outputDir, { recursive: true });
-      const compiler = await findCompiler(options.compiler || process.env.LATEXCODER_LATEX_BIN, stateDir);
-      const executable = path.basename(compiler);
-      const args = executable.startsWith("latexmk")
-        ? ["-pdf", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
-        : ["--keep-logs", "--outdir", outputDir, main];
-      const result = await run(compiler, args, {
-        cwd: workDir,
-        env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
-        timeoutMs: 180_000,
-      });
-      const pdfName = `${path.basename(main, ".tex")}.pdf`;
-      const outputPdf = path.join(outputDir, pdfName);
-      const success = result.code === 0 && existsSync(outputPdf);
-      if (success) await cp(outputPdf, path.join(buildDir, "latest.pdf"));
-      runtime.build = {
-        status: success ? "success" : "error",
-        main,
-        startedAt: runtime.build.startedAt,
-        finishedAt: new Date().toISOString(),
-        log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
-        pdf: success || previousPdf,
-        sourceRevision: success ? sourceRevision : previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      return { success, build: runtime.build };
-    } catch (error) {
-      runtime.build = {
-        ...runtime.build,
-        status: "error",
-        finishedAt: new Date().toISOString(),
-        log: error.message,
-        pdf: previousPdf,
-        sourceRevision: previousRevision,
-      };
-      database.saveBuild(runtime.id, runtime.build);
-      throw error;
-    } finally {
-      if (workDir) await rm(workDir, { recursive: true, force: true });
-    }
-  };
-
-  const compileProject = async (runtime, main) => {
-    if (runtime.compilePromise) return runtime.compilePromise;
-    const promise = performCompile(runtime, main);
-    runtime.compilePromise = promise;
-    try {
-      return await promise;
-    } finally {
-      if (runtime.compilePromise === promise) runtime.compilePromise = null;
-    }
-  };
-
-  const ensureLatestPdf = async runtime => {
-    const main = safeRelativePath(runtime.build.main || "main.tex");
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      runtime.collaboration.flush();
-      const currentRevision = await compilationSourceRevision(runtime.projectDir);
-      if (
-        runtime.build.pdf
-        && runtime.build.status === "success"
-        && runtime.build.main === main
-        && runtime.build.sourceRevision === currentRevision
-        && existsSync(path.join(runtime.buildDir, "latest.pdf"))
-      ) return runtime.build;
-      const result = await compileProject(runtime, main);
-      if (!result.success) throw apiError("compile_failed", result.build.log || "LaTeX compilation failed", 422);
-    }
-    throw apiError("compile_changed", "the project kept changing while the PDF was compiling; retry the download", 409);
-  };
+  const { compileProject, ensureLatestPdf } = createCompileService({
+    stateDir,
+    database,
+    queue: compileQueue,
+    logger,
+    serverOptions: options,
+    assertWritable: assertProjectWritable,
+  });
 
   const expressModule = await import("express");
   const express = expressModule.default;
   const app = express();
   app.disable("x-powered-by");
+  app.use(requestLogger(logger));
   app.use((request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
@@ -1860,7 +1048,23 @@ export async function createPaperServer(options: any = {}) {
       ));
     } catch (error) { next(error); }
   });
-  app.get("/health", (_request, response) => response.json({ ok: true, name: "latexcoder" }));
+  const readiness = () => {
+    const queue = compileQueue.stats();
+    const databaseReady = database.ping();
+    return {
+      ok: databaseReady && queue.accepting,
+      status: databaseReady && queue.accepting ? "ready" : "not_ready",
+      name: "latexcoder",
+      schemaVersion: database.schemaVersion(),
+      queue,
+      dependencies,
+    };
+  };
+  app.get("/health/live", (_request, response) => response.json({ ok: true, status: "live", name: "latexcoder" }));
+  app.get(["/health", "/health/ready"], (_request, response) => {
+    const health = readiness();
+    response.status(health.ok ? 200 : 503).json(health);
+  });
   app.get("/v1/auth/me", (request, response) => {
     response.json({
       user: currentUser(request),
@@ -1870,6 +1074,7 @@ export async function createPaperServer(options: any = {}) {
   });
   app.post("/v1/auth/login", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
+      const body = parseBody(loginRequestSchema, request.body);
       const attemptKey = request.ip || request.socket.remoteAddress || "unknown";
       let attempts = loginAttempts.get(attemptKey);
       if (!attempts || attempts.resetAt <= Date.now()) {
@@ -1877,9 +1082,9 @@ export async function createPaperServer(options: any = {}) {
         loginAttempts.set(attemptKey, attempts);
       }
       if (attempts.count >= 10) throw apiError("login_rate_limited", "too many login attempts; try again later", 429);
-      const username = cleanUsername(request.body?.username);
+      const username = cleanUsername(body.username);
       const user = database.getUser(username);
-      if (!user || !passwordMatches(request.body?.password, user)) {
+      if (!user || !passwordMatches(body.password, user)) {
         attempts.count += 1;
         throw apiError("invalid_credentials", "username or password is incorrect", 401);
       }
@@ -1897,7 +1102,7 @@ export async function createPaperServer(options: any = {}) {
   app.patch("/v1/users/me", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
       const user = requireUser(request);
-      const displayName = cleanDisplayName(request.body?.displayName);
+      const displayName = cleanDisplayName(parseBody(updateProfileRequestSchema, request.body).displayName);
       if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
       response.json({ user: { username: user.username, displayName } });
     } catch (error) { next(error); }
@@ -1926,15 +1131,16 @@ export async function createPaperServer(options: any = {}) {
   });
   app.post("/v1/auth/register", express.json({ limit: "16kb" }), (request, response, next) => {
     try {
-      const token = String(request.body?.token || "");
+      const body = parseBody(registerRequestSchema, request.body);
+      const token = body.token;
       const tokenHash = sha256(token);
       const invitation = database.getInvitation(tokenHash);
       if (!invitation || invitation.usedAt || invitation.expiresAt <= Date.now()) {
         throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
       }
-      const username = cleanUsername(request.body?.username);
+      const username = cleanUsername(body.username);
       if (database.getUser(username)) throw apiError("username_taken", "username is already registered", 409);
-      const password = validatePassword(request.body?.password);
+      const password = validatePassword(body.password);
       const createdAt = new Date().toISOString();
       database.transaction(() => {
         const current = database.getInvitation(tokenHash);
@@ -1958,10 +1164,12 @@ export async function createPaperServer(options: any = {}) {
     }
     catch (error) { next(error); }
   });
-  app.post("/v1/projects", express.json({ limit: "16kb" }), async (request, response, next) => {
+  app.post("/v1/projects", express.json({ limit: "16kb" }), express.raw({ type: "application/zip", limit: "20mb" }), async (request, response, next) => {
     try {
       const user = requireUser(request);
-      const runtime = await createProject(request.body?.name, user.username);
+      const importedFiles = request.is("application/zip") ? readProjectZip(request.body) : [];
+      const name = request.is("application/zip") ? request.query.name : parseBody(createProjectRequestSchema, request.body).name;
+      const runtime = await createProject(name, user.username, importedFiles);
       response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
     } catch (error) { next(error); }
   });
@@ -1969,7 +1177,7 @@ export async function createPaperServer(options: any = {}) {
     try {
       const runtime = await loadProject(request.params.projectId);
       requireProjectOwner(request, runtime);
-      runtime.metadata = { ...runtime.metadata, name: cleanProjectName(request.body?.name) };
+      runtime.metadata = { ...runtime.metadata, name: cleanProjectName(parseBody(updateProjectRequestSchema, request.body).name) };
       database.saveProject(runtime.metadata);
       response.json({ project: publicProjectMetadata(runtime.metadata) });
     } catch (error) { next(error); }
@@ -2003,10 +1211,42 @@ export async function createPaperServer(options: any = {}) {
         ...publicProjectMetadata(runtime.metadata),
         main: runtime.build.main,
         files: await listFiles(runtime.projectDir),
-        directories: await listDirectories(runtime.projectDir),
+        folders: await listFolders(runtime.projectDir),
+        settings: database.getSettings(runtime.id),
         build: runtime.build,
         permissions: { manage: isProjectOwner(request, runtime), collaborate: Boolean(projectMembership(request, runtime)) },
       } });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/settings", async (request, response, next) => {
+    try { response.json({ settings: database.getSettings((await resolveProject(request)).id) }); }
+    catch (error) { next(error); }
+  });
+  app.patch("/v1/settings", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      if (runtime.compilePromise) throw apiError("compile_running", "Wait for compilation before changing settings", 409);
+      const body = parseBody(settingsRequestSchema, request.body);
+      const main = contentPath(body.main);
+      const { compiler, autoCompile } = body;
+      if (!main.endsWith(".tex") || !existsSync(path.join(runtime.projectDir, main))) throw apiError("invalid_main", "Select an existing .tex file");
+      if (!["auto", "tectonic", "latexmk"].includes(compiler) || typeof autoCompile !== "boolean") throw apiError("invalid_settings", "Invalid compiler or automatic compilation setting");
+      database.saveSettings(runtime.id, { compiler, autoCompile });
+      runtime.build.main = main;
+      database.saveBuild(runtime.id, runtime.build);
+      response.json({ settings: database.getSettings(runtime.id) });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/reviews", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const files = await listFiles(runtime.projectDir);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ files: files.filter(file => file.text).map(file => ({
+        path: file.path,
+        reviews: parseReviews(runtime.collaboration.readText(file.path)),
+      })) });
     } catch (error) { next(error); }
   });
   app.post("/v1/project/share", async (request, response, next) => {
@@ -2136,6 +1376,40 @@ export async function createPaperServer(options: any = {}) {
       response.type("application/x-git-receive-pack-result").send(result.output);
     } catch (error) { next(error); }
   });
+  app.post("/v1/search/project", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const { sources, ...result } = await projectSearch.search(runtime, request.body);
+      response.setHeader("Cache-Control", "no-store");
+      response.json(result);
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/search/replace/preview", express.json({ limit: "32kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      response.json(await projectSearch.previewReplacement(runtime, request.body));
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/search/replace", express.json({ limit: "24mb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const files = request.body?.files;
+      if (!Array.isArray(files) || !files.length || files.length > 100) throw apiError("invalid_files", "Expected 1 to 100 replacement files");
+      const paths = new Set<string>();
+      // No awaits between validation and mutation: any stale file rejects the batch.
+      for (const file of files) {
+        file.path = contentPath(file.path);
+        if (paths.has(file.path) || typeof file.source !== "string" || !isWellFormedUtf16(file.source) || Buffer.byteLength(file.source) > MAX_TEXT_BYTES) throw apiError("invalid_files", "Invalid or duplicate replacement file");
+        paths.add(file.path);
+        const current = runtime.collaboration.readText(file.path);
+        if (sha256(current) !== file.baseSha256) throw apiError("stale_file", "A replacement file changed. Preview again before applying.", 409, { path: file.path, currentSha256: sha256(current) });
+      }
+      const results = files.map(file => ({ path: file.path, ...runtime.collaboration.editFile(file.path, file.baseSha256, file.source) }));
+      runtime.collaboration.flush();
+      response.json({ files: results.map(file => ({ path: file.path, sha256: file.sha256 })) });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/search", express.json({ limit: "32kb" }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
@@ -2167,6 +1441,32 @@ export async function createPaperServer(options: any = {}) {
       response.type("text/plain; charset=utf-8");
       if (result.code === 0 || (result.code === 1 && result.stderr.length === 0)) return response.send(result.stdout);
       response.status(422).send(result.stderr.length ? result.stderr : Buffer.from(`ripgrep exited with code ${result.code}\n`));
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/files/import", express.raw({ type: "application/zip", limit: "20mb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      if (!Buffer.isBuffer(request.body)) throw apiError("invalid_zip", "send application/zip bytes");
+      const files = readProjectZip(request.body);
+      for (const file of files) {
+        let target = runtime.projectDir;
+        for (const part of file.relativePath.split("/")) {
+          target = path.join(target, part);
+          if (existsSync(target)) {
+            const details = await lstat(target);
+            if (details.isSymbolicLink()) throw apiError("invalid_zip_path", "import cannot traverse symbolic links");
+            if (target !== path.join(runtime.projectDir, file.relativePath) && !details.isDirectory()) throw apiError("file_exists", "import path conflicts with an existing file", 409);
+          }
+        }
+        if (existsSync(target)) throw apiError("file_exists", `${file.relativePath} already exists; ZIP was not imported`, 409);
+      }
+      for (const file of files) {
+        const target = path.join(runtime.projectDir, file.relativePath);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content);
+      }
+      response.status(201).json({ files: files.map(file => ({ path: file.relativePath })) });
     } catch (error) { next(error); }
   });
   app.get("/v1/files", async (request, response, next) => {
@@ -2204,27 +1504,50 @@ export async function createPaperServer(options: any = {}) {
       response.status(201).json({ file: { path: relativePath, size: body.length, text: isTextFile(relativePath) } });
     } catch (error) { next(error); }
   });
-  app.put("/v1/directories", async (request, response, next) => {
+  app.post("/v1/files/edit", express.raw({ type: () => true, limit: MAX_TEXT_BYTES }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
       assertProjectWritable(runtime);
-      const relativePath = safeTreePath(request.query.path);
-      await mkdir(path.join(runtime.projectDir, relativePath), { recursive: true });
-      response.status(201).json({ directory: { path: relativePath } });
-    } catch (error) { next(error); }
+      const relativePath = safeRelativePath(request.query.path);
+      if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be edited", 415);
+      const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+      let source: string;
+      try { source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body); }
+      catch { throw apiError("invalid_utf8", "upload must be a valid UTF-8 file"); }
+      const mode = request.query.mode === "suggesting" ? "suggesting" : request.query.mode === undefined || request.query.mode === "direct" ? "direct" : null;
+      if (!mode) throw apiError("invalid_mode", "mode must be suggesting or direct");
+      const result = runtime.collaboration.editFile(relativePath, request.get("X-Base-SHA256"), source, {
+        mode,
+        agent: typeof request.query.agentId === "string" && typeof request.query.agentName === "string" ? { id: request.query.agentId, name: request.query.agentName } : undefined,
+      });
+      runtime.collaboration.flush();
+      response.setHeader("ETag", `"${result.sha256}"`);
+      response.setHeader("X-Content-SHA256", result.sha256);
+      response.json({ file: { path: relativePath, size: Buffer.byteLength(result.source), text: true, sha256: result.sha256 }, edit: { mode: result.mode, changeCount: result.changeCount, suggestionIds: result.suggestionIds } });
+    } catch (error) {
+      if (error.code === "stale_file") error.details = { ...error.details,
+        latestFileUrl: request.originalUrl.replace("/v1/files/edit", "/v1/files"),
+        conflictUrl: request.originalUrl.replace("/v1/files/edit", "/v1/files/edit/conflict"),
+        action: "Download the latest file and reapply your intended edits. Do not put a new hash on the old upload.",
+      };
+      next(error);
+    }
   });
-  app.delete("/v1/directories", async (request, response, next) => {
+  app.post("/v1/files/edit/conflict", express.raw({ type: () => true, limit: MAX_TEXT_BYTES }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      assertProjectWritable(runtime);
-      const relative = safeTreePath(request.query.path);
-      if (runtime.build.main === relative || runtime.build.main.startsWith(relative + "/")) throw apiError("main_file_required", "The folder contains the main document and cannot be deleted", 409);
-      const target = path.join(runtime.projectDir, relative);
-      if (!(await lstat(target)).isDirectory()) throw apiError("not_directory", "Path is not a folder", 400);
-      const affected = (await listFiles(runtime.projectDir)).filter(file => file.path.startsWith(relative + "/"));
-      await rm(target, { recursive: true });
-      for (const file of affected) await runtime.collaboration.remove(file.path);
-      response.json({ deleted: { path: relative } });
+      const file = contentPath(request.query.path);
+      const currentSource = runtime.collaboration.readText(file);
+      const baseSha256 = request.get("X-Base-SHA256");
+      if (!baseSha256 || !/^[a-f0-9]{64}$/.test(baseSha256)) throw apiError("invalid_base_sha256", "Supply the original X-Base-SHA256");
+      let proposedSource;
+      try { proposedSource = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(request.body || Buffer.alloc(0)); }
+      catch { throw apiError("invalid_utf8", "Upload must be valid UTF-8"); }
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ path: file, baseSha256, currentSha256: sha256(currentSource), currentSource,
+        diff: createPatch(file, currentSource, proposedSource, "current live file", "your rejected upload", { context: 3 }),
+        action: "This diff includes others' changes too. Reapply only your intended changes to currentSource and upload with currentSha256.",
+      });
     } catch (error) { next(error); }
   });
   app.post("/v1/files/patch", express.json({ limit: `${MAX_TEXT_BYTES}b` }), (request, response, next) => {
@@ -2246,16 +1569,61 @@ export async function createPaperServer(options: any = {}) {
       });
     }).catch(next);
   });
+  app.post("/v1/files/folder", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const folder = contentPath(request.body?.path);
+      const target = checkedContentTarget(runtime.projectDir, folder);
+      if (existsSync(target)) throw apiError("path_exists", "That path already exists", 409);
+      mkdirSync(target, { recursive: true });
+      response.status(201).json({ folder });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/trash", async (request, response, next) => {
+    try { response.json({ items: database.listTrash((await resolveProject(request)).id) }); }
+    catch (error) { next(error); }
+  });
+  app.post("/v1/trash/restore", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const id = String(request.body?.id || "");
+      const entry = database.getTrash(runtime.id, id);
+      if (!entry) throw apiError("trash_not_found", "Deleted item not found", 404);
+      const target = checkedContentTarget(runtime.projectDir, entry.path);
+      if (existsSync(target)) throw apiError("path_exists", "The original path is occupied. Move it before restoring.", 409);
+      if (entry.directory) mkdirSync(target, { recursive: true });
+      for (const file of entry.files) {
+        const destination = checkedContentTarget(runtime.projectDir, file.path);
+        if (file.directory) { mkdirSync(destination, { recursive: true }); continue; }
+        mkdirSync(path.dirname(destination), { recursive: true });
+        writeFileSync(destination, file.content);
+        if (file.snapshot) database.saveYjsSnapshot(runtime.id, file.path, file.snapshot);
+      }
+      database.removeTrash(runtime.id, id);
+      response.json({ restored: { path: entry.path } });
+    } catch (error) { next(error); }
+  });
   app.delete("/v1/files", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
       assertProjectWritable(runtime);
       const { projectDir, collaboration } = runtime;
-      const relativePath = safeRelativePath(request.query.path);
-      if (relativePath === runtime.build.main) throw apiError("main_file_required", "the main document cannot be deleted", 409);
-      await rm(path.join(projectDir, relativePath), { force: false });
-      await collaboration.remove(relativePath);
-      response.json({ deleted: { path: relativePath } });
+      const relativePath = contentPath(request.query.path);
+      if (relativePath === runtime.build.main || runtime.build.main.startsWith(`${relativePath}/`)) throw apiError("main_file_required", "the main document cannot be deleted", 409);
+      collaboration.flush();
+      const target = path.join(projectDir, relativePath);
+      const entries = contentEntries(projectDir, relativePath);
+      const directory = entries[0].directory;
+      const files = entries.map(file => ({ ...file, content: file.directory ? Buffer.alloc(0) : readFileSync(path.join(projectDir, file.path)), snapshot: file.directory ? null : database.getYjsSnapshot(runtime.id, file.path) }));
+      const id = randomUUID();
+      database.createTrash(runtime.id, id, relativePath, directory, files);
+      try {
+        rmSync(target, { recursive: directory, force: false });
+        for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
+      } catch (error) { throw error; }
+      response.json({ deleted: { path: relativePath, trashId: id } });
     } catch (error) {
       if (error.code === "ENOENT") next(apiError("file_not_found", "file does not exist", 404));
       else next(error);
@@ -2266,44 +1634,123 @@ export async function createPaperServer(options: any = {}) {
       const runtime = await resolveProject(request);
       assertProjectWritable(runtime);
       const { projectDir, collaboration } = runtime;
-      const from = safeTreePath(request.body?.from);
-      const to = safeTreePath(request.body?.to);
-      if (from === to) return response.json({ file: { path: to } });
-      if (to.startsWith(from + "/")) throw apiError("invalid_move", "Cannot move a folder inside itself", 409);
-      if (existsSync(path.join(projectDir, to))) throw apiError("path_exists", "A file or folder already exists at the destination", 409);
-      const affected = (await listFiles(projectDir)).filter(file => file.path === from || file.path.startsWith(from + "/"));
+      const from = contentPath(request.body?.from);
+      const to = contentPath(request.body?.to);
+      checkedContentTarget(projectDir, to);
+      if (to === from || to.startsWith(`${from}/`)) throw apiError("invalid_move", "Cannot move a folder into itself");
+      if (existsSync(path.join(projectDir, to))) throw apiError("path_exists", "Destination already exists", 409);
       collaboration.flush();
-      await mkdir(path.dirname(path.join(projectDir, to)), { recursive: true });
-      await rename(path.join(projectDir, from), path.join(projectDir, to));
-      for (const file of affected) {
-        await collaboration.remove(file.path);
-        await collaboration.remove(to + file.path.slice(from.length));
-      }
-      if (runtime.build.main === from || runtime.build.main.startsWith(from + "/")) {
-        runtime.build.main = to + runtime.build.main.slice(from.length);
-        database.saveBuild(runtime.id, runtime.build);
-      }
+      const entries = contentEntries(projectDir, from);
+      mkdirSync(path.dirname(path.join(projectDir, to)), { recursive: true });
+      renameSync(path.join(projectDir, from), path.join(projectDir, to));
+      for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
+      if (runtime.build.main === from || runtime.build.main.startsWith(`${from}/`)) runtime.build.main = to + runtime.build.main.slice(from.length);
+      database.saveBuild(runtime.id, runtime.build);
       response.json({ file: { path: to } });
     } catch (error) { next(error); }
   });
   app.get("/v1/build", async (request, response, next) => {
-    try { response.json({ build: (await resolveProject(request)).build }); }
+    try {
+      const runtime = await resolveProject(request);
+      runtime.collaboration.flush();
+      const currentRevision = await compilationSourceRevision(runtime.projectDir, runtime.build.main, database.getSettings(runtime.id).compiler);
+      const diagnostics = buildDiagnostics(runtime.build.log, runtime.build.errors);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log), diagnostics, firstFatalError: diagnostics.find(item => item.severity === "error") || null } });
+    }
     catch (error) { next(error); }
   });
   app.get("/v1/build/pdf", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      const build = await ensureLatestPdf(runtime);
       response.setHeader("Cache-Control", "no-store");
+      const build = request.query.cached === "1" ? runtime.build : await ensureLatestPdf(runtime);
+      if (!build.pdf || !existsSync(path.join(runtime.buildDir, "latest.pdf"))) throw apiError("pdf_not_found", "No successful PDF yet", 404);
+      response.setHeader("Cache-Control", "no-store");
+      const diagnostics = buildDiagnostics(build.log, build.errors);
+      response.setHeader("X-Build-Error-Count", diagnostics.filter(item => item.severity === "error").length);
+      response.setHeader("X-Build-Warning-Count", diagnostics.filter(item => item.severity === "warning").length);
+      const logQuery = new URLSearchParams({ project: runtime.id });
+      if (typeof request.query.access === "string") logQuery.set("access", request.query.access);
+      response.setHeader("Link", `</v1/build?${logQuery}>; rel="describedby"; type="application/json"`);
       response.setHeader("ETag", `"${build.sourceRevision}"`);
       response.setHeader("X-LaTeX-Coder-Source-Revision", build.sourceRevision);
       response.sendFile(path.join(runtime.buildDir, "latest.pdf"), { dotfiles: "allow" });
     } catch (error) { next(error); }
   });
+  app.post("/v1/build/position", express.json({ limit: `${MAX_TEXT_BYTES * 2}b` }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const file = safeRelativePath(request.body?.path);
+      const { line, source, from, to } = request.body || {};
+      if (!file.endsWith(".tex") || !Number.isSafeInteger(line) || line < 1 || typeof source !== "string") throw apiError("invalid_position", "Expected a LaTeX file, source, and positive line number");
+      if (runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source changed. Try navigating again.", 409);
+      await ensureLatestPdf(runtime);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) await compileProject(runtime, runtime.build.main);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) throw apiError("synctex_missing", "The compiler did not produce SyncTeX data", 409);
+      let snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      if (snapshot.files[file]?.source !== source) {
+        const result = await compileProject(runtime, runtime.build.main);
+        if (!result.success) throw apiError("compile_failed", "Compilation failed while locating the PDF position", 422);
+        snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      }
+      const map = snapshot.files[file];
+      if (!map) throw apiError("source_not_found", "This file is not part of the compiled document", 404);
+      if (map.source !== source || runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source changed. Try navigating again.", 409);
+      let projectedLine = 1;
+      for (let index = 0; index < map.lines.length; index++) {
+        if (Math.abs(map.lines[index] - line) < Math.abs(map.lines[projectedLine - 1] - line)) projectedLine = index + 1;
+      }
+      const start = Number.isSafeInteger(from) && from >= 0 && from <= source.length ? projectedPosition(source, from) : { line: projectedLine, column: 0 };
+      const end = Number.isSafeInteger(to) && to >= (from || 0) && to <= source.length ? projectedPosition(source, to) : start;
+      const boxes = [];
+      try {
+        for (let batch = start.line; batch <= Math.min(end.line, start.line + 19); batch += 4) {
+          const lines = Array.from({ length: Math.min(4, Math.min(end.line, start.line + 19) - batch + 1) }, (_, index) => batch + index);
+          const results = await Promise.all(lines.map(targetLine => run(options.synctex || "synctex", ["view", "-i", `${targetLine}:${targetLine === start.line ? start.column : 0}:${path.join(snapshot.root, file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 1000, env: { ...process.env, SYNCTEX_VIEWER: "" } })));
+          for (const result of results) boxes.push(...syncTexPositions(result.output));
+        }
+      } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
+      if (runtime.compilePromise || snapshot.revision !== runtime.build.sourceRevision || runtime.collaboration.readText(file) !== source) throw apiError("stale_source", "The source or PDF changed. Try navigating again.", 409);
+      const unique = [...new Map(boxes.map(box => [JSON.stringify(box), box])).values()].slice(0, 200);
+      if (!unique.length) throw apiError("source_not_found", "No PDF position for this source", 404);
+      const { page, x, y } = unique[0];
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ page, x, y, boxes: unique, revision: snapshot.revision });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/build/source", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const { page, x, y, revision } = request.body || {};
+      if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 100000 || y > 100000) throw apiError("invalid_position", "Invalid PDF position");
+      if (runtime.compilePromise || revision !== runtime.build.sourceRevision) throw apiError("stale_pdf", "The PDF changed. Refresh the preview and try again.", 409);
+      if (!existsSync(path.join(runtime.buildDir, "latest.synctex.gz"))) throw apiError("synctex_missing", "Compile the project to enable PDF source navigation.", 409);
+      const snapshot = JSON.parse(await readFile(path.join(runtime.buildDir, "source-map.json"), "utf8"));
+      let result;
+      try {
+        result = await run(options.synctex || "synctex", ["edit", "-o", `${page}:${x}:${y}:${path.join(runtime.buildDir, "latest.pdf")}`], { cwd: runtime.buildDir, timeoutMs: 5000, env: { ...process.env, SYNCTEX_EDITOR: "" } });
+      } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
+      if (runtime.compilePromise || revision !== runtime.build.sourceRevision) throw apiError("stale_pdf", "The PDF changed. Refresh the preview and try again.", 409);
+      const input = /^Input:(.*)$/m.exec(result.output)?.[1]?.trim();
+      const line = Number(/^Line:(\d+)$/m.exec(result.output)?.[1]);
+      if (!input || !line || result.code !== 0) throw apiError("source_not_found", "No source location at this PDF position", 404);
+      let file = path.relative(snapshot.root, path.resolve(snapshot.root, input));
+      if (!snapshot.files[file] && snapshot.files[`${file}.tex`]) file += ".tex";
+      const map = snapshot.files[file];
+      if (!map) throw apiError("source_not_found", "The source is outside this project", 404);
+      runtime.collaboration.flush();
+      const current = await readFile(path.join(runtime.projectDir, safeRelativePath(file)), "utf8");
+      if (current !== map.source) throw apiError("stale_source", "This source changed since compilation. Compile again to navigate accurately.", 409);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ path: file, line: map.lines[line - 1] || line });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/compile", express.json({ limit: "16kb" }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
-      const main = safeRelativePath(request.body?.main || runtime.build.main || "main.tex");
+      const body = parseBody(compileRequestSchema, request.body);
+      const main = safeRelativePath(body.main || runtime.build.main || "main.tex");
       let result = await compileProject(runtime, main);
       if (result.build.main !== main) result = await compileProject(runtime, main);
       response.status(result.success ? 200 : 422).json({ build: result.build });
@@ -2312,14 +1759,17 @@ export async function createPaperServer(options: any = {}) {
 
   app.use(express.static(path.join(APP_DIR, "dist"), { index: false, maxAge: "1y", immutable: true }));
   app.use((request, _response, next) => next(apiError("route_not_found", `route ${request.method} ${request.path} does not exist`, 404)));
-  app.use((error, _request, response, _next) => {
-    const status = Number.isInteger(error.status) ? error.status : 500;
-    const parseError = error.type === "entity.parse.failed";
-    const code = parseError ? "invalid_json" : (error.code && typeof error.code === "string" ? error.code : "internal_error");
-    const message = parseError ? "request body must contain valid JSON" : (status >= 500 ? "internal server error" : error.message);
-    if (status >= 500) console.error(error);
+  app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+    const failure = error && typeof error === "object"
+      ? error as { status?: number; type?: string; code?: string; message?: string; details?: Record<string, unknown> }
+      : {};
+    const status = Number.isInteger(failure.status) ? failure.status! : 500;
+    const parseError = failure.type === "entity.parse.failed";
+    const code = parseError ? "invalid_json" : (failure.code && typeof failure.code === "string" ? failure.code : "internal_error");
+    const message = parseError ? "request body must contain valid JSON" : (status >= 500 ? "internal server error" : failure.message || "request failed");
+    if (status >= 500) logger.error("http.error", error, { status });
     const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = { error: { code, message } };
-    if (status < 500 && error.details && typeof error.details === "object") body.error.details = error.details;
+    if (status < 500 && failure.details) body.error.details = failure.details;
     response.status(parseError ? 400 : status).json(body);
   });
 
@@ -2336,7 +1786,7 @@ export async function createPaperServer(options: any = {}) {
       requireProjectAccess(request, runtime);
       const shareId = projectAccessShareId(request, runtime);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
-      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId));
+      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId, url.searchParams.get("saved") === "1"));
     })().catch(() => {
       socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       socket.destroy();
@@ -2347,6 +1797,7 @@ export async function createPaperServer(options: any = {}) {
   let closed = false;
   const shutdown = () => {
     if (closed) return;
+    compileQueue.close();
     for (const runtime of projects.values()) runtime.collaboration.shutdown();
     database.close();
     closed = true;
@@ -2359,8 +1810,8 @@ export async function createPaperServer(options: any = {}) {
   };
 }
 
-export async function startPaperServer(options: any = {}) {
-  const paper = await createPaperServer(options);
+export async function startPaperServer(options: ServerOptions = {}): Promise<PaperServer> {
+  const paper = await createPaperServer({ ...options, logRequests: options.logRequests ?? true });
   const host = options.host || process.env.LATEXCODER_HOST || "0.0.0.0";
   const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PORT || 8090);
   await new Promise<void>((resolve, reject) => {
@@ -2370,18 +1821,4 @@ export async function startPaperServer(options: any = {}) {
   const address = paper.server.address();
   console.log(`LaTeX Coder listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
   return paper;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const paper = await startPaperServer();
-  let closing = false;
-  const stop = () => {
-    if (closing) return;
-    closing = true;
-    paper.shutdown();
-    paper.sockets.close();
-    paper.server.close(() => process.exit(0));
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
 }

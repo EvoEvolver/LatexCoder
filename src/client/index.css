@@ -23,6 +23,7 @@
 }
 
 :root {
+  color-scheme: light;
   --background: oklch(0.985 0.004 145);
   --foreground: oklch(0.24 0.012 145);
   --card: oklch(1 0 0);
@@ -39,7 +40,57 @@
   --border: oklch(0.89 0.008 145);
   --input: oklch(0.87 0.008 145);
   --ring: oklch(0.52 0.09 165);
+  --editor-background: #ffffff;
+  --editor-foreground: #292b27;
+  --editor-gutter: #fafbf9;
+  --editor-gutter-foreground: #747a72;
+  --editor-active-line: #f4f7f3;
+  --editor-comment: #fff0aa;
+  --editor-insertion: #dcefe7;
+  --editor-insertion-foreground: #115b48;
+  --editor-deletion: #f8dddd;
+  --editor-deletion-foreground: #a1373d;
+  --syntax-keyword: #075f4c;
+  --syntax-name: #65419a;
+  --syntax-string: #8a4b13;
+  --syntax-number: #9c3345;
+  --syntax-comment: #727970;
   --radius: 0.5rem;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.19 0.008 150);
+  --foreground: oklch(0.91 0.006 145);
+  --card: oklch(0.235 0.009 150);
+  --card-foreground: oklch(0.93 0.005 145);
+  --primary: oklch(0.69 0.105 163);
+  --primary-foreground: oklch(0.16 0.012 155);
+  --secondary: oklch(0.28 0.01 150);
+  --secondary-foreground: oklch(0.91 0.006 145);
+  --muted: oklch(0.255 0.009 150);
+  --muted-foreground: oklch(0.68 0.009 145);
+  --accent: oklch(0.31 0.025 158);
+  --accent-foreground: oklch(0.93 0.008 150);
+  --destructive: oklch(0.68 0.18 25);
+  --border: oklch(0.34 0.012 150);
+  --input: oklch(0.38 0.012 150);
+  --ring: oklch(0.66 0.095 163);
+  --editor-background: #202420;
+  --editor-foreground: #e5e9e3;
+  --editor-gutter: #1b1f1b;
+  --editor-gutter-foreground: #8f988e;
+  --editor-active-line: #292f29;
+  --editor-comment: #594b1f;
+  --editor-insertion: #213f35;
+  --editor-insertion-foreground: #b9ead8;
+  --editor-deletion: #4b292d;
+  --editor-deletion-foreground: #f1b8bd;
+  --syntax-keyword: #65d0ad;
+  --syntax-name: #c8a8f0;
+  --syntax-string: #edb36f;
+  --syntax-number: #ef9aaa;
+  --syntax-comment: #99a398;
 }
 
 @layer base {
@@ -49,6 +100,11 @@
   button { @apply cursor-pointer; }
   [hidden] { display: none !important; }
 }
+
+.theme-trigger svg { display: none; }
+html[data-theme-preference="system"] .theme-trigger .theme-system,
+html[data-theme-preference="light"] .theme-trigger .theme-light,
+html[data-theme-preference="dark"] .theme-trigger .theme-dark { display: block; }
 
 /* Workspace boundaries are grid tracks, so handles can never drift into a pane. */
 .workspace { display: grid; min-height: 0; min-width: 0; width: 100%; overflow: hidden; grid-template-columns: 232px 10px minmax(0,1fr) 10px minmax(0,1fr); }
@@ -248,7 +304,7 @@
 .menu-shortcut { margin-left: auto; font-size: 10px; color: var(--muted-foreground); white-space: nowrap; }
 .workspace-menu .menu-shortcut + .menu-check { margin-left: 0; }
 .editor-pane.tabs-hidden { grid-template-rows: 2.75rem minmax(0,1fr); }
-.editor-pane.tabs-hidden #binary-view { top: 2.75rem; }
+.editor-pane.tabs-hidden #binary-view { top: 0; }
 .settings-dialog, .pdf-download-dialog { margin: auto; padding: 0; max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--foreground); box-shadow: 0 24px 80px oklch(.1 .01 160 / .3); }
 .settings-dialog { width: min(740px,calc(100vw - 32px)); }
 .settings-dialog::backdrop, .pdf-download-dialog::backdrop { background: oklch(.12 .012 160 / .48); }
