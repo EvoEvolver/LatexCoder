@@ -92,6 +92,12 @@ function isTextFile(relativePath) {
   return TEXT_EXTENSIONS.has(path.extname(relativePath).toLowerCase());
 }
 
+function safeTreePath(value) {
+  const relative = safeRelativePath(value).replace(/\/$/, "");
+  if (relative.split("/").some(part => part.startsWith("."))) throw apiError("invalid_path", "Hidden project paths are reserved", 400);
+  return relative;
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -528,6 +534,17 @@ async function listFiles(projectDir) {
   await visit(projectDir);
   return result;
 }
+async function listDirectories(projectDir) {
+  const result = [];
+  async function visit(directory, prefix = "") {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { result.push(relative); await visit(path.join(directory, entry.name), relative); }
+    }
+  }
+  await visit(projectDir); return result.sort();
+}
 
 async function compilationSourceRevision(projectDir) {
   const digest = createHash("sha256");
@@ -558,13 +575,14 @@ async function compilationSourceRevision(projectDir) {
 
 function run(command: string, args: string[], options: any): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, shell: false });
+    const { timeoutMs = 60_000, ...spawnOptions } = options;
+    const child = spawn(command, args, { ...spawnOptions, shell: false });
     let output = "";
     const append = chunk => { output = (output + chunk.toString()).slice(-300_000); };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
     child.on("error", reject);
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("close", code => {
       clearTimeout(timer);
       resolve({ code, output });
@@ -1137,6 +1155,7 @@ async function gitReceivePack(runtime, args, input, protocol) {
   }
 }
 
+const compilerInstallations = new Map<string, Promise<string>>();
 async function findCompiler(configured, stateDir) {
   const candidates = [configured, path.join(stateDir, "bin", "tectonic"), "tectonic", "latexmk"].filter(Boolean);
   for (const candidate of candidates) {
@@ -1151,7 +1170,18 @@ async function findCompiler(configured, stateDir) {
     const probe = await run("sh", ["-c", `command -v "$1"`, "paper", candidate], {});
     if (probe.code === 0) return candidate;
   }
-  throw apiError("compiler_unavailable", "install Tectonic or latexmk before compiling", 503);
+  if (!compilerInstallations.has(stateDir)) {
+    const installation = (async () => {
+      const result = await run("sh", [path.join(APP_DIR, "scripts/install-tectonic.sh")], {
+        cwd: APP_DIR, env: { ...process.env, LATEXCODER_STATE_DIR: stateDir }, timeoutMs: 180_000,
+      });
+      if (result.code !== 0) throw apiError("compiler_install_failed", `Automatic Tectonic installation failed. Retry compilation after checking the network.\n${result.output}`, 503);
+      return path.join(stateDir, "bin", "tectonic");
+    })();
+    compilerInstallations.set(stateDir, installation);
+    installation.finally(() => compilerInstallations.delete(stateDir)).catch(() => {});
+  }
+  return compilerInstallations.get(stateDir)!;
 }
 
 function manual() {
@@ -1697,6 +1727,7 @@ export async function createPaperServer(options: any = {}) {
       const result = await run(compiler, args, {
         cwd: workDir,
         env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") },
+        timeoutMs: 180_000,
       });
       const pdfName = `${path.basename(main, ".tex")}.pdf`;
       const outputPdf = path.join(outputDir, pdfName);
@@ -1972,6 +2003,7 @@ export async function createPaperServer(options: any = {}) {
         ...publicProjectMetadata(runtime.metadata),
         main: runtime.build.main,
         files: await listFiles(runtime.projectDir),
+        directories: await listDirectories(runtime.projectDir),
         build: runtime.build,
         permissions: { manage: isProjectOwner(request, runtime), collaborate: Boolean(projectMembership(request, runtime)) },
       } });
@@ -2172,6 +2204,29 @@ export async function createPaperServer(options: any = {}) {
       response.status(201).json({ file: { path: relativePath, size: body.length, text: isTextFile(relativePath) } });
     } catch (error) { next(error); }
   });
+  app.put("/v1/directories", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const relativePath = safeTreePath(request.query.path);
+      await mkdir(path.join(runtime.projectDir, relativePath), { recursive: true });
+      response.status(201).json({ directory: { path: relativePath } });
+    } catch (error) { next(error); }
+  });
+  app.delete("/v1/directories", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      assertProjectWritable(runtime);
+      const relative = safeTreePath(request.query.path);
+      if (runtime.build.main === relative || runtime.build.main.startsWith(relative + "/")) throw apiError("main_file_required", "The folder contains the main document and cannot be deleted", 409);
+      const target = path.join(runtime.projectDir, relative);
+      if (!(await lstat(target)).isDirectory()) throw apiError("not_directory", "Path is not a folder", 400);
+      const affected = (await listFiles(runtime.projectDir)).filter(file => file.path.startsWith(relative + "/"));
+      await rm(target, { recursive: true });
+      for (const file of affected) await runtime.collaboration.remove(file.path);
+      response.json({ deleted: { path: relative } });
+    } catch (error) { next(error); }
+  });
   app.post("/v1/files/patch", express.json({ limit: `${MAX_TEXT_BYTES}b` }), (request, response, next) => {
     resolveProject(request).then(runtime => {
       assertProjectWritable(runtime);
@@ -2211,13 +2266,23 @@ export async function createPaperServer(options: any = {}) {
       const runtime = await resolveProject(request);
       assertProjectWritable(runtime);
       const { projectDir, collaboration } = runtime;
-      const from = safeRelativePath(request.body?.from);
-      const to = safeRelativePath(request.body?.to);
+      const from = safeTreePath(request.body?.from);
+      const to = safeTreePath(request.body?.to);
+      if (from === to) return response.json({ file: { path: to } });
+      if (to.startsWith(from + "/")) throw apiError("invalid_move", "Cannot move a folder inside itself", 409);
+      if (existsSync(path.join(projectDir, to))) throw apiError("path_exists", "A file or folder already exists at the destination", 409);
+      const affected = (await listFiles(projectDir)).filter(file => file.path === from || file.path.startsWith(from + "/"));
+      collaboration.flush();
       await mkdir(path.dirname(path.join(projectDir, to)), { recursive: true });
       await rename(path.join(projectDir, from), path.join(projectDir, to));
-      await collaboration.remove(from);
-      await collaboration.remove(to);
-      if (runtime.build.main === from) runtime.build.main = to;
+      for (const file of affected) {
+        await collaboration.remove(file.path);
+        await collaboration.remove(to + file.path.slice(from.length));
+      }
+      if (runtime.build.main === from || runtime.build.main.startsWith(from + "/")) {
+        runtime.build.main = to + runtime.build.main.slice(from.length);
+        database.saveBuild(runtime.id, runtime.build);
+      }
       response.json({ file: { path: to } });
     } catch (error) { next(error); }
   });

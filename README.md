@@ -33,6 +33,13 @@ the JSON, Git HTTP, and WebSocket endpoints.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
   build logs, and an always-current PDF download endpoint.
 - In-editor previews for project images and PDF files, with zoom and download.
+- Compact File / View menus with split, editor-only, PDF-only and focus layouts.
+- File → Settings opens Appearance, Editor and PDF preferences, saved in the
+  current browser. Light, Dark and System themes support independent dark source
+  and PDF canvases, plus source font size, line spacing, wrapping and line numbers.
+- In dark mode, PDF downloads always offer original white paper or dark paper.
+  Dark export keeps original page content, selectable text and vector formulas;
+  it also recolors images and charts. The compiled original is never overwritten.
 - Whole-project ZIP export, including the current uncommitted working tree.
 - A Markdown manual and checked file/patch APIs for coding agents.
 - A project-scoped ripgrep API with native regex, glob, line-number, and output
@@ -218,3 +225,42 @@ SQLite and remain valid across restarts until they expire or the user logs out.
 LaTeX compilation is not a security sandbox;
 run the service for trusted teams and do not place unrelated secrets in project
 directories.
+
+### Editor workspace
+
+The file browser is a folder tree. Use a folder's `…` menu to create a child,
+rename it, or delete it and its contents. Folders containing the main document
+cannot be deleted. Drag files or folders onto a folder to move them, or onto
+“Project files” to move them back to the root. Moves refuse to overwrite an
+existing destination. Empty folders remain visible in the project filesystem;
+Git itself does not track empty directories.
+
+Drag either vertical divider to resize the file browser or the editor/PDF
+split. The arrow buttons on the dividers hide and restore panes, and the other
+pane fills the available space. Width preferences are saved in the browser.
+Focused dividers also accept the left/right arrow keys.
+
+Code and Visual operate on the same LaTeX source. Visual supports headings,
+paragraphs, bold/italic text, flat lists, common equation environments, and basic
+`tabular` tables. Edit text or cells directly; use Edit on an equation or a
+source block to change its LaTeX. Unknown macros and unsupported environments
+remain as source tokens/blocks. Document setup is preserved, and switching modes
+alone never rewrites the file. Comments and Edit/Suggest mode work in both Code and Visual. Visual selections
+map to the same source review threads; suggestions can be accepted or rejected
+in the Review pane. This is a source-preserving visual editor for supported LaTeX
+constructs, not a general TeX renderer or a full Notion block editor.
+
+If compilation cannot find Tectonic or latexmk, the server automatically runs
+`scripts/install-tectonic.sh` and retries with the installed Tectonic binary.
+The installer supports Linux x86_64 and aarch64 and verifies the release SHA-256.
+Tectonic downloads and caches missing packages/fonts from its TeX bundle during
+compilation. Custom or unpublished `.sty`/`.cls` files still need to be uploaded
+to the project. Network/install failures are shown in the build log and can be
+retried by compiling again.
+
+The editor keeps opened files in a tab strip. Multiple tabs can be switched or
+closed without deleting files; a single tab has no close button or reserved
+button space. The shared formatting toolbar works in both modes: Code inserts
+LaTeX at the selection, while Visual applies formatting to the document.
+Ctrl + mouse wheel over the compiled PDF zooms only the PDF. Ordinary wheel
+scrolling and browser shortcuts outside that viewport are unchanged.

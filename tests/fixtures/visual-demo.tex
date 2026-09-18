@@ -1,0 +1,73 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx}
+\usepackage[colorlinks=true,linkcolor=teal]{hyperref}
+\title{A Small Guide to Better Experiments}
+\author{Research notes · LaTeX Coder}
+\date{September 2026}
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Good experiments turn a question into evidence. This working paper combines mathematical notation, structured observations, and reproducible results in one editable document.
+\end{abstract}
+
+\section{Start with a clear question}
+We study how \textbf{sample size} affects the stability of an estimate. The goal is simple: make each decision \emph{explicit}, keep the analysis reproducible, and communicate uncertainty alongside the result.
+
+For independent observations $x_1,\ldots,x_n$, the sample mean is $\bar{x}=\frac{1}{n}\sum_{i=1}^{n}x_i$. The uncertainty shrinks as more observations become available.
+
+\subsection{The estimation model}
+\begin{equation}
+\mathcal{L}(\theta)=\frac{1}{n}\sum_{i=1}^{n}\left(y_i-f_\theta(x_i)\right)^2+\lambda\lVert\theta\rVert_2^2
+\end{equation}
+
+The regularization parameter $\lambda\geq 0$ balances goodness of fit and model complexity. We update the parameters using the gradient:
+
+\[
+\theta_{t+1}=\theta_t-\eta\nabla_\theta\mathcal{L}(\theta_t),\qquad \eta=0.01.
+\]
+
+\section{Record the evidence}
+The pilot compares three sample sizes under identical conditions. The larger run reduces error while keeping the confidence interval easy to interpret.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Experiment} & \textbf{Samples} & \textbf{Mean error} & \textbf{Time (s)} \\
+\midrule
+Pilot & 32 & 0.184 & 1.2 \\
+Standard & 128 & 0.092 & 3.8 \\
+Extended & 512 & 0.046 & 12.4 \\
+\bottomrule
+\end{tabular}
+\caption{A controlled comparison of accuracy and computation time.}
+\end{table}
+
+\subsection{What changed?}
+\begin{itemize}
+\item \textbf{Accuracy improved:} the extended run cuts mean error by 75\%.
+\item \textbf{Cost increased:} more observations require additional computation.
+\item \textbf{Uncertainty matters:} report the interval, not just the point estimate.
+\end{itemize}
+
+\section{Make the next run reproducible}
+\begin{enumerate}
+\item Fix the random seed and record the data version.
+\item Repeat each experiment with five independent trials.
+\item Review outliers before aggregating the results.
+\end{enumerate}
+
+\begin{align}
+\mathbb{E}[\bar{x}] &= \mu, \\
+\operatorname{Var}(\bar{x}) &= \frac{\sigma^2}{n}.
+\end{align}
+
+\section{A practical conclusion}
+Write the explanation next to the evidence. A useful paper lets readers follow the argument from the \emph{question} to the \textbf{decision}, with every assumption visible.
+
+\begin{quote}
+Clarity is a property of the whole document: prose, equations, tables, and the source that connects them.
+\end{quote}
+\end{document}

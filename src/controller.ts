@@ -22,7 +22,6 @@ import {
   highlightSpecialChars,
   hoverTooltip,
   keymap,
-  lineNumbers,
   rectangularSelection,
   WidgetType,
 } from "@codemirror/view";
@@ -68,6 +67,14 @@ import { yCollab, ySyncAnnotation } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
+import { createFileTabs } from "./file-tabs";
+import { installPdfWheel } from "./pdf-wheel";
+import { darkenPdfCanvas, downloadPdf, downloadPdfBytes } from './pdf-appearance';
+import { setupPreferences, editorPreferences, preferenceExtensions, isDarkTheme, isDarkPdf } from './preferences';
+import { projectReviews } from "./visual-review";
+import { RichEditor } from "./rich-editor";
+import { setupWorkspace } from "./workspace";
+import { createFileTree } from "./file-tree";
 import { parseReviews, stripReviewStorage } from "./review.ts";
 
 declare global {
@@ -132,7 +139,7 @@ const elements: Record<string, any> = Object.fromEntries([
   "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "show-log", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
+  "toast", "toggle-files", "collapse-files", "collapse-output", "collapse-editor", "new-folder", "rich-text-toggle", "rich-editor", "workspace", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)]));
 
 const apiUrl = relative => new URL(`/${String(relative).replace(/^\//, "")}`, window.location.origin);
@@ -325,62 +332,51 @@ function projectApiUrl(relative) {
   return url;
 }
 
-function fileIcon(file) {
-  if (IMAGE_PREVIEW_PATTERN.test(file.path)) return "image";
-  if (/\.pdf$/i.test(file.path)) return "file-check-2";
-  return file.text ? "file-text" : "file";
-}
-
+const workspaceLayout = setupWorkspace();
+const fileTabs = createFileTabs(document.getElementById("file-tabs")!, path => void openFile(path));
+const fileTree = createFileTree(elements.file_list, {
+  open: openFile, rename: renameEntry, remove: deleteEntry, create: createEntry,
+  move: moveEntry,
+});
 function renderFiles() {
-  elements.file_list.replaceChildren();
-  for (const file of state.files) {
-    const row = document.createElement("div");
-    row.className = "file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent";
-    const button = document.createElement("button");
-    button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active bg-accent font-semibold text-primary" : ""}`;
-    button.title = file.path;
-    button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
-    button.querySelector("span").textContent = file.path;
-    button.addEventListener("click", () => openFile(file.path));
-    const menu = document.createElement("details");
-    menu.className = "file-actions context-menu relative";
-    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5" title="File actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
-    const panel = menu.querySelector("div");
-    menu.addEventListener("toggle", () => {
-      if (!menu.open) return;
-      for (const openMenu of elements.file_list.querySelectorAll(".file-actions[open]")) {
-        if (openMenu !== menu) openMenu.removeAttribute("open");
-      }
-      const trigger = menu.querySelector("summary").getBoundingClientRect();
-      const width = panel.getBoundingClientRect().width || 160;
-      const height = panel.getBoundingClientRect().height || 72;
-      panel.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, trigger.right - width))}px`;
-      panel.style.top = `${trigger.bottom + height + 8 <= window.innerHeight ? trigger.bottom + 4 : Math.max(8, trigger.top - height - 4)}px`;
-    });
-    const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
-      ["pencil", "Rename", () => renameFile(file.path)],
-      ["trash-2", "Delete file", () => deleteFile(file.path), true],
-    ];
-    for (const [icon, label, action, danger] of actions) {
-      const actionButton = document.createElement("button");
-      actionButton.type = "button";
-      actionButton.className = `flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5${danger ? " text-destructive" : ""}`;
-      actionButton.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
-      actionButton.querySelector("span").textContent = label;
-      if (danger && file.path === state.main) {
-        actionButton.disabled = true;
-        actionButton.title = "The main document cannot be deleted";
-      }
-      actionButton.addEventListener("click", () => {
-        menu.open = false;
-        action();
-      });
-      panel.append(actionButton);
-    }
-    row.append(button, menu);
-    elements.file_list.append(row);
-  }
-  createIcons({ icons: ICONS });
+  fileTabs.update(state.files, state.activeFile, state.projectId);
+  fileTree.render({ files: state.files, directories: state.directories || [], active: state.activeFile, main: state.main || "" }, state.projectId);
+}
+async function moveEntry(from: string, to: string) {
+  const active = state.activeFile;
+  const affected = active === from || active.startsWith(from + "/");
+  try {
+    await request("v1/files/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({from, to}) });
+    fileTabs.move(from, to);
+    if (affected) { disconnectEditor(); state.activeFile = to + active.slice(from.length); }
+    fileTree.reveal(to);
+    await refreshProject(affected);
+  } catch (error) { showToast(error.message); }
+}
+async function renameEntry(target: string, folder: boolean) {
+  const name = await openActionDialog({ title: folder ? "Rename folder" : "Rename file", label: "Path", value: target, submitLabel: "Rename" });
+  if (name && name !== target) await moveEntry(target, String(name));
+}
+async function deleteEntry(target: string, folder: boolean) {
+  if (!folder) return deleteFile(target);
+  const confirmed = await openActionDialog({ title: "Delete folder?", message: `Delete “${target}” and all files inside it? This cannot be undone.`, submitLabel: "Delete folder", danger: true });
+  if (!confirmed) return;
+  const affected = state.activeFile.startsWith(target + "/");
+  try {
+    await request(`v1/directories?path=${encodeURIComponent(target)}`, { method: "DELETE" });
+    if (affected) { disconnectEditor(); state.activeFile = ""; }
+    await refreshProject(affected); showToast("Folder deleted.");
+  } catch (error) { showToast(error.message); }
+}
+async function createEntry(parent: string, folder: boolean) {
+  const name = await openActionDialog({ title: folder ? "New folder" : "New file", label: "Path", value: (parent ? parent + "/" : "") + (folder ? "untitled" : "chapter.tex"), submitLabel: "Create" });
+  if (!name) return;
+  try {
+    if (!folder && state.files.some(file => file.path === name)) throw new Error("A file already exists at this path.");
+    await request(`v1/${folder ? "directories" : "files"}?path=${encodeURIComponent(String(name))}`, { method: "PUT", headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "" });
+    fileTree.reveal(String(name) + (folder ? "/" : "")); await refreshProject();
+    if (!folder) await openFile(name);
+  } catch (error) { showToast(error.message); }
 }
 
 elements.file_list.addEventListener("scroll", () => {
@@ -664,8 +660,9 @@ const protectReviewStorage = EditorState.transactionFilter.of(transaction => {
 
 function editorExtensions(ytext, provider) {
   const undoManager = new Y.UndoManager(ytext);
+  state.undoManager = undoManager;
   return [
-    lineNumbers(),
+    editorPreferences.of(preferenceExtensions()),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     history(),
@@ -688,10 +685,10 @@ function editorExtensions(ytext, provider) {
     protectReviewStorage,
     EditorView.clipboardOutputFilter.of(source => stripReviewStorage(source)),
     keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
-    EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
       if (update.docChanged) {
         queueReviewRender();
+        queueMicrotask(() => { visualEditor.sync(); visualEditor.refreshReviews(); });
         elements.git_dirty.hidden = false;
       }
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
@@ -699,13 +696,13 @@ function editorExtensions(ytext, provider) {
       }
     }),
     EditorView.theme({
-      "&": { width: "100%", maxWidth: "100%", minWidth: "0", height: "100%", overflow: "hidden", backgroundColor: "#ffffff", color: "#292b27", fontSize: "13px" },
-      ".cm-scroller": { minWidth: "0", overflow: "auto", fontFamily: "SFMono-Regular, Consolas, Liberation Mono, monospace", lineHeight: "1.55" },
-      ".cm-gutters": { borderRight: "1px solid #eceeea", color: "#a0a49d", backgroundColor: "#fafbf9" },
-      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f4f7f3" },
-      ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "#1d6b55" },
+      "&": { width: "100%", maxWidth: "100%", minWidth: "0", height: "100%", overflow: "hidden", backgroundColor: "var(--code-background)", color: "var(--code-foreground)", fontSize: "var(--code-font-size, 13px)" },
+      ".cm-scroller": { minWidth: "0", overflow: "auto", fontFamily: "SFMono-Regular, Consolas, Liberation Mono, monospace", lineHeight: "var(--code-line-height, 1.6)" },
+      ".cm-gutters": { borderRight: "1px solid var(--code-border)", color: "var(--code-comment)", backgroundColor: "var(--code-gutter)" },
+      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--code-active)" },
+      ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "var(--code-caret)" },
       ".cm-line": { padding: "0 14px" },
-      "&.cm-focused .cm-cursor": { borderLeftColor: "#1d6b55" },
+      "&.cm-focused .cm-cursor": { borderLeftColor: "var(--code-caret)" },
       ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "#fff0aa", cursor: "help" },
       ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "#dcefe7", color: "#115b48", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
       ".cm-review-deletion": { marginLeft: "4px", padding: "1px 3px", borderRadius: "3px", backgroundColor: "#f8dddd", color: "#a1373d", textDecoration: "line-through", textDecorationThickness: "1.5px", cursor: "help", whiteSpace: "pre-wrap" },
@@ -733,6 +730,11 @@ function editorExtensions(ytext, provider) {
 }
 
 function disconnectEditor() {
+  visualEditor.hide();
+  elements.rich_text_toggle.classList.remove("active");
+  document.getElementById("source-mode")?.classList.add("active");
+  document.getElementById("source-mode")?.setAttribute("aria-pressed", "true");
+  elements.rich_text_toggle.setAttribute("aria-pressed", "false");
   state.provider?.destroy();
   state.view?.destroy();
   state.doc?.destroy();
@@ -906,6 +908,8 @@ async function openFile(relativePath) {
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
+  elements.rich_text_toggle.parentElement.hidden = !file.text || !/\.tex$/i.test(relativePath);
+  document.getElementById("format-tools")!.hidden = !file.text;
   renderFiles();
   if (!file.text) {
     elements.sync_state.textContent = "Preview";
@@ -1130,6 +1134,12 @@ function cleanMetadata(value) {
 
 function openReviewDialog() {
   if (!state.view) return showToast("Open a text file first.");
+  if (!elements.rich_editor.hidden) {
+    const visible = visualEditor.selection();
+    if (!visible || visible.from === visible.to) return showToast("Select text first.");
+    const selection = projectReviews(state.view.state.doc.toString()).range(visible.from, visible.to);
+    state.view.dispatch({selection:{anchor:selection.from,head:selection.to}});
+  }
   const selection = state.view.state.selection.main;
   const selected = state.view.state.sliceDoc(selection.from, selection.to);
   if (!selected) return showToast("Select text first.");
@@ -1158,7 +1168,8 @@ elements.review_form.addEventListener("submit", event => {
     annotations: reviewMutation.of(true),
   });
   elements.review_dialog.close();
-  state.view.focus();
+  if (elements.rich_editor.hidden) state.view.focus();
+  else { visualEditor.sync(true); workspaceLayout.showOutput(); selectOutput("review"); }
   renderReviews();
 });
 elements.review_close.addEventListener("click", () => elements.review_dialog.close());
@@ -1181,6 +1192,7 @@ async function refreshProject(open = false) {
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
   state.files = data.project.files;
+  state.directories = data.project.directories || [];
   renderFiles();
   if (data.project.build.log) elements.build_output.textContent = data.project.build.log;
   if (data.project.build.pdf) showPdf();
@@ -1343,6 +1355,7 @@ async function openProjectPage(projectId, push = true) {
   if (state.pdfLoadingTask) await state.pdfLoadingTask.destroy().catch(() => {});
   state.pdfLoadingTask = null;
   state.pdfDocument = null;
+  elements.pdf_download.removeAttribute('href');
   elements.pdf_document.replaceChildren();
   elements.pdf_document.hidden = true;
   elements.empty_output.hidden = false;
@@ -1355,9 +1368,10 @@ async function renderPdf() {
   const pdf = state.pdfDocument;
   if (!pdf) return;
   const version = ++state.pdfRenderVersion;
+  const dark = isDarkPdf();
   const firstPage = await pdf.getPage(1);
   const base = firstPage.getViewport({ scale: 1 });
-  const fit = Math.min(1.25, Math.max(0.35, (elements.pdf_view.clientWidth - 32) / base.width));
+  const fit = Math.max(0.05, (elements.pdf_view.clientWidth - 32) / base.width);
   const scale = fit * state.pdfZoom;
   const fragment = document.createDocumentFragment();
 
@@ -1379,6 +1393,7 @@ async function renderPdf() {
       viewport,
       transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
     }).promise;
+    if (dark) darkenPdfCanvas(canvas);
   }
   if (version !== state.pdfRenderVersion) return;
   elements.pdf_document.replaceChildren(fragment);
@@ -1433,6 +1448,8 @@ async function compile() {
       body: JSON.stringify({ main: state.main }),
     });
     elements.build_output.textContent = result.build.log;
+    elements.build_log.hidden = true;
+    workspaceLayout.showOutput();
     await showPdf(true);
     selectOutput("pdf");
     elements.output_pane.classList.add("mobile-open");
@@ -1809,6 +1826,7 @@ elements.new_project.addEventListener("click", async () => {
   } catch (error) { showToast(error.message); }
 });
 elements.compile_button.addEventListener("click", compile);
+elements.add_comment.addEventListener("mousedown", event => event.preventDefault());
 elements.add_comment.addEventListener("click", openReviewDialog);
 elements.selection_accept.addEventListener("mousedown", event => event.preventDefault());
 elements.selection_accept.addEventListener("click", () => {
@@ -1819,21 +1837,54 @@ elements.suggest_edit.addEventListener("click", () => {
   state.suggesting = !state.suggesting;
   elements.suggest_edit.classList.toggle("active", state.suggesting);
   elements.suggest_edit.setAttribute("aria-pressed", String(state.suggesting));
-  elements.suggest_edit.querySelector("span").textContent = state.suggesting ? "Suggesting" : "Suggest";
+  elements.suggest_edit.querySelector("span").textContent = state.suggesting ? "Suggest" : "Edit";
   showToast(state.suggesting ? "Suggestion mode on." : "Suggestion mode off.");
-  state.view?.focus();
+  if (elements.rich_editor.hidden) state.view?.focus();
 });
 elements.show_log.addEventListener("click", () => { elements.build_log.hidden = false; });
 elements.close_log.addEventListener("click", () => { elements.build_log.hidden = true; });
 elements.close_output.addEventListener("click", () => elements.output_pane.classList.remove("mobile-open"));
+installPdfWheel(elements.pdf_view, () => state.pdfZoom, value => { state.pdfZoom = value; }, renderPdf);
 elements.pdf_zoom_out.addEventListener("click", () => {
   state.pdfZoom = Math.max(0.5, state.pdfZoom - 0.15);
   renderPdf();
 });
 elements.pdf_zoom_in.addEventListener("click", () => {
-  state.pdfZoom = Math.min(2, state.pdfZoom + 0.15);
+  state.pdfZoom = Math.min(3, state.pdfZoom + 0.15);
   renderPdf();
 });
+const pdfDownloadDialog = document.getElementById('pdf-download-dialog') as HTMLDialogElement;
+elements.pdf_download.addEventListener('click', event => {
+  event.preventDefault();
+  if (!state.pdfDocument && !elements.pdf_download.getAttribute('href')) return showToast('Compile your document before downloading.');
+  if (isDarkTheme()) {
+    document.getElementById('pdf-download-status')!.textContent = '';
+    pdfDownloadDialog.showModal();
+  } else void savePdf(false);
+});
+async function savePdf(dark: boolean) {
+  const pdf = state.pdfDocument;
+  const status = document.getElementById('pdf-download-status')!;
+  const buttons = [...pdfDownloadDialog.querySelectorAll<HTMLButtonElement>('.download-options button')];
+  buttons.forEach(button => button.disabled = true);
+  status.textContent = dark ? 'Preparing dark paper…' : 'Preparing your original PDF…';
+  try {
+    const name = (elements.project_name.textContent || 'paper').replace(/[^\p{L}\p{N}._-]+/gu, '-');
+    if (pdf) await downloadPdf(pdf, dark, name);
+    else {
+      const response = await fetch(elements.pdf_download.href);
+      if (!response.ok) throw new Error(`PDF request failed (${response.status}). Try compiling again.`);
+      await downloadPdfBytes(new Uint8Array(await response.arrayBuffer()), dark, name);
+    }
+    pdfDownloadDialog.close();
+  } catch (error) {
+    status.textContent = `Could not download the PDF: ${error.message}`;
+    if (!pdfDownloadDialog.open) showToast(status.textContent);
+  } finally { buttons.forEach(button => button.disabled = false); }
+}
+document.getElementById('download-white')!.onclick = () => void savePdf(false);
+document.getElementById('download-dark')!.onclick = () => void savePdf(true);
+document.getElementById('pdf-download-close')!.onclick = () => pdfDownloadDialog.close();
 elements.file_preview_zoom_out.addEventListener("click", () => {
   state.filePreviewZoom = Math.max(0.5, state.filePreviewZoom - 0.2);
   if (!elements.image_preview.hidden) sizeImagePreview();
@@ -1859,45 +1910,8 @@ elements.upload_input.addEventListener("change", async () => {
   } catch (error) { showToast(error.message); }
   elements.upload_input.value = "";
 });
-elements.new_file.addEventListener("click", async () => {
-  const name = await openActionDialog({
-    title: "New file",
-    label: "File path",
-    value: "chapter.tex",
-    submitLabel: "Create file",
-  });
-  if (!name) return;
-  try {
-    await request(`v1/files?path=${encodeURIComponent(String(name))}`, {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      body: "",
-    });
-    await refreshProject();
-    await openFile(name);
-  } catch (error) { showToast(error.message); }
-});
-async function renameFile(target) {
-  const name = await openActionDialog({
-    title: "Rename file",
-    label: "File path",
-    value: target,
-    submitLabel: "Rename",
-  });
-  if (!name || name === target) return;
-  try {
-    const wasActive = state.activeFile === target;
-    if (wasActive) disconnectEditor();
-    await request("v1/files/move", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: target, to: name }),
-    });
-    if (wasActive) state.activeFile = name;
-    await refreshProject(wasActive);
-  } catch (error) { showToast(error.message); }
-}
-
+elements.new_file.addEventListener("click", () => createEntry(fileTree.folder, false));
+elements.new_folder.addEventListener("click", () => createEntry(fileTree.folder, true));
 async function deleteFile(target) {
   const confirmed = await openActionDialog({
     title: "Delete file",
@@ -1919,7 +1933,81 @@ async function deleteFile(target) {
   }
 }
 elements.toggle_files.addEventListener("click", () => elements.files_pane.classList.toggle("mobile-open"));
+function applyCodeTool(action: string) {
+  const view = state.view;
+  if (!view) return;
+  if (action === "Undo") { state.undoManager?.undo(); return; }
+  if (action === "Redo") { state.undoManager?.redo(); return; }
+  const selection = view.state.selection.main;
+  const selected = view.state.sliceDoc(selection.from,selection.to);
+  const templates: Record<string, string> = {
+    "Bold": `\\textbf{${selected || "text"}}`,
+    "Italic": `\\emph{${selected || "text"}}`,
+    "Add heading": `\\section{${selected || "New section"}}`,
+    "Add bullet list": `\\begin{itemize}\n${(selected || "First item").split("\n").map(line => "\\item " + line).join("\n")}\n\\end{itemize}`,
+    "Add numbered list": `\\begin{enumerate}\n${(selected || "First step").split("\n").map(line => "\\item " + line).join("\n")}\n\\end{enumerate}`,
+    "Add equation": `\\[\n${selected || "E = mc^2"}\n\\]`,
+    "Add table": "\\begin{tabular}{ll}\nColumn 1 & Column 2 \\\\\nValue & Value \\\\\n\\end{tabular}",
+    "Add paragraph": "\n\n" + (selected || "Write something.") + "\n\n",
+  };
+  const insert = templates[action]; if (insert === undefined) return;
+  view.dispatch({changes:{from:selection.from,to:selection.to,insert},selection:{anchor:selection.from+insert.length},userEvent:"input"}); view.focus();
+}
+const visualEditor = new RichEditor(elements.rich_editor, {
+  source: () => projectReviews(state.view?.state.doc.toString() || "").text,
+  marks: () => projectReviews(state.view?.state.doc.toString() || "").marks,
+  review: id => { workspaceLayout.showOutput(); selectOutput("review"); openCommentThread(id); },
+  codeAction: applyCodeTool,
+  change: (from, to, insert) => {
+    if (!state.view) return;
+    const range = projectReviews(state.view.state.doc.toString()).range(from,to);
+    state.view.dispatch({changes: {...range, insert}, userEvent: "input"});
+    queueMicrotask(() => visualEditor.refreshReviews());
+  },
+  image: path => {
+    const parent = state.activeFile.includes("/") ? state.activeFile.slice(0,state.activeFile.lastIndexOf("/")+1) : "";
+    const normalize = (value: string) => { const parts: string[] = []; for (const part of value.split("/")) { if (part === "..") parts.pop(); else if (part && part !== ".") parts.push(part); } return parts.join("/"); };
+    const candidates = [normalize(parent + path), normalize(path)];
+    const candidate = candidates.map(candidate => state.files.find(file => file.path === candidate || file.path.replace(/\.[^.]+$/, "") === candidate)).find(Boolean);
+    const url = projectApiUrl("v1/files"); url.searchParams.set("path", candidate?.path || candidates[0]); return url.toString();
+  },
+  undo: () => { state.undoManager?.undo(); queueMicrotask(() => visualEditor.sync(true)); },
+  redo: () => { state.undoManager?.redo(); queueMicrotask(() => visualEditor.sync(true)); },
+  notice: showToast,
+});
+elements.rich_text_toggle.setAttribute("aria-pressed", "false");
+function setEditorMode(enabled: boolean) {
+  if (!state.view) return;
+  if (enabled === !elements.rich_editor.hidden) return;
+  if (enabled) visualEditor.show(); else visualEditor.hide();
+  elements.editor.hidden = enabled;
+  elements.review_actions.hidden = false;
+  elements.rich_text_toggle.classList.toggle("active", enabled);
+  document.getElementById("source-mode")!.classList.toggle("active", !enabled);
+  document.getElementById("source-mode")!.setAttribute("aria-pressed", String(!enabled));
+  elements.rich_text_toggle.setAttribute("aria-pressed", String(enabled));
+}
+document.getElementById("source-mode")!.addEventListener("click", () => setEditorMode(false));
+elements.rich_text_toggle.addEventListener("click", () => setEditorMode(true));
 document.querySelectorAll<HTMLElement>("[data-output]").forEach(button => button.addEventListener("click", () => selectOutput(button.dataset.output)));
+setupPreferences({
+  workspace: workspaceLayout,
+  view: () => state.view,
+  renderPdf,
+  zoom: value => { state.pdfZoom = value; void renderPdf(); },
+  openPdf: () => {
+    if (!state.pdfDocument) return showToast('Compile your document to open the PDF.');
+    window.open(elements.pdf_download.href, '_blank', 'noopener,noreferrer');
+  },
+});
+let previewResizeTimer: ReturnType<typeof setTimeout>;
+let previewWidth = 0;
+new ResizeObserver(() => {
+  const width = elements.pdf_view.clientWidth;
+  if (!width || width === previewWidth) return;
+  previewWidth = width; clearTimeout(previewResizeTimer);
+  previewResizeTimer = setTimeout(() => { if (state.pdfDocument) renderPdf().catch(error => console.error(error)); }, 180);
+}).observe(elements.pdf_view);
 window.addEventListener("beforeunload", () => {
   disconnectEditor();
   resetFilePreview();

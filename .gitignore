@@ -4,3 +4,11 @@ public/app.js
 public/pdf.worker.min.mjs
 .treer/
 .latexcoder/
+
+# Local preview artifacts and state backups
+.latexcoder.previous/
+.playwright-cli/
+output/playwright/
+
+# Local working notes and test state
+.temp/
