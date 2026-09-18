@@ -207,8 +207,14 @@ each project's Git repository remain directly accessible on the filesystem.
 
 Every project is initialized on `main`. Yjs always represents that branch;
 the service never checks another branch out into the collaborative working
-tree. Git operations briefly flush and suspend live synchronization so a
-commit sees one coherent source snapshot.
+tree. Changes are checkpointed automatically after 30 seconds of inactivity,
+or at most every five minutes during continuous editing. Unchanged content does
+not create a commit. Automatic and manual checkpoints flush Yjs and serialize
+Git index/ref writes without disconnecting editors. Incoming Git merges briefly
+suspend live synchronization while importing their result.
+
+Clone and fetch checkpoint the latest Yjs content before advertising Git refs,
+so browser users do not need to commit or push before someone pulls their work.
 
 The Git panel supports status, history, and collaborative checkpoints. Each
 registered collaborator's personal Git URL is a normal smart HTTP remote:

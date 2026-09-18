@@ -17,7 +17,7 @@ const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
 const MESSAGE_SAVED = 3;
 
-export function createCollaborationStore(projectId: string, projectDir: string, database: StateDatabase): CollaborationStore {
+export function createCollaborationStore(projectId: string, projectDir: string, database: StateDatabase, onChange: () => void = () => {}): CollaborationStore {
   const docs = new Map<string, SharedDocument>();
   const connectionShares = new WeakMap<WebSocket, string | null>();
   const savedConnections = new WeakSet<WebSocket>();
@@ -66,6 +66,7 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MESSAGE_SYNC); syncProtocol.writeUpdate(encoder, update);
       broadcast(shared, encoding.toUint8Array(encoder), origin); persist(shared);
+      if (!suspended && !shuttingDown) onChange();
     });
     shared.awareness.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: WebSocket | null) => {
       const changed = [...added, ...updated, ...removed];

@@ -785,6 +785,60 @@ test("project ZIP includes live files and a personal Git remote supports clone a
   });
 });
 
+test("automatic Git checkpoints capture live Yjs edits without closing collaboration", async () => {
+  await withServer(async ({ base, ws, projectDir, collaboration }) => {
+    const socket = new WebSocket(`${ws}/v1/collab/${collaboration.roomNameForPath("main.tex")}`);
+    await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+    let disconnected = false;
+    socket.on("close", () => { disconnected = true; });
+    try {
+      const before = await testGit(projectDir, ["rev-parse", "HEAD"]);
+      const shared = collaboration.load("main.tex");
+      shared.doc.getText("content").insert(0, "% automatic live checkpoint\n");
+      const deadline = Date.now() + 5_000;
+      while (await testGit(projectDir, ["rev-parse", "HEAD"]) === before) {
+        assert.ok(Date.now() < deadline, "automatic checkpoint did not run");
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.match(await testGit(projectDir, ["show", "HEAD:main.tex"]), /automatic live checkpoint/);
+      assert.equal(disconnected, false);
+      assert.equal(socket.readyState, WebSocket.OPEN);
+      const head = await testGit(projectDir, ["rev-parse", "HEAD"]);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), head);
+      const write = await fetch(`${base}/v1/files?path=automatic.tex`, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "automatic file creation\n" });
+      assert.equal(write.status, 201);
+      const fileDeadline = Date.now() + 5_000;
+      while (await testGit(projectDir, ["rev-parse", "HEAD"]) === head) {
+        assert.ok(Date.now() < fileDeadline);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.match(await testGit(projectDir, ["show", "HEAD:automatic.tex"]), /automatic file creation/);
+    } finally { socket.terminate(); }
+  }, { gitCheckpointIdleMs: 100, gitCheckpointMaxWaitMs: 500 });
+});
+
+test("Git clone and fetch checkpoint current content without a manual commit", async () => {
+  await withServer(async ({ base, projectDir, collaboration }) => {
+    const { project } = await (await fetch(`${base}/v1/project`)).json();
+    const { share } = await (await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST" })).json();
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-auto-clone-"));
+    const clone = path.join(temporary, "clone");
+    try {
+      const text = collaboration.load("main.tex").doc.getText("content");
+      text.insert(0, "% latest before clone\n");
+      await execFileAsync("git", ["clone", `${base}${share.clonePath}`, clone]);
+      assert.match(await readFile(path.join(clone, "main.tex"), "utf8"), /latest before clone/);
+      text.insert(0, "% latest before fetch\n");
+      await testGit(clone, ["fetch", "origin"]);
+      assert.match(await testGit(clone, ["show", "origin/main:main.tex"]), /latest before fetch/);
+      const head = await testGit(projectDir, ["rev-parse", "HEAD"]);
+      await testGit(clone, ["fetch", "origin"]);
+      assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), head);
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+});
+
 test("Git checkpoints and fast-forward sync keep collaboration on main", async () => {
   await withServer(async ({ base, projectDir }) => {
     await fetch(`${base}/v1/files?path=notes.tex`, {

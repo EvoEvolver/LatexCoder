@@ -18,6 +18,8 @@ import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isW
 import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
 import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPaths } from "./process.ts";
 import { createCollaborationStore } from "./collaboration.ts";
+import { createAutoCheckpoint } from "./auto-checkpoint.ts";
+import type { AutoCheckpoint } from "./auto-checkpoint.ts";
 import { createProjectSearch } from "./search.ts";
 import { CompileQueue } from "./compile-queue.ts";
 import { createCompileService } from "./compile-service.ts";
@@ -244,13 +246,25 @@ async function createConflictBranch(runtime: ProjectRuntime, incoming: string, l
 async function withGitOperation<T>(runtime: ProjectRuntime, task: () => Promise<T>): Promise<T> {
   if (runtime.gitBusy || runtime.deleting) throw apiError("git_busy", "another Git operation is already running", 409);
   runtime.gitBusy = true;
-  runtime.collaboration.suspend();
   try {
+    await runtime.gitLiveOperation?.catch(() => {});
+    runtime.collaboration.suspend();
     return await task();
   } finally {
     runtime.collaboration.resume();
     runtime.gitBusy = false;
   }
+}
+
+// Serialize index/ref writes without disconnecting editors or blocking Yjs edits.
+async function withLiveGitOperation<T>(runtime: ProjectRuntime, task: () => Promise<T>): Promise<T> {
+  while (runtime.gitLiveOperation) await runtime.gitLiveOperation.catch(() => {});
+  assertProjectWritable(runtime);
+  if (runtime.deleting) throw apiError("project_not_found", "project does not exist", 404);
+  const operation = task();
+  runtime.gitLiveOperation = operation;
+  try { return await operation; }
+  finally { runtime.gitLiveOperation = null; }
 }
 
 async function withGitReader<T>(runtime: ProjectRuntime, task: () => Promise<T>): Promise<T> {
@@ -467,6 +481,9 @@ rotating it does not revoke another member's links or project membership.
 Each project's source directory is an independent Git repository whose live
 working tree always remains on \`main\`. \`GET /v1/git\` returns status and
 history. \`POST /v1/git/commit\` creates a collaborative checkpoint.
+Edits are checkpointed automatically after 30 idle seconds, or every five
+minutes during continuous editing, without disconnecting collaborators.
+Clone and fetch checkpoint current Yjs content before advertising refs.
 Each registered collaborator gets a personal smart HTTP URL at
 \`/git/<project-id>/<share-secret>\`. Clone it and push \`main\` normally; no
 upstream configuration is required. A push checkpoints current Yjs changes and
@@ -671,9 +688,9 @@ git push origin main
 The personal URL accepts pushes from registered project members. A push
 checkpoints current Yjs changes, then automatically merges the pushed commit
 into Yjs-backed main. If it cannot merge safely, the incoming commit is kept on
-a conflict branch and the live document stays unchanged. The remote may not
-contain uncommitted Yjs changes until the checkpoint created by a push or web
-commit. Use the checked full-file upload unless the user specifically asks for a
+a conflict branch and the live document stays unchanged. Browser edits are
+checkpointed automatically, and clone/fetch checkpoint current Yjs content
+before advertising refs. Use the checked full-file upload unless the user specifically asks for a
 Git workflow.
 `;
 }
@@ -704,6 +721,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   await mkdir(projectsDir, { recursive: true });
   const database = new StateDatabase(stateDir);
   const logger = createLogger(options.logRequests ?? false);
+  const autoCheckpoints = new Map<string, AutoCheckpoint>();
   const compileConcurrency = options.compileConcurrency ?? Number(process.env.LATEXCODER_COMPILE_CONCURRENCY || 2);
   const compileQueue = new CompileQueue(compileConcurrency);
   const dependencies = await checkDependencies(stateDir, options);
@@ -871,15 +889,24 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     const runtime: ProjectRuntime = {
       id: projectId, metadata, projectRoot, projectDir, buildDir,
       database,
-      collaboration: createCollaborationStore(projectId, projectDir, database),
+      collaboration: createCollaborationStore(projectId, projectDir, database, () => autoCheckpoints.get(projectId)?.changed()),
       build,
       compilePromise: null,
       gitBusy: false,
+      gitLiveOperation: null,
       gitReaders: 0,
       gitReaderWaiters: [],
       deleting: false,
     };
     projects.set(projectId, runtime);
+    const autoCheckpoint = createAutoCheckpoint({
+      idleMs: options.gitCheckpointIdleMs,
+      maxWaitMs: options.gitCheckpointMaxWaitMs,
+      checkpoint: () => withGitReader(runtime, () => withLiveGitOperation(runtime, () => gitCheckpoint(runtime, "Automatic checkpoint"))),
+      onError: error => { if (!runtime.deleting) logger.error("git.checkpoint.failed", error, { projectId }); },
+    });
+    autoCheckpoints.set(projectId, autoCheckpoint);
+    autoCheckpoint.changed();
     return runtime;
   }
 
@@ -921,6 +948,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       return runtime;
     } catch (error) {
       projects.delete(id);
+      autoCheckpoints.get(id)?.close();
+      autoCheckpoints.delete(id);
       database.deleteProject(id);
       await rm(projectRoot, { recursive: true, force: true });
       throw error;
@@ -1008,6 +1037,18 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   };
   app.disable("x-powered-by");
   app.use(requestLogger(logger));
+  app.use((request, response, next) => {
+    const changesFiles = request.path.startsWith("/v1/files")
+      || request.path === "/v1/trash/restore" || request.path === "/v1/search/replace";
+    if (changesFiles && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      response.on("finish", () => {
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          void resolveProject(request).then(runtime => autoCheckpoints.get(runtime.id)?.changed()).catch(() => {});
+        }
+      });
+    }
+    next();
+  });
   app.use((request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
@@ -1216,6 +1257,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       requireProjectOwner(request, runtime);
       const ownerUsername = runtime.metadata.ownerUsername;
       await waitForGitReaders(runtime);
+      autoCheckpoints.get(runtime.id)?.close();
+      autoCheckpoints.delete(runtime.id);
       runtime.collaboration.shutdown();
       projects.delete(runtime.id);
       const deletedRoot = `${runtime.projectRoot}.deleted-${randomUUID()}`;
@@ -1328,7 +1371,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     try {
       const runtime = await resolveProject(request);
       const payload = await withGitReader(runtime, async () => {
-        const result = await withGitOperation(runtime, () => gitCheckpoint(runtime, request.body?.message));
+        const result = await withLiveGitOperation(runtime, () => gitCheckpoint(runtime, request.body?.message));
         return { ...result, status: await gitStatus(runtime) };
       });
       response.json({ git: payload });
@@ -1365,10 +1408,10 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         : await resolveGitProject(request);
       const advertised = await withGitReader(runtime, async () => {
         if (service === "git-upload-pack") {
+          await withLiveGitOperation(runtime, () => gitCheckpoint(runtime, "Automatic checkpoint"));
           return gitUploadPack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"));
         }
-        assertProjectWritable(runtime);
-        return (await gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"))).output;
+        return (await withLiveGitOperation(runtime, () => gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol")))).output;
       });
       response.setHeader("Cache-Control", "no-store");
       response.type(`application/x-${service}-advertisement`);
@@ -1826,6 +1869,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   let closed = false;
   const shutdown = () => {
     if (closed) return;
+    for (const checkpoint of autoCheckpoints.values()) checkpoint.close();
     for (const listeners of projectEvents.values()) for (const response of listeners) response.end();
     compileQueue.close();
     for (const runtime of projects.values()) runtime.collaboration.shutdown();

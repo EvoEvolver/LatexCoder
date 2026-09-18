@@ -16,7 +16,7 @@ export type SearchMatch = { path: string; line: number; from: number; to: number
 export type SearchInput = { query?: unknown; caseSensitive?: boolean; regex?: boolean; path?: unknown; replacement?: unknown };
 export type ReplacementFile = { path: string; baseSha256: string; before: string; source: string; count: number };
 export type SearchOptions = { bwrap?: string; rg?: string; searchTimeoutMs?: number };
-export type ServerOptions = SearchOptions & { stateDir?: string; authDisabled?: boolean; adminPassword?: string; compiler?: string; synctex?: string; host?: string; port?: number; compileConcurrency?: number; logRequests?: boolean };
+export type ServerOptions = SearchOptions & { stateDir?: string; authDisabled?: boolean; adminPassword?: string; compiler?: string; synctex?: string; host?: string; port?: number; compileConcurrency?: number; logRequests?: boolean; gitCheckpointIdleMs?: number; gitCheckpointMaxWaitMs?: number };
 export type ProcessResult = { code: number | null; output: string };
 export type RipgrepResult = { code: number | null; stdout: Buffer; stderr: Buffer };
 export type ProcessOptions = SpawnOptionsWithoutStdio & { timeoutMs?: number };
@@ -64,6 +64,7 @@ export interface ProjectRuntime {
   build: BuildMetadata;
   compilePromise: Promise<{ success: boolean; build: BuildMetadata }> | null;
   gitBusy: boolean;
+  gitLiveOperation: Promise<unknown> | null;
   gitReaders: number;
   gitReaderWaiters: Array<(value?: void) => void>;
   deleting: boolean;
