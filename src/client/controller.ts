@@ -1630,7 +1630,49 @@ function routeInvitationToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+let projectEventSource: EventSource | null = null;
+function stopProjectEvents(): void {
+  projectEventSource?.close();
+  projectEventSource = null;
+}
+
+function watchProjectFiles(): void {
+  stopProjectEvents();
+  const projectId = state.projectId;
+  const source = new EventSource(projectApiUrl("v1/project/events").toString());
+  projectEventSource = source;
+  let refreshing = false;
+  let pending = false;
+  source.addEventListener("files", async () => {
+    pending = true;
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      while (pending && projectEventSource === source) {
+        pending = false;
+        const data = await request<{ project: ProjectDetail }>("v1/project");
+        if (state.projectId !== projectId || projectEventSource !== source) return;
+        const changed = JSON.stringify(state.files) !== JSON.stringify(data.project.files)
+          || JSON.stringify(state.folders) !== JSON.stringify(data.project.folders || []);
+        state.files = data.project.files;
+        state.folders = data.project.folders || [];
+        state.main = data.project.main;
+        if (changed) renderFiles();
+        if (state.activeFile && !state.files.some(file => file.path === state.activeFile)) {
+          disconnectEditor();
+          resetFilePreview();
+          state.activeFile = "";
+          const target = state.files.find(file => file.path === state.main) || state.files[0];
+          if (target) await openFile(target.path);
+        }
+      }
+    } catch (error) { console.error("Project file refresh failed", error); }
+    finally { refreshing = false; }
+  });
+}
+
 function showAuthPage(mode = "login", description = "") {
+  stopProjectEvents();
   disconnectEditor();
   elements.projects_page.hidden = true;
   elements.editor_page.hidden = true;
@@ -1653,6 +1695,7 @@ function showAuthPage(mode = "login", description = "") {
 }
 
 function showProjectsPage(push = true) {
+  stopProjectEvents();
   if (!state.user) {
     if (push) window.history.pushState({}, "", "/login");
     showAuthPage();
@@ -1709,6 +1752,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   elements.pdf_status.textContent = "No compiled PDF";
   elements.build_output.textContent = "";
   await refreshProject(true);
+  watchProjectFiles();
 }
 
 const pdfContextMenu = document.getElementById("pdf-context-menu")!;

@@ -979,6 +979,33 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   const expressModule = await import("express");
   const express = expressModule.default;
   const app = express();
+  const projectEvents = new Map<string, Set<Response>>();
+  function notifyProjectFiles(projectId: string): void {
+    for (const response of projectEvents.get(projectId) || []) response.write("event: files\ndata: {}\n\n");
+  }
+  const streamProjectEvents = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const runtime = await resolveProject(request);
+      response.setHeader("Content-Type", "text/event-stream");
+      response.setHeader("Cache-Control", "no-store");
+      response.setHeader("X-Accel-Buffering", "no");
+      response.flushHeaders();
+      const listeners = projectEvents.get(runtime.id) || new Set<Response>();
+      projectEvents.set(runtime.id, listeners);
+      listeners.add(response);
+      // Refresh on reconnect too, including changes missed while offline.
+      response.write("event: files\ndata: {}\n\n");
+      const heartbeat = setInterval(() => {
+        try { requireProjectAccess(request, runtime); response.write(": heartbeat\n\n"); }
+        catch { response.end(); }
+      }, 15_000);
+      response.on("close", () => {
+        clearInterval(heartbeat);
+        listeners.delete(response);
+        if (!listeners.size) projectEvents.delete(runtime.id);
+      });
+    } catch (error) { next(error); }
+  };
   app.disable("x-powered-by");
   app.use(requestLogger(logger));
   app.use((request, response, next) => {
@@ -998,6 +1025,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     ) response.setHeader("Cache-Control", "no-store");
     next();
   });
+  app.get("/v1/project/events", streamProjectEvents);
   app.get("/", (request, response) => {
     response.setHeader("Vary", "Accept, User-Agent");
     const accepted = String(request.get("accept") || "")
@@ -1372,6 +1400,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         request.get("git-protocol"),
       )));
       if (result.sync?.status) response.setHeader("X-LaTeX-Coder-Sync", result.sync.status);
+      if (result.sync) notifyProjectFiles(runtime.id);
       response.setHeader("Cache-Control", "no-store");
       response.type("application/x-git-receive-pack-result").send(result.output);
     } catch (error) { next(error); }
@@ -1797,6 +1826,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   let closed = false;
   const shutdown = () => {
     if (closed) return;
+    for (const listeners of projectEvents.values()) for (const response of listeners) response.end();
     compileQueue.close();
     for (const runtime of projects.values()) runtime.collaboration.shutdown();
     database.close();

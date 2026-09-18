@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +43,37 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 }
 
 const LIPSUM = "Hello brave new world.";
+
+test("Git pushes update the open browser file tree without reloading the editor", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const projectId = await page.evaluate(() => globalThis.__paperE2E.state.projectId);
+    const shareResponse = await fetch(`${base}/v1/project/share?project=${projectId}`, { method: "POST" });
+    assert.equal(shareResponse.status, 200);
+    const { share } = await shareResponse.json();
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-browser-git-"));
+    const clone = path.join(temporary, "clone");
+    const execute = promisify(execFile);
+    const git = (args: string[]) => execute("git", args, { cwd: clone, timeout: 15_000 });
+    try {
+      await execute("git", ["clone", `${base}${share.clonePath}`, clone], { timeout: 15_000 });
+      await page.evaluate(() => { globalThis.__gitTestView = globalThis.__paperE2E.state.view; });
+      await writeFile(path.join(clone, "pushed.tex"), "Git event test\n");
+      await git(["add", "pushed.tex"]);
+      await git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Add pushed file"]);
+      await git(["push", "origin", "main"]);
+      await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "pushed.tex"));
+      assert.ok(await page.locator("#file-list").getByText("pushed.tex", { exact: true }).count());
+      assert.equal(await page.evaluate(() => globalThis.__gitTestView === globalThis.__paperE2E.state.view), true);
+      await git(["rm", "pushed.tex"]);
+      await git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Remove pushed file"]);
+      await git(["push", "origin", "main"]);
+      await page.waitForFunction(() => !globalThis.__paperE2E.state.files.some(file => file.path === "pushed.tex"));
+      assert.equal(await page.locator("#file-list").getByText("pushed.tex", { exact: true }).count(), 0);
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+});
 
 test("appearance supports persistent Light, Dark, and System themes", async () => {
   await withEditor(async ({ page, base }) => {
