@@ -216,7 +216,38 @@ suspend live synchronization while importing their result.
 Clone and fetch checkpoint the latest Yjs content before advertising Git refs,
 so browser users do not need to commit or push before someone pulls their work.
 
-The Git panel supports status, history, and collaborative checkpoints. Each
+The **History** button opens persistent, paginated versions with per-file diffs,
+line numbers, and an **Agent edits** filter. Each version can restore the entire
+project or one changed file, including binary assets. A custom confirmation
+explains that current work is checkpointed first; restoring creates a new commit
+without rewriting history. Restore the preceding checkpoint to undo a restore.
+The server rejects a restore if the project changed after its preview, including
+review-only edits. New checkpoints also remember the main file and empty folders.
+Older Git commits without this metadata retain their file contents but cannot
+reconstruct empty folders that Git never tracked.
+
+Checked full-file and patch API edits save an isolated before/after version
+immediately. Pass `agentId` and `agentName` to full-file edits (or `agent` to the
+patch API) to label the record. Upload, move, delete, and folder requests made
+with an Agent link's `access` query parameter or explicit `agentId` are recorded
+as agent operations too. Names are supplied by the caller, not verified identities.
+Ordinary browser edits continue to use automatic checkpoints. Versions represent
+individual API operations, not an atomic multi-file agent task. Git-pushed commits
+appear in the complete timeline with their original messages.
+
+History APIs (project/session authentication applies to every route):
+
+- `GET /v1/history?project=ID[&before=COMMIT][&agent=1]`: 30 versions and a cursor.
+- `GET /v1/history/COMMIT?project=ID`: metadata, changed files and `currentRevision`.
+- `GET /v1/history/COMMIT?project=ID&path=FILE`: textual diff or binary-change notice.
+- `POST /v1/history/COMMIT/restore?project=ID`: JSON `{ "currentRevision": "...", "path": "optional-file.tex" }`.
+
+Diffs are relative to the previous first-parent version; large textual diffs are
+explicitly truncated for display. Full content remains in Git. History survives
+service restarts but is local to the project repository, not an off-site backup;
+deleting the project also deletes its history.
+
+Each
 registered collaborator's personal Git URL is a normal smart HTTP remote:
 
 ```sh
