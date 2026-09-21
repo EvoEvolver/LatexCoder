@@ -3,7 +3,7 @@ import {
   Archive, ArrowLeft, CheckCheck, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
-  Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, Sun, TerminalSquare, Trash2,
+  Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
   ClipboardPaste, Redo2, Scissors, ScanText, Search, Settings, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,8 @@ const iconComponents = {
   "scan-text": ScanText,
   "search": Search,
   "settings": Settings,
+  "stretch-horizontal": StretchHorizontal,
+  "stretch-vertical": StretchVertical,
   "sun": Sun,
   "terminal-square": TerminalSquare,
   "trash-2": Trash2,
@@ -190,7 +192,7 @@ export function AppShell() {
           <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:inset-0 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
             <div className="pane-header output-header flex min-h-11 flex-wrap items-center justify-between border-b bg-muted px-2.5">
               <div className="flex min-w-0 items-center gap-1.5"><Button id="compile-button" className="h-8 w-28 shrink-0 px-3 text-xs" size="sm" type="button" title="Compile document"><Icon name="play" /><span>Compile</span></Button><div className="segmented grid w-32 grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist"><Button className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="pdf">PDF</Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="log">Log <span id="log-error-count" className="text-red-700" hidden /></Button></div></div>
-              <div className="flex items-center"><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button><IconButton id="close-output" icon="x" title="Back to editor" className="mobile-output-close lg:hidden" /></div>
+              <div className="flex items-center"><IconButton id="pdf-fit-width" icon="stretch-horizontal" title="Fit page width" className="[&.active]:bg-accent [&.active]:text-primary" /><IconButton id="pdf-fit-page" icon="stretch-vertical" title="Fit whole page" className="[&.active]:bg-accent [&.active]:text-primary" /><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button><IconButton id="close-output" icon="x" title="Back to editor" className="mobile-output-close lg:hidden" /></div>
               <span id="pdf-freshness" className="w-full pb-1 text-[10px] text-muted-foreground" hidden />
             </div>
             <div id="pdf-view" className="pdf-view relative min-h-0 min-w-0 overflow-auto bg-zinc-700"><div id="empty-output" className="empty-output absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-zinc-300"><Icon name="file-check-2" /><span id="pdf-status">No compiled PDF</span></div><div id="pdf-document" className="pdf-document flex min-w-min flex-col items-center gap-4 p-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /></div>

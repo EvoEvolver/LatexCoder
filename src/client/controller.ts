@@ -152,7 +152,7 @@ const elements = Object.fromEntries([
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
-  "pdf-download", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
+  "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
@@ -222,6 +222,7 @@ const state: AppState = {
   pdfRequestVersion: 0,
   pdfRenderVersion: 0,
   pdfZoom: 1,
+  pdfFitMode: "width",
   pdfSourceRevision: null,
   pdfHighlights: null,
   filePreviewDocument: null,
@@ -1671,15 +1672,25 @@ document.addEventListener("pointerdown", event => { if (!pdfContextMenu.contains
 document.addEventListener("keydown", event => { if (event.key === "Escape") closePdfContextMenu(); });
 elements.pdf_view.addEventListener("scroll", closePdfContextMenu);
 window.addEventListener("resize", closePdfContextMenu);
+let pdfResizeFrame = 0;
+let pdfViewSize = `${elements.pdf_view.clientWidth}x${elements.pdf_view.clientHeight}`;
+new ResizeObserver(() => {
+  const nextSize = `${elements.pdf_view.clientWidth}x${elements.pdf_view.clientHeight}`;
+  if (nextSize === pdfViewSize) return;
+  pdfViewSize = nextSize;
+  cancelAnimationFrame(pdfResizeFrame);
+  pdfResizeFrame = requestAnimationFrame(() => { if (state.pdfDocument) void renderPdf(); });
+}).observe(elements.pdf_view);
 
 async function renderPdf(priorityPage?: number) {
-  closePdfContextMenu();
   const pdf = state.pdfDocument;
   if (!pdf) return;
   const version = ++state.pdfRenderVersion;
   const firstPage = await pdf.getPage(1);
   const base = firstPage.getViewport({ scale: 1 });
-  const fit = Math.min(1.25, Math.max(0.35, (elements.pdf_view.clientWidth - 32) / base.width));
+  const widthFit = (elements.pdf_view.clientWidth - 32) / base.width;
+  const heightFit = (elements.pdf_view.clientHeight - 32) / base.height;
+  const fit = Math.min(4, Math.max(0.2, state.pdfFitMode === "page" ? Math.min(widthFit, heightFit) : widthFit));
   const scale = fit * state.pdfZoom;
   const fragment = document.createDocumentFragment();
   const renders: Array<() => Promise<void>> = [];
@@ -1701,7 +1712,7 @@ async function renderPdf(priorityPage?: number) {
     const revision = state.pdfSourceRevision;
     const projectId = state.projectId;
     const navigateSource = async (x: number, y: number) => {
-      if (state.projectId !== projectId || !canvas.isConnected) return;
+      if (state.projectId !== projectId) return;
       try {
         const destination = await request<SourcePosition>("v1/build/source", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -1765,6 +1776,7 @@ async function renderPdf(priorityPage?: number) {
 }
 
 async function showPdf(force = false, priorityPage?: number) {
+  closePdfContextMenu();
   const requestVersion = ++state.pdfRequestVersion;
   const downloadUrl = projectApiUrl("v1/build/pdf");
   downloadUrl.searchParams.set("v", String(Date.now()));
@@ -2296,13 +2308,29 @@ elements.suggest_edit.addEventListener("click", () => {
   state.view?.focus();
 });
 elements.close_output.addEventListener("click", () => elements.output_pane.classList.remove("mobile-open"));
+function updatePdfFitButtons(): void {
+  for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
+    const active = state.pdfFitMode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+function setPdfFitMode(mode: "width" | "page"): void {
+  state.pdfFitMode = mode;
+  state.pdfZoom = 1;
+  updatePdfFitButtons();
+  void renderPdf();
+}
+elements.pdf_fit_width.addEventListener("click", () => setPdfFitMode("width"));
+elements.pdf_fit_page.addEventListener("click", () => setPdfFitMode("page"));
+updatePdfFitButtons();
 elements.pdf_zoom_out.addEventListener("click", () => {
   state.pdfZoom = Math.max(0.5, state.pdfZoom - 0.15);
-  renderPdf();
+  void renderPdf();
 });
 elements.pdf_zoom_in.addEventListener("click", () => {
   state.pdfZoom = Math.min(2, state.pdfZoom + 0.15);
-  renderPdf();
+  void renderPdf();
 });
 elements.file_preview_zoom_out.addEventListener("click", () => {
   state.filePreviewZoom = Math.max(0.5, state.filePreviewZoom - 0.2);

@@ -16,7 +16,7 @@ export type AppState = {
   projectCanManage: boolean; accessShareId: string; git: GitState | null; main: string; files: ProjectFile[]; folders: string[];
   settings: EditorSettings | null; view: EditorView | null; doc: Y.Doc | null; provider: WebsocketProvider | null;
   persistence: IndexeddbPersistence | null; unsaved: boolean; pdfDocument: PDFDocumentProxy | null;
-  pdfLoadingTask: PDFDocumentLoadingTask | null; pdfRequestVersion: number; pdfRenderVersion: number; pdfZoom: number;
+  pdfLoadingTask: PDFDocumentLoadingTask | null; pdfRequestVersion: number; pdfRenderVersion: number; pdfZoom: number; pdfFitMode: "width" | "page";
   pdfSourceRevision: string | null; pdfHighlights: { boxes: PdfBox[]; expires: number } | null;
   filePreviewDocument: PDFDocumentProxy | null; filePreviewLoadingTask: PDFDocumentLoadingTask | null;
   filePreviewVersion: number; filePreviewZoom: number; reviewSelection: { from: number; to: number; selected: string } | null;

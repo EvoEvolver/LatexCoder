@@ -296,6 +296,53 @@ test("PDF navigation vertically centers the destination source line", async () =
   });
 });
 
+test("PDF preview fits page width or a whole page", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.route("**/v1/compile*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "Done" } }) }));
+    await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf(1, 300, 600) }));
+    await page.locator("#compile-button").click();
+    const canvas = page.locator("#pdf-document canvas");
+    await canvas.waitFor();
+
+    await page.locator("#pdf-fit-width").click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "width" && globalThis.__paperE2E.state.pdfZoom === 1);
+    await page.waitForFunction(() => {
+      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
+      return Math.abs(page.width - (view.width - 32)) < 2;
+    });
+    const widthFit = await page.evaluate(() => {
+      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
+      return { view: { width: view.width, height: view.height }, page: { width: page.width, height: page.height } };
+    });
+    assert.ok(Math.abs(widthFit.page.width - (widthFit.view.width - 32)) < 2);
+    assert.equal(await page.locator("#pdf-fit-width").getAttribute("aria-pressed"), "true");
+
+    await page.locator("#pdf-fit-page").click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "page");
+    await page.waitForFunction(() => {
+      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
+      return page.height <= view.height - 31 && page.height > view.height - 34;
+    });
+    const pageFit = await page.evaluate(() => {
+      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
+      return { view: { width: view.width, height: view.height }, page: { width: page.width, height: page.height } };
+    });
+    assert.ok(pageFit.page.width <= pageFit.view.width - 31);
+    assert.ok(pageFit.page.height <= pageFit.view.height - 31);
+    assert.ok(pageFit.page.height > pageFit.view.height - 34);
+    assert.equal(await page.locator("#pdf-fit-page").getAttribute("aria-pressed"), "true");
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForFunction(previous => document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect().height > previous + 100, pageFit.page.height);
+    await page.screenshot({ path: "/tmp/latexcoder-pdf-fit-page.png" });
+  });
+});
+
 test("source navigation loads a new PDF revision once and then reuses it", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
@@ -802,16 +849,16 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
   });
 });
 
-function previewPdf(pageCount = 1) {
+function previewPdf(pageCount = 1, width = 300, height = 160) {
   const stream = "BT /F1 20 Tf 48 110 Td (Project PDF preview) Tj ET\n";
   const objects = [
     "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
     `2 0 obj\n<< /Type /Pages /Kids [3 0 R ${Array.from({ length: pageCount - 1 }, (_, index) => `${index + 6} 0 R`).join(" ")}] /Count ${pageCount} >>\nendobj\n`,
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n`,
     `4 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream\nendobj\n`,
     "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
   ];
-  for (let index = 0; index < pageCount - 1; index++) objects.push(`${index + 6} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n`);
+  for (let index = 0; index < pageCount - 1; index++) objects.push(`${index + 6} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n`);
   let source = "%PDF-1.4\n";
   const offsets = [0];
   for (const object of objects) {
