@@ -79,14 +79,28 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
   await withEditor(async ({ page, base }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto(`${base}/?e2e=1`);
-    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator("#auth-page").waitFor();
+    await page.locator("#auth-username").fill("admin");
+    await page.locator("#auth-password").fill("browser admin password");
+    await page.locator("#auth-submit").click();
+    await page.locator("#projects-page").waitFor();
     assert.equal(await page.locator("html").getAttribute("data-theme"), "system");
     assert.equal(await page.locator("html").getAttribute("class"), null);
+    assert.equal(await page.locator("#auth-theme, #projects-theme, #editor-theme").count(), 0);
 
-    await page.locator("#editor-theme").click();
+    await page.locator("#account-button").click();
+    await page.locator("#account-dialog").waitFor();
     await page.locator('[data-theme-option="dark"]').click();
     assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), true);
     assert.equal(await page.evaluate(() => localStorage.getItem("latexcoder-theme")), "dark");
+    assert.equal(await page.locator("#account-dialog").isVisible(), true);
+    assert.equal(await page.locator('[data-theme-option="dark"]').getAttribute("aria-checked"), "true");
+    assert.equal(await page.locator('[data-theme-option="dark"]').evaluate(button => button.classList.contains("border-primary")), true);
+    assert.equal(await page.locator('[data-theme-option="system"]').evaluate(button => button.classList.contains("border-primary")), false);
+    await page.screenshot({ path: "/tmp/latexcoder-dark-account.png" });
+    await page.locator("#account-close").click();
+    await page.locator(".project-row").first().click();
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     const colors = await page.evaluate(() => ({
       body: getComputedStyle(document.body).backgroundColor,
       editor: getComputedStyle(document.querySelector(".cm-editor")).backgroundColor,
@@ -95,10 +109,9 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     assert.notEqual(colors.body, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, colors.foreground);
-    await page.locator("#editor-theme").click();
+    await page.locator("#editor-account-button").click();
     assert.equal(await page.locator('[data-theme-option="dark"]').getAttribute("aria-checked"), "true");
-    await page.screenshot({ path: "/tmp/latexcoder-dark-appearance.png" });
-    await page.locator("#appearance-close").click();
+    await page.locator("#account-close").click();
     await page.locator("#toggle-review").click();
     await page.waitForTimeout(200);
     await page.screenshot({ path: "/tmp/latexcoder-dark-desktop.png" });
@@ -109,15 +122,14 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     await page.reload();
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
     assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
-    await page.locator("#editor-theme").click();
+    await page.locator("#editor-account-button").click();
     await page.locator('[data-theme-option="system"]').click();
     assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
-    await page.locator("#editor-theme").click();
     await page.locator('[data-theme-option="light"]').click();
     assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
-  });
+  }, { authDisabled: false, adminPassword: "browser admin password" });
 });
 
 test("Review opens beside source independently of PDF and closes back to full editor width", async () => {

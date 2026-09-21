@@ -159,7 +159,6 @@ const elements = Object.fromEntries([
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
-const appearanceDialog = document.getElementById("appearance-dialog") as HTMLDialogElement;
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
 function syncThemeControls(): void {
   const preference = themePreference();
@@ -169,20 +168,11 @@ function syncThemeControls(): void {
     button.classList.toggle("border-primary", selected);
     button.classList.toggle("bg-accent", selected);
   }
-  for (const trigger of document.querySelectorAll<HTMLElement>("#auth-theme, #projects-theme, #editor-theme")) {
-    trigger.title = `Appearance: ${preference[0].toUpperCase()}${preference.slice(1)}`;
-  }
-}
-for (const trigger of document.querySelectorAll<HTMLElement>("#auth-theme, #projects-theme, #editor-theme")) {
-  trigger.addEventListener("click", () => { syncThemeControls(); appearanceDialog.showModal(); });
 }
 for (const button of themeButtons) button.addEventListener("click", () => {
   setThemePreference(button.dataset.themeOption as ThemePreference);
   syncThemeControls();
-  appearanceDialog.close();
 });
-document.getElementById("appearance-close")!.addEventListener("click", () => appearanceDialog.close());
-appearanceDialog.addEventListener("cancel", event => { event.preventDefault(); appearanceDialog.close(); });
 window.addEventListener("latexcoder-theme-change", syncThemeControls);
 syncThemeControls();
 
@@ -286,6 +276,7 @@ function openAccountPanel(): void {
   if (!state.user) return;
   elements.account_username.value = state.user.username;
   elements.account_display_name.value = state.user.displayName || state.user.username;
+  syncThemeControls();
   elements.account_dialog.showModal();
   queueMicrotask(() => elements.account_display_name.select());
 }

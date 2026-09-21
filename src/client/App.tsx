@@ -72,10 +72,6 @@ function IconButton({ id, icon, title, className = "", hidden = false }: { id: s
   return <Button id={id} className={cn(iconButton, className)} variant="ghost" size="icon" type="button" title={title} hidden={hidden}><Icon name={icon} /></Button>;
 }
 
-function ThemeButton({ id, className = "" }: { id: string; className?: string }) {
-  return <Button id={id} className={cn(iconButton, "theme-trigger", className)} variant="ghost" size="icon" type="button" title="Appearance"><Monitor className="theme-system" /><Sun className="theme-light" /><Moon className="theme-dark" /></Button>;
-}
-
 function DialogHeader({ title, subtitleId, closeId }: { title: string; subtitleId?: string; closeId: string }) {
   return (
     <header className="mb-4 flex items-start justify-between gap-4">
@@ -102,7 +98,6 @@ export function AppShell() {
   return (
     <>
       <div id="auth-page" className="auth-page grid min-h-dvh place-items-center bg-muted/60 p-6" hidden>
-        <ThemeButton id="auth-theme" className="fixed right-4 top-4" />
         <main className="w-full max-w-sm space-y-5">
           <div className="flex justify-center"><Brand /></div>
           <Card>
@@ -130,7 +125,6 @@ export function AppShell() {
             <Button id="invite-user" variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
             <Button id="new-project" size="sm"><Icon name="folder-plus" /><span>New project</span></Button>
             <IconButton id="logout-button" icon="log-out" title="Sign out" />
-            <ThemeButton id="projects-theme" />
           </div>
         </header>
         <main className="projects-main mx-auto w-[min(calc(100%-2rem),65rem)] py-10">
@@ -151,7 +145,6 @@ export function AppShell() {
           <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Collaborate</span></Button>
           <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">History</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
           <IconButton id="project-settings" icon="settings" title="Project settings" />
-          <ThemeButton id="editor-theme" />
         </header>
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.75rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
@@ -221,7 +214,6 @@ export function AppShell() {
         <code id="line-context-reference" className="block truncate border-b px-2 py-2 text-[11px] text-muted-foreground" />
         <Button id="copy-line-reference" role="menuitem" variant="ghost" size="sm" className="mt-1 w-full justify-start rounded-sm px-2 text-xs"><Icon name="copy" />Copy path and line</Button>
       </div>
-      <dialog id="appearance-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Appearance" closeId="appearance-close" /><div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Color theme"><Button data-theme-option="system" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="monitor" />System</Button><Button data-theme-option="light" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="sun" />Light</Button><Button data-theme-option="dark" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="moon" />Dark</Button></div></div></dialog>
       <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search and replace" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><div className="mt-3 flex flex-wrap gap-2"><Input id="replace-text" className="min-w-0 flex-1" aria-label="Replacement text" placeholder="Replacement text" /><select id="replace-scope" aria-label="Replace scope" className="h-9 rounded-md border bg-background px-2 text-xs"><option value="file">Current file</option><option value="project">Entire project</option></select><Button id="replace-preview" variant="outline" size="sm">Preview</Button><Button id="replace-apply" size="sm" hidden>Apply replacements</Button></div><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[55dvh] overflow-auto" /></div></dialog>
       <dialog id="settings-dialog" className={dialogClass}>
         <form id="settings-form" className="space-y-4 p-5">
@@ -262,7 +254,23 @@ export function AppShell() {
 
       <dialog id="access-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Collaborate" subtitleId="access-project-name" closeId="access-close" /><p className="mb-4 text-xs text-muted-foreground">These are your personal links. Every registered project member has a different secret.</p><section className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="share-link">Browser editing</label><p id="browser-editing-description" className="text-xs text-muted-foreground">A signed-in user who opens this link joins the project as a collaborator. Guests can edit the project without creating an account.</p><CopyRow inputId="share-link" buttonId="copy-share-link" label="Copy" /></section><section id="agent-editing-section" className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="agent-command">Agent editing</label><p className="text-xs text-muted-foreground">Copy this command into your agent chat and ask the agent to run it. The response tells the agent how to inspect and edit the project.</p><CopyRow inputId="agent-command" buttonId="copy-agent-link" label="Copy" /></section><section id="clone-section" className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="clone-command">Git clone and push</label><p className="text-xs text-muted-foreground">Use your personal Git URL as the remote. Pushed commits synchronize into the live document automatically.</p><CopyRow inputId="clone-command" buttonId="copy-clone-command" label="Copy" /></section><section className="space-y-2 border-t py-4"><strong className="text-sm font-medium">Project members</strong><div id="collaborator-list" className="space-y-1 text-xs" /></section><section className="flex items-center justify-between gap-4 border-t py-4 max-sm:items-start"><div className="space-y-1"><strong className="text-sm font-medium">Your access secret</strong><p id="rotate-secret-warning" className="text-xs text-muted-foreground">Rotating your secret immediately invalidates links containing your previous secret and signs out their guest sessions. Other registered collaborators and their links keep working.</p></div><Button id="rotate-share-secret" className="shrink-0" variant="outline" type="button"><Icon name="refresh-cw" />Rotate my secret</Button></section><footer className="flex justify-end gap-2"><Button id="access-download" variant="outline" asChild><a><Icon name="archive" />Download ZIP</a></Button><Button id="access-done">Done</Button></footer></div></dialog>
 
-      <dialog id="account-dialog" className={dialogClass}><form id="account-form" className="space-y-4 p-5"><DialogHeader title="Account" closeId="account-close" /><label className="grid gap-1.5 text-sm font-medium" htmlFor="account-username">Username<Input id="account-username" readOnly /></label><label className="grid gap-1.5 text-sm font-medium" htmlFor="account-display-name">Display name<Input id="account-display-name" maxLength={28} required /></label><p className="text-xs text-muted-foreground">This name appears to collaborators in presence, comments, and suggestions.</p><footer className="flex justify-between gap-2"><Button id="account-logout" variant="outline" type="button"><Icon name="log-out" />Sign out</Button><div className="flex gap-2"><Button id="account-cancel" variant="outline" type="button">Cancel</Button><Button id="account-save" type="submit">Save</Button></div></footer></form></dialog>
+      <dialog id="account-dialog" className={dialogClass}>
+        <form id="account-form" className="space-y-4 p-5">
+          <DialogHeader title="Account" closeId="account-close" />
+          <label className="grid gap-1.5 text-sm font-medium" htmlFor="account-username">Username<Input id="account-username" readOnly /></label>
+          <label className="grid gap-1.5 text-sm font-medium" htmlFor="account-display-name">Display name<Input id="account-display-name" maxLength={28} required /></label>
+          <p className="text-xs text-muted-foreground">This name appears to collaborators in presence, comments, and suggestions.</p>
+          <section className="space-y-2 border-t pt-4">
+            <strong className="text-sm font-medium">Appearance</strong>
+            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Color theme">
+              <Button data-theme-option="system" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="monitor" />System</Button>
+              <Button data-theme-option="light" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="sun" />Light</Button>
+              <Button data-theme-option="dark" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="moon" />Dark</Button>
+            </div>
+          </section>
+          <footer className="flex justify-between gap-2"><Button id="account-logout" variant="outline" type="button"><Icon name="log-out" />Sign out</Button><div className="flex gap-2"><Button id="account-cancel" variant="outline" type="button">Cancel</Button><Button id="account-save" type="submit">Save</Button></div></footer>
+        </form>
+      </dialog>
 
       <dialog id="invite-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Invite a team member" closeId="invite-close" /><section className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="invite-link">Registration link</label><p className="text-xs text-muted-foreground">This single-use link expires in seven days. The new user can manage projects and invite others.</p><CopyRow inputId="invite-link" buttonId="copy-invite-link" label="Copy" /></section><footer className="flex justify-end gap-2"><Button id="invite-regenerate" variant="outline"><Icon name="refresh-cw" />New link</Button><Button id="invite-done">Done</Button></footer></div></dialog>
     </>
