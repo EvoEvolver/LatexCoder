@@ -221,7 +221,7 @@ export function AppShell() {
           </aside>
           <div id="files-resize" role="separator" aria-label="Resize files" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
 
-          <section id="editor-pane" className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.25rem_2.75rem_minmax(0,1fr)] border-r">
+          <section id="editor-pane" className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_2.75rem_minmax(0,1fr)] border-r">
             <div id="file-tabs" className="file-tabs" role="tablist" aria-label="Open files" />
             <div className={cn(paneToolbar, "editor-toolbar justify-between")}>
               <div id="review-actions" className="review-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Hide files" /><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" /><span className="max-[480px]:hidden">Comment</span></Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span className="max-[480px]:hidden">Suggest</span></Button></div>

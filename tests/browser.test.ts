@@ -976,9 +976,9 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
       await page.mouse.up();
     };
     const files = await width("#files-pane");
-    const toolbarHeights = await page.locator("#files-toolbar, .editor-toolbar, .output-header").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
+    const toolbarHeights = await page.locator("#files-toolbar, #file-tabs, .output-header").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
     assert.deepEqual(toolbarHeights, [44, 44, 44]);
-    const toolbarStyles = await page.locator("#files-toolbar, .editor-toolbar, .output-header").evaluateAll(elements => elements.map(element => ({ background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderBottomColor })));
+    const toolbarStyles = await page.locator("#files-toolbar, #file-tabs, .output-header").evaluateAll(elements => elements.map(element => ({ background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderBottomColor })));
     assert.equal(new Set(toolbarStyles.map(style => style.background)).size, 1);
     assert.equal(new Set(toolbarStyles.map(style => style.border)).size, 1);
     assert.equal(await width("#output-resize"), 12);
