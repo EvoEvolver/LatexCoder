@@ -533,6 +533,9 @@ test("automatic compilation is debounced and errors navigate to source", async (
     assert.match(await page.locator("#first-fatal-error").textContent(), /First fatal errormain.tex:3 · Undefined control sequence/);
     assert.equal(await page.locator("#build-log").isVisible(), true);
     assert.equal(await page.locator("#pdf-view").isVisible(), false);
+    assert.equal(await page.locator("#diagnostic-navigation").isVisible(), true);
+    assert.equal(await page.locator(".cm-diagnostic-marker.error").count(), 1);
+    assert.equal(await page.locator(".cm-diagnostic-range.error").count(), 1);
     await page.screenshot({ path: "/tmp/latexcoder-log-desktop.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: "/tmp/latexcoder-log-mobile.png" });
@@ -717,6 +720,40 @@ test("project search opens cross-file matches and respects case", async () => {
       return view.state.doc.sliceString(view.state.selection.main.from, view.state.selection.main.to) === "Unique Search Target";
     });
     assert.equal(await page.locator("#active-file-label").textContent(), "chapters/search.tex");
+  });
+});
+
+test("inline diagnostics cover citations, references, labels, and cross-file navigation", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const files = [
+      ["main.tex", "\\citep{known,missing}\n\\ref{missing-label}\n\\label{duplicate}"],
+      ["chapter.tex", "Chapter\n\\label{duplicate}"],
+      ["refs.bib", "@article{known,\n  title={Known reference}\n}"],
+    ];
+    for (const [relativePath, source] of files) await page.request.put(`${base}/v1/files?project=${id}&path=${relativePath}`, {
+      data: source,
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.waitForFunction(() => document.querySelector("#diagnostic-status span")?.textContent === "4");
+    assert.equal(await page.locator(".cm-diagnostic-marker.warning").count(), 3);
+    assert.equal(await page.locator(".cm-diagnostic-range.warning").count(), 3);
+    await page.locator(".cm-diagnostic-range.warning").first().hover();
+    await page.locator(".cm-diagnostic-tooltip").waitFor();
+    assert.match(await page.locator(".cm-diagnostic-tooltip").textContent(), /Undefined citation|reference|Duplicate label/);
+    await page.screenshot({ path: "/tmp/latexcoder-inline-diagnostics.png" });
+
+    await page.locator("#diagnostic-status").click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapter.tex");
+    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 1);
+    assert.equal(await page.locator(".cm-diagnostic-marker.warning").count(), 1);
+    await page.locator("#diagnostic-next").click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "main.tex");
+    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 3);
+    const selectedLine = await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number);
+    assert.equal(selectedLine, 1);
   });
 });
 
@@ -1411,21 +1448,28 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.doesNotMatch(await page.locator("#browser-editing-description").textContent(), /temporary/i);
     assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
     assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
-    assert.equal(await page.locator("#agent-editing-section label").textContent(), "Agent editing");
-    assert.match(await page.locator("#agent-editing-section p").textContent(), /ask the agent to run it/);
+    assert.equal(await page.locator("#agent-editing-section label").textContent(), "Agent direct editing");
+    assert.match(await page.locator("#agent-editing-section p").textContent(), /edit the live source directly/);
     assert.doesNotMatch(await page.locator("#agent-editing-section p").textContent(), /Yjs/i);
+    assert.match(await page.locator("#proposal-agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+/propose'$`));
+    assert.equal(await page.locator("#agent-proposal-section label").textContent(), "Agent proposed changes");
+    assert.match(await page.locator("#agent-proposal-section p").textContent(), /force every agent edit into Review/);
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
     assert.equal(await page.locator("#clone-section label").textContent(), "Git clone and push");
     assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);
     assert.match(await page.locator("#collaborator-list").textContent(), /test-userowner/);
+    await page.screenshot({ path: "/tmp/latexcoder-agent-modes.png" });
     const previousShareLink = await page.locator("#share-link").inputValue();
+    const previousProposalCommand = await page.locator("#proposal-agent-command").inputValue();
+    const previousProposalLink = previousProposalCommand.slice("curl -fsSL '".length, -1);
     await page.locator("#rotate-share-secret").click();
-    assert.equal(await page.locator("#action-title").textContent(), "Rotate access secret?");
+    assert.equal(await page.locator("#action-title").textContent(), "Rotate access secrets?");
     assert.match(await page.locator("#action-message").textContent(), /Other registered collaborators and their links keep working/);
     await page.locator("#action-submit").click();
     await page.locator("#access-dialog").waitFor();
     assert.notEqual(await page.locator("#share-link").inputValue(), previousShareLink);
     assert.equal((await page.request.get(previousShareLink, { maxRedirects: 0 })).status(), 403);
+    assert.equal((await page.request.get(previousProposalLink)).status(), 403);
     await page.locator("#access-close").click();
 
     await page.locator("#new-file").click();

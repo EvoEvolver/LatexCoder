@@ -17,7 +17,15 @@ export function compileErrors(log: string) {
   return errors;
 }
 
-export type BuildDiagnostic = { message: string; severity: "error" | "warning"; path?: string; line?: number };
+export type BuildDiagnostic = {
+  message: string;
+  severity: "error" | "warning";
+  path?: string;
+  line?: number;
+  from?: number;
+  to?: number;
+  source?: "compiler" | "latex";
+};
 
 export function buildDiagnostics(log: string, mappedErrors?: ReturnType<typeof compileErrors>): BuildDiagnostic[] {
   const located = mappedErrors?.length ? mappedErrors : compileErrors(log);

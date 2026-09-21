@@ -387,6 +387,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal(shareResponse.status, 200);
     const share = (await shareResponse.json()).share;
     assert.match(share.agentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+$`));
+    assert.match(share.proposalAgentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+/propose$`));
     const agentWorkspace = await fetch(`${base}${share.agentPath}`);
     assert.match(agentWorkspace.headers.get("content-type"), /^text\/plain/);
     const agentInstructions = await agentWorkspace.text();
@@ -413,6 +414,13 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.match(agentInstructions, /\/v1\/git\/commit\?project=/);
     assert.ok(agentInstructions.includes(`git clone ${base}${share.clonePath}`));
     assert.match(agentInstructions, /personal URL accepts pushes from registered project members/);
+    const proposalWorkspace = await fetch(`${base}${share.proposalAgentPath}`);
+    assert.equal(proposalWorkspace.status, 200);
+    const proposalInstructions = await proposalWorkspace.text();
+    assert.match(proposalInstructions, /Propose Changes/);
+    assert.match(proposalInstructions, /forced into reviewable suggestions/);
+    assert.doesNotMatch(proposalInstructions, /Git \(Only When The User Explicitly Requests It\)/);
+    assert.doesNotMatch(proposalInstructions, /Create A File/);
 
     const shareToken = share.agentPath.split("/").at(-1);
     const agentFileUrl = `${base}/v1/files?${new URLSearchParams({ project: project.id, access: shareToken, path: "main.tex" })}`;
@@ -428,6 +436,24 @@ test("invite-only users and project capability sessions enforce access boundarie
     });
     assert.equal(agentPatch.status, 200);
     assert.match(await (await fetch(agentFileUrl)).text(), /% edited from Agent workspace\n$/);
+    const proposalToken = share.proposalAgentPath.split("/").at(-2);
+    const proposalFileUrl = `${base}/v1/files?${new URLSearchParams({ project: project.id, access: proposalToken, path: "main.tex" })}`;
+    const proposalRead = await fetch(proposalFileUrl);
+    const proposalSource = await proposalRead.text();
+    const proposalEdit = await fetch(`${base}/v1/files/edit?${new URLSearchParams({ project: project.id, access: proposalToken, path: "main.tex", mode: "direct" })}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", "X-Base-SHA256": proposalRead.headers.get("x-content-sha256")! },
+      body: proposalSource + "Agent proposal\n",
+    });
+    assert.equal(proposalEdit.status, 200, await proposalEdit.clone().text());
+    const proposalResult = await proposalEdit.json();
+    assert.equal(proposalResult.edit.mode, "suggesting");
+    assert.ok(proposalResult.edit.suggestionIds.length > 0);
+    assert.ok(parseReviews(await (await fetch(proposalFileUrl)).text()).some(review => review.author.includes("Coding agent")));
+    assert.equal((await fetch(`${base}/v1/files?${new URLSearchParams({ project: project.id, access: proposalToken, path: "new.tex" })}`, {
+      method: "PUT", headers: { "Content-Type": "text/plain" }, body: "blocked",
+    })).status, 403);
+    assert.equal((await fetch(`${base}/v1/git?${new URLSearchParams({ project: project.id, access: proposalToken })}`)).status, 403);
     assert.equal((await fetch(`${base}/v1/files?project=${project.id}&access=wrong&path=main.tex`)).status, 401);
 
     const exchange = await fetch(`${base}${share.path}`, { redirect: "manual" });

@@ -14,13 +14,15 @@ import {
 import { tags } from "@lezer/highlight";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension, type TransactionSpec } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState, RangeSet, StateEffect, StateField, Transaction, type Extension, type TransactionSpec } from "@codemirror/state";
 import {
   crosshairCursor,
   Decoration,
   drawSelection,
   dropCursor,
   EditorView,
+  gutter,
+  GutterMarker,
   highlightActiveLine,
   highlightActiveLineGutter,
   highlightSpecialChars,
@@ -83,6 +85,8 @@ import * as Y from "yjs";
 import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
+import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
+import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
@@ -149,11 +153,11 @@ const elements = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
   "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
@@ -223,6 +227,9 @@ const state: AppState = {
   selectionSuggestionIds: [],
   suggesting: false,
   toastTimer: null,
+  compileDiagnostics: [],
+  staticDiagnostics: [],
+  diagnosticIndex: -1,
 };
 const { request, projectApiUrl } = createApiClient(() => state.projectId);
 const reviewMutation = Annotation.define();
@@ -771,6 +778,162 @@ window.addEventListener("keydown", event => { if (event.key === referenceModifie
 window.addEventListener("keyup", event => { if (event.key === referenceModifier) setReferenceControl(false); }, true);
 window.addEventListener("blur", () => setReferenceControl(false));
 
+type PositionedDiagnostic = BuildDiagnostic & { from: number; to: number };
+const setEditorDiagnostics = StateEffect.define<PositionedDiagnostic[]>();
+
+class DiagnosticGutterMarker extends GutterMarker {
+  readonly elementClass: string = "";
+  constructor(readonly diagnostic: PositionedDiagnostic) {
+    super();
+    this.elementClass = `cm-diagnostic-marker ${diagnostic.severity}`;
+  }
+  toDOM(): Node {
+    const marker = document.createElement("span");
+    marker.textContent = "!";
+    marker.title = this.diagnostic.message;
+    marker.setAttribute("aria-label", this.diagnostic.message);
+    return marker;
+  }
+}
+
+const editorDiagnosticField = StateField.define<PositionedDiagnostic[]>({
+  create: () => [],
+  update(diagnostics, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setEditorDiagnostics)) return effect.value;
+    if (!transaction.docChanged) return diagnostics;
+    return diagnostics.map(diagnostic => ({
+      ...diagnostic,
+      from: transaction.changes.mapPos(diagnostic.from),
+      to: transaction.changes.mapPos(diagnostic.to),
+    }));
+  },
+  provide: field => EditorView.decorations.from(field, diagnostics => Decoration.set(diagnostics.map(diagnostic =>
+    Decoration.mark({
+      class: `cm-diagnostic-range ${diagnostic.severity}`,
+      attributes: { title: diagnostic.message },
+    }).range(diagnostic.from, diagnostic.to)), true)),
+});
+
+const editorDiagnosticGutter = gutter({
+  class: "cm-diagnostic-gutter",
+  markers(view) {
+    const byLine = new Map<number, PositionedDiagnostic>();
+    for (const diagnostic of view.state.field(editorDiagnosticField)) {
+      const line = view.state.doc.lineAt(diagnostic.from).from;
+      const existing = byLine.get(line);
+      if (!existing || (existing.severity === "warning" && diagnostic.severity === "error")) byLine.set(line, diagnostic);
+    }
+    return RangeSet.of([...byLine.entries()].map(([line, diagnostic]) => new DiagnosticGutterMarker(diagnostic).range(line)), true);
+  },
+});
+
+const editorDiagnosticTooltip = hoverTooltip((view, position) => {
+  const diagnostics = view.state.field(editorDiagnosticField).filter(diagnostic => position >= diagnostic.from && position <= diagnostic.to);
+  if (!diagnostics.length) return null;
+  return {
+    pos: diagnostics[0].from,
+    end: diagnostics[0].to,
+    above: true,
+    create() {
+      const dom = document.createElement("div");
+      dom.className = "cm-diagnostic-tooltip";
+      for (const diagnostic of diagnostics) {
+        const row = document.createElement("div");
+        row.className = diagnostic.severity;
+        row.textContent = diagnostic.message;
+        dom.append(row);
+      }
+      return { dom };
+    },
+  };
+});
+
+function navigableDiagnostics(): BuildDiagnostic[] {
+  const seen = new Set<string>();
+  return [...state.compileDiagnostics, ...state.staticDiagnostics]
+    .filter((diagnostic): diagnostic is BuildDiagnostic & { path: string; line: number } => Boolean(diagnostic.path && diagnostic.line))
+    .filter(diagnostic => {
+      const key = `${diagnostic.path}:${diagnostic.line}:${diagnostic.message}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => Number(left.severity === "warning") - Number(right.severity === "warning")
+      || left.path.localeCompare(right.path) || left.line - right.line || (left.from || 0) - (right.from || 0));
+}
+
+function applyEditorDiagnostics(): void {
+  const diagnostics = navigableDiagnostics();
+  const errors = diagnostics.filter(diagnostic => diagnostic.severity === "error").length;
+  const warnings = diagnostics.length - errors;
+  elements.diagnostic_navigation.hidden = !diagnostics.length;
+  elements.diagnostic_status.querySelector("span")!.textContent = String(diagnostics.length);
+  elements.diagnostic_status.title = `${errors} errors, ${warnings} warnings. Go to first diagnostic`;
+  if (!diagnostics.length) state.diagnosticIndex = -1;
+  else state.diagnosticIndex = Math.min(state.diagnosticIndex, diagnostics.length - 1);
+  if (!state.view) return;
+  const source = state.view.state.doc;
+  const active = diagnostics.filter(diagnostic => diagnostic.path === state.activeFile).map(diagnostic => {
+    const line = source.line(Math.max(1, Math.min(source.lines, diagnostic.line!)));
+    const exact = diagnostic.source === "latex" && diagnostic.from !== undefined && diagnostic.to !== undefined
+      && diagnostic.from >= line.from && diagnostic.to <= line.to;
+    const firstContent = line.text.search(/\S/);
+    const from = exact ? diagnostic.from! : firstContent < 0 ? line.from : line.from + firstContent;
+    const to = exact ? diagnostic.to! : Math.max(from + 1, line.to);
+    return { ...diagnostic, from: Math.min(from, source.length), to: Math.min(Math.max(from + 1, to), source.length) };
+  }).filter(diagnostic => diagnostic.to > diagnostic.from);
+  state.view.dispatch({ effects: setEditorDiagnostics.of(active) });
+}
+
+let staticDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+let staticDiagnosticVersion = 0;
+let staticSourceProject = "";
+const staticSourceCache = new Map<string, string>();
+async function refreshStaticDiagnostics(): Promise<void> {
+  const version = ++staticDiagnosticVersion;
+  const project = state.projectId;
+  if (staticSourceProject !== project) {
+    staticSourceProject = project;
+    staticSourceCache.clear();
+  }
+  const activeFile = state.activeFile;
+  const activeSource = state.view?.state.doc.toString();
+  const candidates = state.files.filter(file => file.text && /\.(?:tex|bib)$/i.test(file.path));
+  const sources = await Promise.all(candidates.map(async file => {
+    if (file.path === activeFile && activeSource !== undefined) {
+      staticSourceCache.set(file.path, activeSource);
+      return { path: file.path, source: activeSource };
+    }
+    const cached = staticSourceCache.get(file.path);
+    if (cached !== undefined) return { path: file.path, source: cached };
+    const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
+    const source = response.ok ? await response.text() : "";
+    staticSourceCache.set(file.path, source);
+    return { path: file.path, source };
+  }));
+  if (version !== staticDiagnosticVersion || project !== state.projectId) return;
+  state.staticDiagnostics = latexDiagnostics(sources);
+  applyEditorDiagnostics();
+}
+
+function scheduleStaticDiagnostics(): void {
+  clearTimeout(staticDiagnosticTimer);
+  staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
+}
+
+async function goToDiagnostic(direction: -1 | 0 | 1): Promise<void> {
+  const diagnostics = navigableDiagnostics();
+  if (!diagnostics.length) return;
+  state.diagnosticIndex = direction === 0 ? 0 : (state.diagnosticIndex + direction + diagnostics.length) % diagnostics.length;
+  const diagnostic = diagnostics[state.diagnosticIndex];
+  await revealSource({ path: diagnostic.path!, line: diagnostic.line! });
+  applyEditorDiagnostics();
+}
+
+elements.diagnostic_status.addEventListener("click", () => { void goToDiagnostic(0); });
+elements.diagnostic_previous.addEventListener("click", () => { void goToDiagnostic(-1); });
+elements.diagnostic_next.addEventListener("click", () => { void goToDiagnostic(1); });
+
 function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
@@ -784,6 +947,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
         },
       },
     }),
+    editorDiagnosticGutter,
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     ViewPlugin.define(view => {
@@ -847,6 +1011,8 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     }),
     reviewDecorations,
     reviewTooltip,
+    editorDiagnosticField,
+    editorDiagnosticTooltip,
     protectReviewStorage,
     EditorView.clipboardOutputFilter.of(source => stripReviewStorage(source)),
     keymap.of([...yUndoManagerKeymap, ...defaultKeymap, ...searchKeymap, indentWithTab]),
@@ -860,6 +1026,9 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
         queueReviewRender();
         elements.git_dirty.hidden = false;
         markPdfStale();
+        state.compileDiagnostics = state.compileDiagnostics.filter(diagnostic => diagnostic.path !== state.activeFile);
+        scheduleStaticDiagnostics();
+        queueMicrotask(applyEditorDiagnostics);
         scheduleAutoCompile();
       }
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
@@ -874,6 +1043,13 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "var(--primary)" },
       ".cm-line": { padding: "0 14px" },
       ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "var(--primary)", cursor: "pointer" },
+      ".cm-diagnostic-gutter": { width: "15px" },
+      ".cm-diagnostic-marker": { display: "grid", width: "12px", height: "12px", marginTop: "4px", placeItems: "center", borderRadius: "50%", backgroundColor: "#b42318", color: "white", fontSize: "8px", fontWeight: "800", cursor: "help" },
+      ".cm-diagnostic-marker.warning": { backgroundColor: "#b7791f" },
+      ".cm-diagnostic-range.error": { textDecoration: "underline wavy #d92d20", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
+      ".cm-diagnostic-range.warning": { textDecoration: "underline wavy #d28a16", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
+      ".cm-diagnostic-tooltip": { maxWidth: "360px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px", backgroundColor: "var(--card)", boxShadow: "0 10px 28px rgb(0 0 0 / 25%)", color: "var(--card-foreground)", fontFamily: "ui-sans-serif, sans-serif", fontSize: "11px" },
+      ".cm-diagnostic-tooltip > div + div": { marginTop: "6px", paddingTop: "6px", borderTop: "1px solid var(--border)" },
       "&.cm-focused .cm-cursor": { borderLeftColor: "var(--primary)" },
       ".cm-review-comment": { padding: "1px 0", borderBottom: "2px solid #d28a16", borderRadius: "2px", backgroundColor: "var(--editor-comment)", cursor: "help" },
       ".cm-review-insertion": { padding: "1px 0", borderBottom: "2px solid #188064", backgroundColor: "var(--editor-insertion)", color: "var(--editor-insertion-foreground)", textDecoration: "underline", textDecorationColor: "#188064", textUnderlineOffset: "3px", cursor: "help" },
@@ -909,6 +1085,8 @@ function disconnectEditor() {
   state.persistence?.destroy();
   state.persistence = null;
   clearTimeout(autoCompileTimer);
+  clearTimeout(staticDiagnosticTimer);
+  staticDiagnosticVersion += 1;
   state.provider = null;
   state.view = null;
   state.doc = null;
@@ -1072,6 +1250,7 @@ async function openFile(relativePath: string): Promise<void> {
   if (!file) return;
   elements.files_pane.classList.remove("mobile-open");
   if (relativePath === state.activeFile && (state.view || !file.text)) return;
+  if (state.view && state.activeFile) staticSourceCache.set(state.activeFile, state.view.state.doc.toString());
   disconnectEditor();
   resetFilePreview();
   state.activeFile = relativePath;
@@ -1119,6 +1298,7 @@ async function openFile(relativePath: string): Promise<void> {
     state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
     parent: elements.editor,
   });
+  applyEditorDiagnostics();
   provider.on("status", () => {
     if (state.provider === provider) updateSyncStatus();
   });
@@ -1127,6 +1307,8 @@ async function openFile(relativePath: string): Promise<void> {
       if (state.provider !== provider) return;
       requestSave();
       renderReviews();
+      scheduleStaticDiagnostics();
+      applyEditorDiagnostics();
       scheduleAutoCompile();
     }
   });
@@ -1434,6 +1616,8 @@ async function refreshProject(open = false, recordOpen = false) {
   state.main = data.project.main;
   state.files = data.project.files;
   state.folders = data.project.folders || [];
+  staticSourceProject = state.projectId;
+  staticSourceCache.clear();
   state.settings = data.project.settings;
   renderFiles();
   elements.build_output.textContent = data.project.build.log || "No compilation yet.";
@@ -1449,6 +1633,7 @@ async function refreshProject(open = false, recordOpen = false) {
       await openFile(target);
     }
   }
+  scheduleStaticDiagnostics();
   await refreshGit(false);
 }
 
@@ -1883,6 +2068,11 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
   const list = document.getElementById("build-errors")!;
   list.replaceChildren();
   const errors = buildDiagnostics(log, mappedErrors);
+  state.compileDiagnostics = errors.map(diagnostic => {
+    const file = diagnostic.path ? state.files.find(file => file.path === diagnostic.path || diagnostic.path!.endsWith(`/${file.path}`)) : undefined;
+    return file ? { ...diagnostic, path: file.path } : diagnostic;
+  });
+  applyEditorDiagnostics();
   if (failed && !errors.some(error => error.severity === "error")) errors.unshift({ severity: "error", message: log.trim() || "Compilation failed." });
   const count = document.getElementById("log-error-count")!;
   const fatalCount = errors.filter(error => error.severity === "error").length;
@@ -2078,9 +2268,11 @@ function displayAccessShare(share: ShareDetails): void {
   state.accessShareId = share.id;
   const shareUrl = `${window.location.origin}${share.path}`;
   const agentUrl = `${window.location.origin}${share.agentPath}`;
+  const proposalAgentUrl = `${window.location.origin}${share.proposalAgentPath}`;
   const cloneUrl = `${window.location.origin}${share.clonePath}`;
   elements.share_link.value = shareUrl;
   elements.agent_command.value = `curl -fsSL '${agentUrl}'`;
+  elements.proposal_agent_command.value = `curl -fsSL '${proposalAgentUrl}'`;
   elements.clone_command.value = `git clone ${cloneUrl}`;
   elements.share_link.select();
 }
@@ -2115,9 +2307,9 @@ async function openAccessDialog() {
 async function rotateShareSecret() {
   elements.access_dialog.close();
   const confirmed = await openActionDialog({
-    title: "Rotate access secret?",
-    message: "Links containing your previous secret will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
-    submitLabel: "Rotate my secret",
+    title: "Rotate access secrets?",
+    message: "Your previous Browser, Agent editing, Agent proposal, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
+    submitLabel: "Rotate my secrets",
     danger: true,
   });
   if (!confirmed) {
@@ -2127,7 +2319,7 @@ async function rotateShareSecret() {
   const result = await request<{ share: ShareDetails }>("v1/project/share/rotate", { method: "POST" });
   displayAccessShare(result.share);
   elements.access_dialog.showModal();
-  showToast("Your secret was rotated. Previous links no longer work.");
+  showToast("Your secrets were rotated. Previous links no longer work.");
 }
 
 async function enterProjectDashboard(replace = false) {
@@ -2223,6 +2415,7 @@ elements.access_dialog.addEventListener("cancel", (event: Event) => {
 });
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
 elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, "Agent editing command copied."));
+elements.copy_proposal_agent_link.addEventListener("click", () => copyText(elements.proposal_agent_command.value, "Agent proposal command copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);

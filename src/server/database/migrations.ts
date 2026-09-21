@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 6;
+export const LATEST_SCHEMA_VERSION = 7;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -166,6 +166,15 @@ const migrations: Migration[] = [
         database.exec("UPDATE projects SET last_opened_at = created_at WHERE last_opened_at IS NULL;");
       }
       database.exec("CREATE INDEX IF NOT EXISTS projects_last_opened_idx ON projects(last_opened_at DESC, name COLLATE NOCASE);");
+    },
+  },
+  {
+    version: 7,
+    name: "agent proposal capabilities",
+    up(database) {
+      if (!hasColumn(database, "project_shares", "proposal_token")) database.exec("ALTER TABLE project_shares ADD COLUMN proposal_token TEXT;");
+      if (!hasColumn(database, "project_shares", "proposal_token_hash")) database.exec("ALTER TABLE project_shares ADD COLUMN proposal_token_hash TEXT;");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_shares_proposal_token_idx ON project_shares(proposal_token_hash) WHERE proposal_token_hash IS NOT NULL;");
     },
   },
 ];

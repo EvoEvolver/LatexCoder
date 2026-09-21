@@ -35,6 +35,8 @@ Licensed under the [MIT License](LICENSE).
   LaTeX macros. Humans and agents see and edit the same review state through
   ordinary source reads and hash-checked full-file uploads, including replying, accepting,
   rejecting, and resolving it.
+- Separate Agent direct-edit and proposal capabilities. Proposal secrets force
+  checked edits into reviewable suggestions and reject direct file or Git mutations.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live
@@ -45,6 +47,9 @@ Licensed under the [MIT License](LICENSE).
   icons, folder menus, drag-and-drop moves, recoverable deletion, and downloads.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
   build logs, and an always-current PDF download endpoint.
+- Inline compiler diagnostics with gutter markers, source underlines, hover details,
+  and cross-file previous/next navigation. Project analysis also flags undefined
+  citations and references plus duplicate labels before compilation.
 - In-editor previews for project images and PDF files, with zoom and download.
 - Command-click (Mac) or Ctrl-click compiled PDF content to open its LaTeX source via SyncTeX,
   including included files and review-aware line mapping.

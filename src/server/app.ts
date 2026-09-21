@@ -37,7 +37,7 @@ type AuthenticatedUser = { username: string; displayName: string };
 type CookieSession = { key: string; token: string };
 type CookieRequest = { headers: { cookie?: string } };
 type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
-type SharePaths = { id: string; path: string; agentPath: string; clonePath: string };
+type SharePaths = { id: string; path: string; agentPath: string; proposalAgentPath: string; clonePath: string };
 export { safeRelativePath } from "./core.ts";
 
 function parseBody<T>(schema: ZodType<T>, value: unknown): T {
@@ -560,10 +560,10 @@ do not store unrelated secrets in project directories.
 `;
 }
 
-function agentProjectManual(runtime: ProjectRuntime, files: ProjectFile[], shareToken: string, origin: string): string {
+function agentProjectManual(runtime: ProjectRuntime, files: ProjectFile[], shareToken: string, origin: string, proposal = false): string {
   const capability = new URLSearchParams({ project: runtime.id, access: shareToken });
   const fileUrl = (relativePath: string): string => `/v1/files?${capability}&path=${encodeURIComponent(relativePath)}`;
-  const editUrl = (relativePath: string): string => `/v1/files/edit?${capability}&path=${encodeURIComponent(relativePath)}`;
+  const editUrl = (relativePath: string): string => `/v1/files/edit?${capability}&path=${encodeURIComponent(relativePath)}${proposal ? "&mode=suggesting&agentId=ag_proposal&agentName=Coding%20agent" : ""}`;
   const projectUrl = `/v1/project?${capability}`;
   const searchUrl = `/v1/search?${capability}`;
   const pdfUrl = `/v1/build/pdf?${capability}`;
@@ -571,10 +571,11 @@ function agentProjectManual(runtime: ProjectRuntime, files: ProjectFile[], share
   const cloneUrl = `${origin}/git/${encodeURIComponent(runtime.id)}/${encodeURIComponent(shareToken)}`;
   const main = runtime.build.main || "main.tex";
   const fileList = files.map(file => `- ${JSON.stringify(file.path)}${file.text ? " (text)" : " (binary)"}`).join("\n");
-  return `# ${runtime.metadata.name}
+  return `# ${runtime.metadata.name}${proposal ? " - Propose Changes" : ""}
 
 This is the plain-text Agent workspace for project ${runtime.id}. The secret in
-this URL grants edit access to this project. Keep it private.
+this URL grants ${proposal ? "proposal-only" : "direct edit"} access to this project. Keep it private.
+${proposal ? "Every checked edit through this capability is forced into reviewable suggestions. It cannot directly overwrite source, create or delete files, or use Git." : ""}
 
 ## Files
 
@@ -656,12 +657,11 @@ merge: the diff may include other collaborators' edits. Read the latest source,
 reapply only your intended changes, and upload using its currentSha256.
 The diagnostic endpoint never writes or automatically retries an edit.
 
-Uploads are direct edits by default. To create reviewable suggestions, append
-&mode=suggesting&agentId=ag_uniqueid&agentName=Agent%20Name to the upload URL.
-The response returns the resulting file hash and generated suggestion IDs.
-Suggestion uploads may not overlap existing open reviews.
+${proposal
+    ? "Uploads through this capability are always reviewable suggestions, even if a request asks for direct mode. The response returns the generated suggestion IDs. Suggestions may not overlap existing open reviews."
+    : "Uploads are direct edits by default. To create reviewable suggestions, append &mode=suggesting&agentId=ag_uniqueid&agentName=Agent%20Name to the upload URL. The response returns the resulting file hash and generated suggestion IDs. Suggestion uploads may not overlap existing open reviews."}
 
-## Reply To An Inline Comment
+${proposal ? "" : `## Reply To An Inline Comment
 
 Comments are stored as:
 
@@ -674,14 +674,16 @@ closing brace of that comment's \\cmted argument:
 
 Keep the existing comment and replies intact unless the user explicitly asks
 to resolve or rewrite them. Upload the updated file with its original base hash.
+`}
 
-## Create A File
+${proposal ? "" : `## Create A File
 
 PUT ${fileUrl(main)}
 Content-Type: text/plain; charset=utf-8
 
 Use PUT only for new files or binary uploads. For existing text files, use the
 checked full-file upload above; do not use an unchecked PUT to bypass a conflict.
+`}
 
 ## Persistent edit history
 
@@ -692,7 +694,7 @@ GET /v1/history?${capability}&agent=1 lists agent edits; GET
 /v1/history/VERSION?${capability} lists changed files, and adding &path=FILE shows
 added/deleted lines. These safety versions are automatic, no Git command needed.
 
-## Git (Only When The User Explicitly Requests It)
+${proposal ? "" : `## Git (Only When The User Explicitly Requests It)
 
 Do not use Git by default. For normal editing, use the checked full-file upload
 above. Only inspect Git status, create a commit, resolve a conflict, clone, or
@@ -718,6 +720,7 @@ a conflict branch and the live document stays unchanged. Browser edits are
 checkpointed automatically, and clone/fetch/pull checkpoint current Yjs content
 before advertising refs. Use the checked full-file upload unless the user specifically asks for a
 Git workflow.
+`}
 `;
 }
 
@@ -818,14 +821,14 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     if (projectMembership(request, runtime)) return true;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return true;
-    return Boolean(findProjectShare(runtime, request.query?.access));
+    return Boolean(findProjectShare(runtime, request.query?.access) || findProposalShare(runtime, request.query?.access));
   }
 
   function projectAccessShareId(request: ProjectAccessRequest, runtime: ProjectRuntime): string | null {
     if (projectMembership(request, runtime)) return null;
     const session = projectSession(request);
     if (session?.record.projects.has(runtime.id)) return session.record.shares.get(runtime.id) || null;
-    return findProjectShare(runtime, request.query?.access)?.id || null;
+    return (findProjectShare(runtime, request.query?.access) || findProposalShare(runtime, request.query?.access))?.id || null;
   }
 
   function requireProjectAccess(request: ProjectAccessRequest, runtime: ProjectRuntime): void {
@@ -877,22 +880,36 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     return database.getProjectShareByToken(runtime.id, sha256(supplied));
   }
 
-  function sharePaths(runtime: ProjectRuntime, shareId: string, shareToken: string): SharePaths {
+  function findProposalShare(runtime: ProjectRuntime, supplied: unknown) {
+    if (typeof supplied !== "string" || !supplied) return null;
+    return database.getProjectShareByProposalToken(runtime.id, sha256(supplied));
+  }
+
+  function sharePaths(runtime: ProjectRuntime, shareId: string, shareToken: string, proposalToken: string): SharePaths {
     return {
       id: shareId,
       path: `/share/${encodeURIComponent(runtime.id)}/${shareToken}`,
       agentPath: `/agent/${encodeURIComponent(runtime.id)}/${shareToken}`,
+      proposalAgentPath: `/agent/${encodeURIComponent(runtime.id)}/${proposalToken}/propose`,
       clonePath: `/git/${encodeURIComponent(runtime.id)}/${shareToken}`,
     };
   }
 
   function memberProjectShare(runtime: ProjectRuntime, username: string): SharePaths {
     const existing = database.getProjectShareForUser(runtime.id, username);
-    if (existing) return sharePaths(runtime, existing.id, existing.token);
+    if (existing) {
+      let proposalToken = existing.proposalToken;
+      if (!proposalToken) {
+        proposalToken = randomToken();
+        database.setProjectShareProposalToken(runtime.id, username, proposalToken, sha256(proposalToken));
+      }
+      return sharePaths(runtime, existing.id, existing.token, proposalToken);
+    }
     const id = randomProjectId();
     const token = randomToken();
-    database.createProjectShare(runtime.id, id, username, token, sha256(token), Date.now());
-    return sharePaths(runtime, id, token);
+    const proposalToken = randomToken();
+    database.createProjectShare(runtime.id, id, username, token, sha256(token), proposalToken, sha256(proposalToken), Date.now());
+    return sharePaths(runtime, id, token, proposalToken);
   }
 
   async function loadProject(id: unknown): Promise<ProjectRuntime> {
@@ -1008,6 +1025,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   const resolveProject = async (request: Request): Promise<ProjectRuntime> => {
     const runtime = await loadProject(request.query.project || await defaultProjectForRequest(request));
     requireProjectAccess(request, runtime);
+    if (findProposalShare(runtime, request.query.access)) {
+      const readOnly = ["GET", "HEAD"].includes(request.method) && !request.path.startsWith("/v1/git");
+      const allowed = readOnly || request.path === "/v1/search" || request.path === "/v1/files/edit" || request.path === "/v1/files/edit/conflict" || request.path === "/v1/files/patch";
+      if (!allowed) throw apiError("proposal_read_only", "this Agent capability can only submit reviewable text suggestions", 403);
+    }
     return runtime;
   };
   const resolveGitProject = async (request: Request): Promise<ProjectRuntime> => {
@@ -1041,10 +1063,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const result = await task();
       runtime.collaboration.flush();
       const agent = request.body?.agent;
+      const proposal = Boolean(findProposalShare(runtime, request.query.access));
       await gitCheckpoint(runtime, label, { kind: "agent", main: runtime.build.main,
         agentName: String(request.query.agentName || agent?.name || "Coding agent").slice(0, 100),
         agentId: String(request.query.agentId || agent?.id || "").slice(0, 100),
-        mode: String(request.query.mode || request.body?.mode || (request.path === "/v1/files/patch" ? "suggesting" : "direct")) });
+        mode: proposal ? "suggesting" : String(request.query.mode || request.body?.mode || (request.path === "/v1/files/patch" ? "suggesting" : "direct")) });
       return result;
     }));
   }
@@ -1148,16 +1171,19 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
     } catch (error) { next(error); }
   });
-  app.get("/agent/:projectId/:token", async (request, response, next) => {
+  app.get(["/agent/:projectId/:token", "/agent/:projectId/:token/propose"], async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
-      if (!findProjectShare(runtime, request.params.token)) throw apiError("agent_link_invalid", "Agent link is invalid", 403);
+      const proposal = request.path.endsWith("/propose");
+      const share = proposal ? findProposalShare(runtime, request.params.token) : findProjectShare(runtime, request.params.token);
+      if (!share) throw apiError("agent_link_invalid", "Agent link is invalid", 403);
       response.setHeader("Cache-Control", "no-store");
       response.type("text/plain; charset=utf-8").send(agentProjectManual(
         runtime,
         await listFiles(runtime.projectDir),
-        request.params.token,
+        String(request.params.token),
         `${request.protocol}://${request.get("host")}`,
+        proposal,
       ));
     } catch (error) { next(error); }
   });
@@ -1385,11 +1411,12 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const current = database.getProjectShareForUser(runtime.id, user.username);
       if (!current) throw apiError("share_not_found", "create your project access secret first", 404);
       const shareToken = randomToken();
-      if (!database.rotateProjectShare(runtime.id, user.username, shareToken, sha256(shareToken))) {
+      const proposalToken = randomToken();
+      if (!database.rotateProjectShare(runtime.id, user.username, shareToken, sha256(shareToken), proposalToken, sha256(proposalToken))) {
         throw apiError("share_not_found", "project access grant does not exist", 404);
       }
       runtime.collaboration.disconnectShare(current.id, "project access secret changed");
-      response.json({ share: sharePaths(runtime, current.id, shareToken) });
+      response.json({ share: sharePaths(runtime, current.id, shareToken, proposalToken) });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/members", async (request, response, next) => {
@@ -1712,10 +1739,12 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       let source: string;
       try { source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body); }
       catch { throw apiError("invalid_utf8", "upload must be a valid UTF-8 file"); }
-      const mode = request.query.mode === "suggesting" ? "suggesting" : request.query.mode === undefined || request.query.mode === "direct" ? "direct" : null;
+      const proposal = Boolean(findProposalShare(runtime, request.query.access));
+      const mode = proposal || request.query.mode === "suggesting" ? "suggesting" : request.query.mode === undefined || request.query.mode === "direct" ? "direct" : null;
       if (!mode) throw apiError("invalid_mode", "mode must be suggesting or direct");
       const agent = typeof request.query.agentId === "string" && typeof request.query.agentName === "string"
-        ? { id: request.query.agentId.slice(0, 100), name: request.query.agentName.slice(0, 100) } : undefined;
+        ? { id: request.query.agentId.slice(0, 100), name: request.query.agentName.slice(0, 100) }
+        : proposal ? { id: "ag_proposal", name: "Coding agent" } : undefined;
       const { result, version } = await withGitReader(runtime, () => withGitOperation(runtime, async () => {
         // Check before making a checkpoint, and again inside editFile. The suspended
         // collaboration store isolates this commit from concurrent browser edits.
@@ -1766,9 +1795,10 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const { collaboration } = runtime;
       const relativePath = safeRelativePath(request.query.path);
       if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be patched", 415);
+      const proposal = Boolean(findProposalShare(runtime, request.query.access));
       const result = await withAgentHistory(request, runtime, `Agent edit: ${relativePath}`, () => collaboration.patchText(relativePath, request.body?.baseSha256, request.body?.changes, {
-        mode: request.body?.mode,
-        agent: request.body?.agent,
+        mode: proposal ? "suggesting" : request.body?.mode,
+        agent: proposal ? (request.body?.agent || { id: "ag_proposal", name: "Coding agent" }) : request.body?.agent,
       }), true);
       collaboration.flush();
       response.setHeader("ETag", `"${result.sha256}"`);

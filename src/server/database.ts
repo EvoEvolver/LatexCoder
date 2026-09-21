@@ -184,15 +184,16 @@ export class StateDatabase {
     });
   }
 
-  createProjectShare(projectId: string, id: string, username: string, token: string, tokenHash: string, createdAt: number) {
+  createProjectShare(projectId: string, id: string, username: string, token: string, tokenHash: string, proposalToken: string, proposalTokenHash: string, createdAt: number) {
     this.db.prepare(`
-      INSERT INTO project_shares (id, project_id, username, token, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, username, token, tokenHash, createdAt);
+      INSERT INTO project_shares (id, project_id, username, token, token_hash, proposal_token, proposal_token_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, username, token, tokenHash, proposalToken, proposalTokenHash, createdAt);
   }
 
   getProjectShareForUser(projectId: string, username: string) {
     const row = this.db.prepare(`
-      SELECT id, project_id, username, token, created_at FROM project_shares
+      SELECT id, project_id, username, token, proposal_token, created_at FROM project_shares
       WHERE project_id = ? AND username = ?
     `).get(projectId, username) as SqlRow | undefined;
     return row ? {
@@ -200,6 +201,7 @@ export class StateDatabase {
       projectId: row.project_id as string,
       username: row.username as string,
       token: row.token as string,
+      proposalToken: row.proposal_token as string | null,
       createdAt: Number(row.created_at),
     } : null;
   }
@@ -216,11 +218,30 @@ export class StateDatabase {
     } : null;
   }
 
-  rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string) {
+  getProjectShareByProposalToken(projectId: string, tokenHash: string) {
+    const row = this.db.prepare(`
+      SELECT id, project_id, username, created_at FROM project_shares WHERE project_id = ? AND proposal_token_hash = ?
+    `).get(projectId, tokenHash) as SqlRow | undefined;
+    return row ? {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      username: row.username as string | null,
+      createdAt: Number(row.created_at),
+    } : null;
+  }
+
+  setProjectShareProposalToken(projectId: string, username: string, token: string, tokenHash: string) {
+    const result = this.db.prepare(`
+      UPDATE project_shares SET proposal_token = ?, proposal_token_hash = ? WHERE project_id = ? AND username = ?
+    `).run(token, tokenHash, projectId, username);
+    return Number(result.changes) === 1;
+  }
+
+  rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string, proposalToken: string, proposalTokenHash: string) {
     return this.transaction(() => {
       const result = this.db.prepare(`
-        UPDATE project_shares SET token = ?, token_hash = ? WHERE project_id = ? AND username = ?
-      `).run(token, tokenHash, projectId, username);
+        UPDATE project_shares SET token = ?, token_hash = ?, proposal_token = ?, proposal_token_hash = ? WHERE project_id = ? AND username = ?
+      `).run(token, tokenHash, proposalToken, proposalTokenHash, projectId, username);
       if (Number(result.changes) !== 1) return false;
       const share = this.getProjectShareForUser(projectId, username);
       this.db.prepare("DELETE FROM project_sessions WHERE project_id = ? AND share_id = ?").run(projectId, share!.id);

@@ -5,6 +5,7 @@ import type { WebsocketProvider } from "y-websocket";
 import type * as Y from "yjs";
 import type { ReviewItem } from "../shared/review.ts";
 import type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary } from "../shared/api-schema.ts";
+import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 
 export type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary };
 export type GitFile = { index: string; worktree: string; path: string };
@@ -21,11 +22,12 @@ export type AppState = {
   filePreviewDocument: PDFDocumentProxy | null; filePreviewLoadingTask: PDFDocumentLoadingTask | null;
   filePreviewVersion: number; filePreviewZoom: number; reviewSelection: { from: number; to: number; selected: string } | null;
   selectionSuggestionIds: string[]; suggesting: boolean; toastTimer: ReturnType<typeof setTimeout> | null;
+  compileDiagnostics: BuildDiagnostic[]; staticDiagnostics: BuildDiagnostic[]; diagnosticIndex: number;
 };
 export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean };
 export type ReviewDecision = "accept" | "reject" | "resolve";
 export type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
-export type ShareDetails = { id: string; path: string; agentPath: string; clonePath: string };
+export type ShareDetails = { id: string; path: string; agentPath: string; proposalAgentPath: string; clonePath: string };
 export type ProjectMember = { username: string; role: string };
 export type BuildInfo = { log: string; status?: string; pdf?: boolean; errors?: Array<{ path: string; line: number; message: string }>; stale?: boolean; sourceRevision?: string | null };
 export type ProjectDetail = ProjectSummary & { main: string; files: ProjectFile[]; folders: string[]; settings: EditorSettings; build: BuildInfo; permissions?: { manage?: boolean; collaborate?: boolean } };
