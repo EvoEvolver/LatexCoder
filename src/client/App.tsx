@@ -195,7 +195,7 @@ export function AppShell() {
           </div>
 
           <div id="project-title" className="project-title pointer-events-none absolute left-1/2 max-w-56 -translate-x-1/2 truncate px-3 text-center max-[760px]:hidden">
-            <strong id="project-name" className="truncate text-[11px] font-medium" />
+            <strong id="project-name" className="truncate text-[13px] font-semibold" />
           </div>
           <span id="active-file-label" className="sr-only">main.tex</span>
           <div id="topbar-status" className="ml-auto flex min-w-0 shrink-0 items-center gap-2 px-1">

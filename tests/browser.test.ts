@@ -1635,6 +1635,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForURL(/\/projects\/[A-Za-z0-9_-]{12}$/);
     const centeredTitle = await page.locator("#project-title").boundingBox();
     assert.equal((await page.locator("#project-title").textContent())?.trim(), "Compact Project");
+    const projectTitleStyle = await page.locator("#project-name").evaluate(element => ({ fontSize: getComputedStyle(element).fontSize, fontWeight: getComputedStyle(element).fontWeight }));
+    assert.deepEqual(projectTitleStyle, { fontSize: "13px", fontWeight: "600" });
     assert.ok(centeredTitle && Math.abs(centeredTitle.x + centeredTitle.width / 2 - 400) < 1, "project title must be centered on the viewport");
     assert.equal(await page.locator("#project-title #active-file-label").count(), 0);
     await page.locator("#topbar-status").evaluate(element => { element.style.width = "400px"; });
