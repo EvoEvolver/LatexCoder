@@ -487,8 +487,8 @@ function structureSourceButton(entry: StructureEntry, expanded: boolean): HTMLBu
   const button = document.createElement("button");
   button.type = "button";
   button.className = expanded
-    ? "structure-document-item block w-full rounded px-3 py-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-    : "structure-item block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+    ? "structure-document-item block w-full rounded px-3 py-1.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+    : "structure-item block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
   button.title = `${entry.path}:${entry.line} - ${entry.title}`;
   button.dataset.path = entry.path;
   button.dataset.line = String(entry.line);
@@ -515,7 +515,7 @@ function renderStructure(): void {
   const overview = document.createElement("header");
   overview.className = "mb-8 border-b pb-5";
   const title = document.createElement("h1");
-  title.className = "text-2xl font-semibold";
+  title.className = "text-xl font-semibold";
   title.textContent = "Paper at a glance";
   const source = document.createElement("p");
   source.className = "mt-1 text-xs text-muted-foreground";
@@ -525,12 +525,12 @@ function renderStructure(): void {
 
   for (const entry of structureEntries) {
     const button = structureSourceButton(entry, false);
-    button.style.paddingLeft = `${8 + Math.min(4, entry.level - baseLevel) * 12}px`;
+    button.style.paddingLeft = `${8 + Math.min(4, entry.level - baseLevel) * 6}px`;
     if (entry.type === "heading") {
       button.classList.add("truncate", "font-medium");
       button.textContent = entry.title;
     } else {
-      button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-5", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
+      button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-4", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
       const bullet = document.createElement("span");
       bullet.className = `mt-[7px] size-1.5 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
       const text = document.createElement("span");
@@ -541,17 +541,17 @@ function renderStructure(): void {
     elements.structure_list.append(button);
 
     const expanded = structureSourceButton(entry, true);
-    expanded.style.marginLeft = `${Math.min(5, entry.level - baseLevel) * 20}px`;
+    expanded.style.marginLeft = `${Math.min(5, entry.level - baseLevel) * 10}px`;
     if (entry.type === "heading") {
       const depth = entry.level - baseLevel;
-      expanded.classList.add(depth === 0 ? "mt-7" : "mt-4", depth <= 1 ? "text-lg" : "text-base", "font-semibold", "text-foreground");
+      expanded.classList.add(depth === 0 ? "mt-4" : "mt-2", depth <= 1 ? "text-base" : "text-sm", "font-semibold", "text-foreground");
       expanded.textContent = entry.title;
     } else {
-      expanded.classList.add("my-1", "flex", "items-start", "gap-3", "border-l-2", entry.kind === "section" ? "border-primary" : "border-border", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
+      expanded.classList.add("my-0.5", "flex", "items-start", "gap-3", "border-l-2", entry.kind === "section" ? "border-primary" : "border-border", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
       const bullet = document.createElement("span");
       bullet.className = `mt-2 size-2 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
       const text = document.createElement("span");
-      text.className = "text-sm leading-6";
+      text.className = "text-[13px] leading-5";
       text.textContent = entry.title;
       expanded.append(bullet, text);
     }
