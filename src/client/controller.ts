@@ -1,4 +1,6 @@
 import { createVersionHistory } from "./version-history";
+import { createFileTabs } from "./file-tabs.ts";
+import { createFileTree } from "./file-tree.ts";
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
 import { defaultKeymap, indentWithTab, selectAll } from "@codemirror/commands";
 import {
@@ -394,131 +396,24 @@ function renderSelectionActions() {
   menu.style.top = `${top}px`;
 }
 
-function fileIcon(file: ProjectFile): string {
-  if (IMAGE_PREVIEW_PATTERN.test(file.path)) return "image";
-  if (/\.pdf$/i.test(file.path)) return "file-check-2";
-  return file.text ? "file-text" : "file";
-}
+const fileTabs = createFileTabs(document.getElementById("file-tabs")!, path => { void openFile(path); });
+const fileTree = createFileTree(elements.file_list, {
+  open: path => { void openFile(path); },
+  rename: (path, folder) => { void renameEntry(path, folder); },
+  remove: (path, folder) => { void deleteEntry(path, folder); },
+  create: (path, folder) => { void (folder ? newFolder(path) : newFile(path)); },
+  move: moveFilePath,
+  download: path => {
+    const anchor = document.createElement("a");
+    anchor.href = projectApiUrl(`v1/files?path=${encodeURIComponent(path)}`).toString();
+    anchor.download = path.split("/").at(-1)!;
+    anchor.click();
+  },
+});
 
-const collapsedFolders = new Set<string>();
-const expandedFolders = new Set<string>();
-
-function renderFiles() {
-  elements.file_list.replaceChildren();
-  type FileTree = { folders: Map<string, FileTree>; files: typeof state.files };
-  const root: FileTree = { folders: new Map(), files: [] };
-  for (const path of state.folders || []) {
-    let node = root;
-    for (const name of path.split("/")) {
-      if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), files: [] });
-      node = node.folders.get(name)!;
-    }
-  }
-  for (const file of state.files) {
-    let node = root;
-    const parts = file.path.split("/");
-    for (const name of parts.slice(0, -1)) {
-      if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), files: [] });
-      node = node.folders.get(name)!;
-    }
-    node.files.push(file);
-  }
-  const renderTree = (node: FileTree, parent: HTMLElement, prefix = "") => {
-    for (const [name, child] of [...node.folders].sort(([left], [right]) => left.localeCompare(right))) {
-      const folderPath = prefix ? `${prefix}/${name}` : name;
-      const key = `${state.projectId}/${folderPath}`;
-      const folder = document.createElement("details");
-      folder.className = "file-folder [&[open]>summary_.folder-chevron]:rotate-90";
-      folder.dataset.path = folderPath;
-      folder.open = expandedFolders.has(key) && !collapsedFolders.has(key);
-      const header = document.createElement("summary");
-      header.className = "flex h-8 cursor-pointer list-none items-center gap-1.5 rounded px-2 text-xs hover:bg-accent [&_svg]:size-3.5 [&_.folder-chevron]:transition-transform";
-      header.title = folderPath;
-      header.innerHTML = '<i data-lucide="chevron-right" class="folder-chevron shrink-0"></i><i data-lucide="folder" class="shrink-0 text-muted-foreground"></i><span class="min-w-0 flex-1 truncate"></span>';
-      header.querySelector("span")!.textContent = name;
-      const create = document.createElement("button");
-      create.type = "button";
-      create.className = "grid size-7 shrink-0 place-items-center rounded hover:bg-muted";
-      create.title = `New file in ${folderPath}`;
-      create.setAttribute("aria-label", create.title);
-      create.innerHTML = '<i data-lucide="file-plus-2"></i>';
-      create.addEventListener("click", event => {
-        event.preventDefault();
-        event.stopPropagation();
-        newFile(folderPath);
-      });
-      header.append(create);
-      header.append(folderMenu(folderPath));
-      enableFileDrag(header, folderPath);
-      enableFileDrop(header, folderPath);
-      const children = document.createElement("div");
-      children.className = "ml-3 border-l pl-1";
-      renderTree(child, children, folderPath);
-      folder.append(header, children);
-      folder.addEventListener("toggle", () => {
-        if (!folder.isConnected) return;
-        if (folder.open) { collapsedFolders.delete(key); expandedFolders.add(key); }
-        else { collapsedFolders.add(key); expandedFolders.delete(key); }
-      });
-      parent.append(folder);
-    }
-    for (const file of [...node.files].sort((left, right) => left.path.localeCompare(right.path))) {
-    const row = document.createElement("div");
-    row.className = `file-item group grid h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center rounded hover:bg-accent${file.path === state.activeFile ? " bg-accent" : ""}`;
-    const button = document.createElement("button");
-    button.className = `file-row grid h-8 min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-l px-2 text-left text-xs [&_svg]:size-3.5 [&_span]:truncate${file.path === state.activeFile ? " active font-semibold text-primary" : ""}`;
-    button.title = file.path;
-    button.innerHTML = `<i data-lucide="${fileIcon(file)}"></i><span></span>`;
-    button.querySelector("span").textContent = file.path.split("/").at(-1);
-    button.addEventListener("click", () => openFile(file.path));
-    enableFileDrag(row, file.path);
-    const menu = document.createElement("details");
-    menu.className = "file-actions context-menu relative";
-    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5" title="File actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
-    const panel = menu.querySelector("div");
-    menu.addEventListener("toggle", () => {
-      if (!menu.open) return;
-      for (const openMenu of elements.file_list.querySelectorAll(".file-actions[open]")) {
-        if (openMenu !== menu) openMenu.removeAttribute("open");
-      }
-      const trigger = menu.querySelector("summary").getBoundingClientRect();
-      const width = panel.getBoundingClientRect().width || 160;
-      const height = panel.getBoundingClientRect().height || 72;
-      panel.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, trigger.right - width))}px`;
-      panel.style.top = `${trigger.bottom + height + 8 <= window.innerHeight ? trigger.bottom + 4 : Math.max(8, trigger.top - height - 4)}px`;
-    });
-    const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
-      ["download", "Download", () => {
-        const anchor = document.createElement("a");
-        anchor.href = String(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
-        anchor.download = file.path.split("/").at(-1);
-        anchor.click();
-      }],
-      ["pencil", "Rename", () => renameFile(file.path)],
-      ["trash-2", "Delete file", () => deleteFile(file.path), true],
-    ];
-    for (const [icon, label, action, danger] of actions) {
-      const actionButton = document.createElement("button");
-      actionButton.type = "button";
-      actionButton.className = `flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5${danger ? " text-destructive" : ""}`;
-      actionButton.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
-      actionButton.querySelector("span").textContent = label;
-      if (danger && file.path === state.main) {
-        actionButton.disabled = true;
-        actionButton.title = "The main document cannot be deleted";
-      }
-      actionButton.addEventListener("click", () => {
-        menu.open = false;
-        action();
-      });
-      panel.append(actionButton);
-    }
-    row.append(button, menu);
-    parent.append(row);
-    }
-  };
-  renderTree(root, elements.file_list);
-  createIcons({ icons: ICONS });
+function renderFiles(): void {
+  fileTabs.update(state.files, state.activeFile, state.projectId);
+  fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "" }, state.projectId);
 }
 
 elements.file_list.addEventListener("scroll", () => {
@@ -1176,11 +1071,7 @@ async function openFile(relativePath: string): Promise<void> {
   disconnectEditor();
   resetFilePreview();
   state.activeFile = relativePath;
-  const parts = relativePath.split("/");
-  for (let index = 1; index < parts.length; index += 1) {
-    collapsedFolders.delete(`${state.projectId}/${parts.slice(0, index).join("/")}`);
-    expandedFolders.add(`${state.projectId}/${parts.slice(0, index).join("/")}`);
-  }
+  fileTree.reveal(relativePath);
   elements.active_file_label.textContent = relativePath;
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
@@ -2427,7 +2318,7 @@ elements.upload_input.addEventListener("change", async () => {
   } catch (error) { showToast(error.message); }
   elements.upload_input.value = "";
 });
-elements.new_file.addEventListener("click", () => newFile());
+elements.new_file.addEventListener("click", () => newFile(fileTree.folder));
 async function newFile(folderPath = "") {
   const name = await openActionDialog({
     title: "New file",
@@ -2446,17 +2337,38 @@ async function newFile(folderPath = "") {
     await openFile(String(name));
   } catch (error) { showToast(error.message); }
 }
-async function renameFile(target: string): Promise<void> {
+async function renameEntry(target: string, folder: boolean): Promise<void> {
   const name = await openActionDialog({
-    title: "Rename file",
-    label: "File path",
+    title: folder ? "Rename folder" : "Rename file",
+    label: "Path",
     value: target,
     submitLabel: "Rename",
   });
   if (!name || name === target) return;
+  try { await moveFilePath(target, String(name)); }
+  catch (error) { showToast(error.message); }
+}
+
+async function deleteEntry(target: string, folder: boolean): Promise<void> {
+  if (!folder) return deleteFile(target);
+  const confirmed = await openActionDialog({
+    title: "Delete folder?",
+    message: `Move “${target}” and all files inside it to Recently deleted? They can be restored.`,
+    submitLabel: "Delete folder",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
-    await moveFilePath(target, String(name));
-  } catch (error) { showToast(error.message); }
+    const wasActive = state.activeFile.startsWith(`${target}/`);
+    if (wasActive) disconnectEditor();
+    await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
+    if (wasActive) state.activeFile = "";
+    await refreshProject(wasActive);
+    showToast("Folder deleted.");
+  } catch (error) {
+    showToast(error.message);
+    await refreshProject(state.activeFile.startsWith(`${target}/`));
+  }
 }
 
 async function deleteFile(target: string): Promise<void> {
@@ -2482,65 +2394,11 @@ async function deleteFile(target: string): Promise<void> {
 async function moveFilePath(from: string, to: string) {
   const wasActive = state.activeFile === from || state.activeFile.startsWith(`${from}/`);
   await request("v1/files/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }) });
+  fileTabs.move(from, to);
   if (wasActive) { disconnectEditor(); state.activeFile = to + state.activeFile.slice(from.length); }
+  fileTree.reveal(to);
   await refreshProject(wasActive);
   markPdfStale();
-}
-
-function enableFileDrag(element: HTMLElement, path: string) {
-  element.draggable = true;
-  element.addEventListener("dragstart", event => {
-    event.stopPropagation();
-    event.dataTransfer.setData("application/x-project-file", JSON.stringify({ project: state.projectId, path }));
-    event.dataTransfer.effectAllowed = "move";
-  });
-}
-
-function enableFileDrop(element: HTMLElement, folder: string) {
-  element.addEventListener("dragover", event => {
-    if (!event.dataTransfer.types.includes("application/x-project-file")) return;
-    event.preventDefault(); event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
-    element.classList.add("bg-accent");
-  });
-  element.addEventListener("dragleave", () => element.classList.remove("bg-accent"));
-  element.addEventListener("drop", event => {
-    element.classList.remove("bg-accent");
-    const value = event.dataTransfer.getData("application/x-project-file");
-    if (!value) return;
-    event.preventDefault(); event.stopPropagation();
-    try {
-      const { project, path } = JSON.parse(value);
-      if (project !== state.projectId) return;
-      const to = (folder ? folder + "/" : "") + path.split("/").at(-1);
-      if (path !== to) void moveFilePath(path, to).catch(error => showToast(error.message));
-    } catch (error) { showToast(error.message); }
-  });
-}
-enableFileDrop(elements.file_list, "");
-
-function folderMenu(path: string) {
-  const menu = document.createElement("details");
-  menu.className = "file-actions context-menu relative shrink-0";
-  menu.innerHTML = '<summary title="Folder actions" class="grid size-7 cursor-pointer list-none place-items-center rounded hover:bg-accent [&_svg]:size-3.5"><i data-lucide="more-horizontal"></i></summary><div class="fixed z-40 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
-  const panel = menu.querySelector("div")!;
-  menu.addEventListener("click", event => event.stopPropagation());
-  menu.addEventListener("toggle", () => {
-    if (!menu.open) return;
-    const bounds = menu.querySelector("summary")!.getBoundingClientRect();
-    panel.style.top = `${Math.min(window.innerHeight - panel.offsetHeight - 8, bounds.bottom)}px`;
-    panel.style.left = `${Math.max(8, Math.min(window.innerWidth - 168, bounds.right - 160))}px`;
-  });
-  for (const [label, run] of [["Rename / move folder", () => renameFile(path)], ["New folder", () => newFolder(path)], ["Delete folder", () => deleteFile(path)]] as const) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "block h-8 w-full rounded px-2 text-left text-xs hover:bg-accent disabled:opacity-40";
-    button.textContent = label;
-    if (label === "Delete folder") button.disabled = state.main.startsWith(path + "/");
-    button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); menu.open = false; void run(); });
-    panel.append(button);
-  }
-  return menu;
 }
 
 async function newFolder(prefix = "") {
@@ -2549,7 +2407,7 @@ async function newFolder(prefix = "") {
   try { await request("v1/files/folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: name }) }); await refreshProject(); }
   catch (error) { showToast(error.message); }
 }
-document.getElementById("new-folder")!.addEventListener("click", () => newFolder());
+document.getElementById("new-folder")!.addEventListener("click", () => newFolder(fileTree.folder));
 
 const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
 document.getElementById("project-settings")!.addEventListener("click", async () => {

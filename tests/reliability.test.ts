@@ -9,6 +9,7 @@ import test from "node:test";
 import { CompileQueue } from "../src/server/compile-queue.ts";
 import { StateDatabase } from "../src/server/database.ts";
 import { createPaperServer } from "../src/server/main.ts";
+import { findCompiler } from "../src/server/compiler.ts";
 
 test("SQLite migrations upgrade a version-one database transactionally", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-migration-"));
@@ -94,4 +95,28 @@ test("health endpoints distinguish liveness and readiness", async () => {
     await new Promise(resolve => paper.server.close(resolve));
     await rm(stateDir, { recursive: true, force: true });
   }
+});
+
+test("compiler discovery installs Tectonic once but keeps latexmk explicit", async () => {
+  let installations = 0;
+  const dependencies = {
+    executablePath: async () => null,
+    installTectonic: async (stateDir: string) => {
+      installations += 1;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return path.join(stateDir, "bin", "tectonic");
+    },
+  };
+  const stateDir = path.join(os.tmpdir(), `latexcoder-compiler-${Date.now()}`);
+  const [first, second] = await Promise.all([
+    findCompiler(undefined, stateDir, dependencies),
+    findCompiler(undefined, stateDir, dependencies),
+  ]);
+  assert.equal(first, path.join(stateDir, "bin", "tectonic"));
+  assert.equal(second, first);
+  assert.equal(installations, 1);
+  await assert.rejects(findCompiler("latexmk", "", dependencies), error => {
+    return error instanceof Error && "code" in error && error.code === "compiler_unavailable";
+  });
+  assert.equal(installations, 1);
 });

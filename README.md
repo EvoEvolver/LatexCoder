@@ -38,6 +38,8 @@ Licensed under the [MIT License](LICENSE).
   Yjs document and `main` untouched until the content is resolved.
 - Git status, history, checkpoints, and a copy-ready personal Git remote for
   ordinary `clone`, `pull`, and `push` workflows.
+- Open-file tabs and an indented, keyboard-accessible file tree with file-type
+  icons, folder menus, drag-and-drop moves, recoverable deletion, and downloads.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
   build logs, and an always-current PDF download endpoint.
 - In-editor previews for project images and PDF files, with zoom and download.
@@ -342,3 +344,9 @@ SQLite and remain valid across restarts until they expire or the user logs out.
 LaTeX compilation is not a security sandbox;
 run the service for trusted teams and do not place unrelated secrets in project
 directories.
+
+If compilation cannot find Tectonic or latexmk, the server automatically runs
+`scripts/install-tectonic.sh` and retries with the installed Tectonic binary.
+The installer supports Linux x86_64 and aarch64 and verifies the release
+SHA-256. The first build allows extra time for installation and TeX package
+downloads. Selecting latexmk explicitly still requires latexmk to be installed.

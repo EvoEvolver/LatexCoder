@@ -62,7 +62,7 @@ export function createCompileService({ stateDir, database, queue, logger, server
       const args = executable.startsWith("latexmk")
         ? ["-pdf", "-synctex=1", "-file-line-error", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
         : ["--synctex", "--keep-logs", "--outdir", outputDir, main];
-      const result = await run(compiler, args, { cwd: workDir, env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") } });
+      const result = await run(compiler, args, { timeoutMs: executable.startsWith("latexmk") ? 60_000 : 180_000, cwd: workDir, env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") } });
       const pdfName = `${path.basename(main, ".tex")}.pdf`;
       const outputPdf = path.join(outputDir, pdfName);
       const success = result.code === 0 && existsSync(outputPdf);

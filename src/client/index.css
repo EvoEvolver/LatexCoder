@@ -106,6 +106,43 @@ html[data-theme="system"] .theme-trigger .theme-system,
 html[data-theme="light"] .theme-trigger .theme-light,
 html[data-theme="dark"] .theme-trigger .theme-dark { display: block; }
 
+.tree-root { display: block; width: 100%; padding: 7px 8px; border-radius: 4px; color: var(--muted-foreground); font-size: 10px; text-align: left; text-transform: uppercase; }
+.tree-item { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; min-height: 32px; border-radius: 4px; }
+.tree-item:hover, .tree-item.folder-selected { background: var(--muted); }
+.tree-item.active { background: var(--accent); color: var(--primary); }
+.tree-row { display: flex; align-items: center; gap: 6px; min-width: 0; height: 32px; padding-left: calc(3px + var(--depth) * 16px); font-size: 12px; text-align: left; }
+.tree-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tree-chevron { width: 12px; height: 12px; flex: 0 0 12px; color: var(--muted-foreground); }
+.tree-chevron svg { width: 12px; height: 12px; transition: transform 120ms; }
+.tree-chevron.expanded svg { transform: rotate(90deg); }
+.tree-file-icon { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 1.7; color: var(--muted-foreground); }
+.icon-image { color: oklch(.52 .1 275); }
+.icon-file-text, .icon-braces { color: var(--primary); }
+.icon-folder, .icon-folder-open { color: oklch(.52 .05 235); }
+.tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-menu > summary { display: grid; place-items: center; width: 26px; height: 28px; cursor: pointer; color: var(--muted-foreground); list-style: none; }
+.tree-menu > summary::-webkit-details-marker { display: none; }
+.tree-menu svg { width: 15px; height: 15px; }
+.tree-menu-panel { position: fixed; z-index: 50; width: 168px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); box-shadow: 0 8px 24px oklch(.24 .012 145 / .14); }
+.tree-menu-panel button { display: block; width: 100%; padding: 8px; border-radius: 3px; font-size: 12px; text-align: left; }
+.tree-menu-panel button:hover { background: var(--muted); }
+.tree-menu-panel button.danger { color: var(--destructive); }
+.tree-menu-panel button:disabled { cursor: not-allowed; opacity: .4; }
+.drop-target { background: var(--accent) !important; outline: 1px solid var(--ring); outline-offset: -1px; }
+.tree-empty { padding: 12px; color: var(--muted-foreground); font-size: 12px; }
+
+.file-tabs { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--muted); scrollbar-width: thin; }
+.file-tab { display: flex; flex-shrink: 0; align-items: center; gap: 5px; border-right: 1px solid var(--border); color: var(--muted-foreground); }
+.file-tab.active { background: var(--background); color: var(--foreground); box-shadow: inset 0 2px var(--primary); }
+.file-tab [role="tab"] { max-width: 230px; overflow: hidden; padding: 7px 4px 7px 12px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.file-tab .close-tab { width: 22px; height: 24px; margin-right: 4px; border-radius: 3px; color: var(--muted-foreground); font-size: 13px; }
+.file-tab .close-tab:hover { background: var(--accent); }
+.file-tab.single-tab { gap: 0; }
+.file-tab.single-tab [role="tab"] { padding-right: 12px; }
+html.dark .icon-image { color: oklch(.75 .09 275); }
+html.dark .icon-folder, html.dark .icon-folder-open { color: oklch(.73 .055 235); }
+@media (prefers-reduced-motion: reduce) { .tree-chevron svg { transition: none; } }
+
 /* Persistent history uses the editor's existing light/dark surface tokens. */
 .version-browser { display: grid; grid-template-columns: minmax(14rem, 0.85fr) minmax(0, 2fr); min-height: 22rem; height: min(65vh, 44rem); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; flex: 1 1 auto; }
 .version-timeline { display: flex; flex-direction: column; min-height: 0; background: var(--muted); border-right: 1px solid var(--border); }
