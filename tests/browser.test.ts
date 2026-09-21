@@ -355,6 +355,35 @@ test("PDF preview fits page width or a whole page", async () => {
   });
 });
 
+test("mobile editor can open, compile, view, and close the PDF preview", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.route("**/v1/compile*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "Done" } }) }));
+    await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf(1, 300, 600) }));
+
+    assert.equal(await page.locator("#output-pane").isVisible(), false);
+    assert.equal(await page.locator("#open-pdf").isVisible(), true);
+    await page.locator("#open-pdf").click();
+    assert.equal(await page.locator("#output-pane").isVisible(), true);
+    assert.equal(await page.locator("#open-pdf").getAttribute("aria-expanded"), "true");
+    assert.equal(await page.locator("#compile-button").isVisible(), true);
+    assert.equal(await page.locator("#close-output").isVisible(), true);
+
+    await page.locator("#compile-button").click();
+    await page.locator("#pdf-document canvas").waitFor();
+    const controls = await page.locator("#close-output").boundingBox();
+    assert.ok(controls && controls.x + controls.width <= 390, "mobile PDF controls must stay within the viewport");
+    await page.screenshot({ path: "/tmp/latexcoder-mobile-pdf.png" });
+
+    await page.locator("#close-output").click();
+    assert.equal(await page.locator("#output-pane").isVisible(), false);
+    assert.equal(await page.locator("#open-pdf").getAttribute("aria-expanded"), "false");
+    assert.equal(await page.locator("#editor").isVisible(), true);
+  });
+});
+
 test("source navigation loads a new PDF revision once and then reuses it", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);

@@ -154,7 +154,7 @@ const elements = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
+  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
@@ -744,7 +744,7 @@ async function followReference(link: ReferenceLink) {
     const source = view.state.doc.toString();
     const current = link.kind === "file" ? { from: 0, to: 0 } : referenceDefinition(source, link.key, link.kind);
     if (!current) { showToast(`Definition not found: ${link.key}`); return; }
-    elements.output_pane.classList.remove("mobile-open");
+    setMobileOutputOpen(false);
     view.dispatch({ selection: { anchor: current.from, head: current.to }, effects: EditorView.scrollIntoView(current.from, { y: "center" }) });
     view.focus();
   } catch (error) { showToast(error.message); }
@@ -2023,7 +2023,7 @@ async function compile() {
     renderBuildErrors(result.build.log, result.build.errors);
     await showPdf(true);
     selectOutput("pdf");
-    elements.output_pane.classList.add("mobile-open");
+    setMobileOutputOpen(true);
     showToast("PDF compiled.");
   } catch (error) {
     const build = await request<{ build: BuildInfo }>("v1/build").catch((): null => null);
@@ -2031,7 +2031,7 @@ async function compile() {
     elements.build_output.textContent = build?.build?.log || error.message;
     renderBuildErrors(build?.build?.log || error.message, build?.build?.errors, true);
     selectOutput("log");
-    elements.output_pane.classList.add("mobile-open");
+    setMobileOutputOpen(true);
     showToast("Compilation failed. See Log for details.");
   } finally {
     elements.compile_button.disabled = false;
@@ -2131,6 +2131,11 @@ function selectOutput(name: "pdf" | "review" | "log"): void {
   elements.pdf_surface.hidden = name !== "pdf";
   elements.build_log.hidden = name !== "log";
   if (name === "log") elements.build_log.scrollTop = 0;
+}
+
+function setMobileOutputOpen(open: boolean): void {
+  elements.output_pane.classList.toggle("mobile-open", open);
+  elements.open_pdf.setAttribute("aria-expanded", String(open));
 }
 
 setInterval(() => {
@@ -2502,7 +2507,11 @@ elements.suggest_edit.addEventListener("click", () => {
   showToast(state.suggesting ? "Suggestion mode on." : "Suggestion mode off.");
   state.view?.focus();
 });
-elements.close_output.addEventListener("click", () => elements.output_pane.classList.remove("mobile-open"));
+elements.open_pdf.addEventListener("click", () => {
+  selectOutput("pdf");
+  setMobileOutputOpen(true);
+});
+elements.close_output.addEventListener("click", () => setMobileOutputOpen(false));
 function updatePdfFitButtons(): void {
   for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
     const active = state.pdfFitMode === mode;
@@ -2782,7 +2791,7 @@ async function goToPdf(view: EditorView) {
   const viewport = page.getViewport({ scale: 1 });
   const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
   const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
-  if (narrowWorkspace.matches) elements.output_pane.classList.add("mobile-open");
+  if (narrowWorkspace.matches) setMobileOutputOpen(true);
   elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
   const expires = Date.now() + 3000;
   state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
@@ -2886,7 +2895,7 @@ async function revealSource(destination: { path: string; line: number; from?: nu
   while (!provider.synced && state.view === view && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   if (state.projectId !== project || state.view !== view || !provider.synced) return;
   const line = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, destination.line)));
-  elements.output_pane.classList.remove("mobile-open");
+  setMobileOutputOpen(false);
   const selection = { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) };
   view.dispatch({ selection, effects: EditorView.scrollIntoView(selection.anchor, { y: "center" }) });
   view.focus();
