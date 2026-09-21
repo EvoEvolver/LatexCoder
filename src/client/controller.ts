@@ -1,3 +1,4 @@
+import { createVersionHistory } from "./version-history";
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
 import { defaultKeymap, indentWithTab, selectAll } from "@codemirror/commands";
 import {
@@ -2052,21 +2053,6 @@ function renderGitStatus(gitState: GitState): void {
       elements.git_file_list.append(row);
     }
   }
-  elements.git_history.replaceChildren();
-  for (const commit of gitState.history) {
-    const row = document.createElement("div");
-    row.className = "git-history-row grid min-h-7 grid-cols-[4rem_minmax(0,1fr)_6rem] items-center gap-2 border-b text-xs [&_code]:text-primary [&_span]:truncate [&_time]:text-right [&_time]:text-[9px] [&_time]:text-muted-foreground";
-    const id = document.createElement("code");
-    id.textContent = commit.shortId;
-    const subject = document.createElement("span");
-    subject.textContent = commit.subject;
-    subject.title = `${commit.author}: ${commit.subject}`;
-    const date = document.createElement("time");
-    date.dateTime = commit.date;
-    date.textContent = new Date(commit.date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    row.append(id, subject, date);
-    elements.git_history.append(row);
-  }
   const conflict = gitState.conflict;
   elements.git_conflict.hidden = !conflict;
   elements.git_conflict_branch.textContent = conflict?.branch || "";
@@ -2096,6 +2082,7 @@ async function runGitAction(endpoint: string, body: Record<string, unknown>, suc
     });
     if (["fast_forward", "merged"].includes(result.git.status)) await refreshProject(true);
     await refreshGit();
+    await versionHistory.refresh();
     showToast(result.git.status === "conflict" ? `Conflict saved to ${result.git.conflict.branch}.` : successMessage);
     return result;
   } catch (error) {
@@ -2344,16 +2331,22 @@ async function logout() {
 }
 elements.logout_button.addEventListener("click", logout);
 elements.account_logout.addEventListener("click", logout);
+const versionHistory = createVersionHistory({
+  request,
+  confirm: openActionDialog,
+  project: () => state.projectId,
+  restored: async () => { await refreshProject(true); await refreshGit(); markPdfStale(); showToast("Version restored. Your previous work is saved in History."); },
+});
 elements.git_button.addEventListener("click", async () => {
   elements.git_dialog.showModal();
-  await refreshGit();
+  await Promise.all([refreshGit(), versionHistory.refresh()]);
 });
 elements.git_close.addEventListener("click", () => elements.git_dialog.close());
 elements.git_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.git_dialog.close();
 });
-elements.git_refresh.addEventListener("click", () => refreshGit());
+elements.git_refresh.addEventListener("click", () => { void refreshGit(); void versionHistory.refresh(); });
 elements.git_commit.addEventListener("click", async () => {
   const result = await runGitAction("v1/git/commit", { message: elements.git_message.value }, "Checkpoint committed.");
   if (result) elements.git_message.value = "";

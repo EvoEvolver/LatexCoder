@@ -90,6 +90,7 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
     if (savedAcknowledgments) savedConnections.add(connection);
     connection.binaryType = "arraybuffer";
     connection.on("message", raw => {
+      if (suspended || shuttingDown || shared.removed) return;
       try {
         const bytes = Array.isArray(raw) ? Buffer.concat(raw) : raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
         const decoder = decoding.createDecoder(bytes), type = decoding.readVarUint(decoder);

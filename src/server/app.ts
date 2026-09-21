@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -18,6 +18,7 @@ import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isW
 import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
 import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPaths } from "./process.ts";
 import { createCollaborationStore } from "./collaboration.ts";
+import { historyCommit, historyRevision, listVersions, versionDiff, versionFiles, versionInfo, versionMessage, versionStructure } from "./version-history.ts";
 import { createAutoCheckpoint } from "./auto-checkpoint.ts";
 import type { AutoCheckpoint } from "./auto-checkpoint.ts";
 import { createProjectSearch } from "./search.ts";
@@ -109,12 +110,17 @@ async function gitHead(projectDir: string, ref = "HEAD"): Promise<string> {
   return (await git(projectDir, ["rev-parse", "--verify", `${ref}^{commit}`])).output.split("\n").at(-1)!;
 }
 
-async function gitCheckpoint(runtime: ProjectRuntime, message: unknown): Promise<{ commit: string; created: boolean }> {
+async function gitCheckpoint(runtime: ProjectRuntime, message: unknown, metadata?: Parameters<typeof versionMessage>[1]): Promise<{ commit: string; created: boolean }> {
   runtime.collaboration.flush();
   await git(runtime.projectDir, ["add", "-A"]);
   const changed = await git(runtime.projectDir, ["diff", "--cached", "--quiet"], { allowedCodes: [0, 1] });
-  if (changed.code === 1) await git(runtime.projectDir, ["commit", "-m", cleanCommitMessage(message)]);
-  return { commit: await gitHead(runtime.projectDir), created: changed.code === 1 };
+  const folders = await listFolders(runtime.projectDir);
+  const previous = await versionInfo(runtime.projectDir, await gitHead(runtime.projectDir));
+  const mainChanged = previous.metadata ? previous.metadata.main !== runtime.build.main : runtime.build.main !== "main.tex";
+  const foldersChanged = JSON.stringify(previous.metadata?.folders || []) !== JSON.stringify(folders);
+  const created = changed.code === 1 || mainChanged || foldersChanged;
+  if (created) await git(runtime.projectDir, ["commit", "--allow-empty", "-m", versionMessage(cleanCommitMessage(message), { ...(metadata ?? { kind: "checkpoint", main: runtime.build.main }), folders })]);
+  return { commit: await gitHead(runtime.projectDir), created };
 }
 
 function parseGitStatus(output: string): Array<{ index: string; worktree: string; path: string }> {
@@ -192,10 +198,10 @@ async function trackedPaths(projectDir: string): Promise<string[]> {
   return output ? output.split("\0").filter(Boolean) : [];
 }
 
-async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string): Promise<void> {
+async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, main = runtime.build.main, validateReviews = true): Promise<void> {
   const before = new Set(await trackedPaths(runtime.projectDir));
   const after = new Set(await trackedPaths(sourceDir));
-  if (!after.has(runtime.build.main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
+  if (!after.has(main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
 
   // Validate the complete target tree before changing any live Yjs document.
   for (const relativePath of after) {
@@ -207,10 +213,19 @@ async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string): Pr
     if (isTextFile(relativePath)) {
       const content = await readFile(source, "utf8");
       if (Buffer.byteLength(content) > MAX_TEXT_BYTES) throw apiError("file_too_large", `${relativePath} is too large to synchronize`, 413);
-      validateMergedText(relativePath, content);
+      if (validateReviews) validateMergedText(relativePath, content);
     }
   }
 
+  for (const relativePath of before) {
+    if (after.has(relativePath)) continue;
+    await runtime.collaboration.remove(relativePath);
+    await rm(path.join(runtime.projectDir, relativePath), { force: true });
+  }
+  // Remove empty directory shells that would block a restored regular file.
+  for (const folder of (await listFolders(runtime.projectDir)).sort((a, b) => b.length - a.length)) {
+    if ([...after].some(file => folder === file || folder.startsWith(file + "/"))) await rmdir(path.join(runtime.projectDir, folder));
+  }
   for (const relativePath of after) {
     const source = path.join(sourceDir, relativePath);
     const target = path.join(runtime.projectDir, relativePath);
@@ -221,11 +236,6 @@ async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string): Pr
     } else {
       await cp(source, target);
     }
-  }
-  for (const relativePath of before) {
-    if (after.has(relativePath)) continue;
-    await runtime.collaboration.remove(relativePath);
-    await rm(path.join(runtime.projectDir, relativePath), { force: true });
   }
   runtime.collaboration.flush();
 }
@@ -666,6 +676,15 @@ Content-Type: text/plain; charset=utf-8
 Use PUT only for new files or binary uploads. For existing text files, use the
 checked full-file upload above; do not use an unchecked PUT to bypass a conflict.
 
+## Persistent edit history
+
+Every successful checked edit automatically saves a before/after version. The
+response's edit.version identifies your change. Pass agentId and agentName query
+parameters even in direct mode so the History view can identify your edits.
+GET /v1/history?${capability}&agent=1 lists agent edits; GET
+/v1/history/VERSION?${capability} lists changed files, and adding &path=FILE shows
+added/deleted lines. These safety versions are automatic, no Git command needed.
+
 ## Git (Only When The User Explicitly Requests It)
 
 Do not use Git by default. For normal editing, use the checked full-file upload
@@ -1004,6 +1023,21 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     serverOptions: options,
     assertWritable: assertProjectWritable,
   });
+
+  async function withAgentHistory<T>(request: Request, runtime: ProjectRuntime, label: string, task: () => Promise<T> | T, always = false): Promise<T> {
+    if (!always && typeof request.query.access !== "string" && typeof request.query.agentId !== "string") return task();
+    return withGitReader(runtime, () => withGitOperation(runtime, async () => {
+      await gitCheckpoint(runtime, "Before agent edit");
+      const result = await task();
+      runtime.collaboration.flush();
+      const agent = request.body?.agent;
+      await gitCheckpoint(runtime, label, { kind: "agent", main: runtime.build.main,
+        agentName: String(request.query.agentName || agent?.name || "Coding agent").slice(0, 100),
+        agentId: String(request.query.agentId || agent?.id || "").slice(0, 100),
+        mode: String(request.query.mode || request.body?.mode || (request.path === "/v1/files/patch" ? "suggesting" : "direct")) });
+      return result;
+    }));
+  }
 
   const expressModule = await import("express");
   const express = expressModule.default;
@@ -1360,6 +1394,81 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       });
     } catch (error) { next(error); }
   });
+  app.get("/v1/history", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.json(await withGitReader(runtime, () => listVersions(runtime.projectDir, request.query.before, request.query.agent === "1")));
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/history/:version", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const result = await withGitReader(runtime, async () => {
+        const id = await historyCommit(runtime.projectDir, request.params.version);
+        if (request.query.path !== undefined) return versionDiff(runtime.projectDir, id, request.query.path);
+        runtime.collaboration.flush();
+        return { version: await versionInfo(runtime.projectDir, id), files: await versionFiles(runtime.projectDir, id), structure: await versionStructure(runtime.projectDir, id),
+          currentRevision: await historyRevision(runtime.projectDir, runtime.build.main) };
+      });
+      response.setHeader("Cache-Control", "no-store");
+      response.json(result);
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/history/:version/restore", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const result = await withGitReader(runtime, () => withGitOperation(runtime, async () => {
+        const id = await historyCommit(runtime.projectDir, request.params.version);
+        const currentRevision = await historyRevision(runtime.projectDir, runtime.build.main);
+        if (request.body?.currentRevision !== currentRevision) throw apiError("stale_restore", "The project changed. Refresh the version preview before restoring.", 409);
+        const selectedPath = request.body?.path === undefined ? null : safeRelativePath(request.body.path);
+        if (selectedPath && !(await versionFiles(runtime.projectDir, id)).some(file => file.path === selectedPath)) throw apiError("version_file_missing", "This file did not change in this version", 404);
+        const previousFolders = await listFolders(runtime.projectDir);
+        const info = await versionInfo(runtime.projectDir, id);
+        const backup = await gitCheckpoint(runtime, "Before restoring " + id.slice(0, 7));
+        const previousMain = runtime.build.main;
+        try {
+          await withTemporaryWorktree(runtime, id, async directory => {
+            const paths = await trackedPaths(directory);
+            const main = info.metadata?.main || (paths.includes(previousMain) ? previousMain : paths.includes("main.tex") ? "main.tex" : "");
+            if (!main && !selectedPath) throw apiError("restore_main_missing", "This old version does not identify its main document", 409);
+            if (selectedPath) {
+              await withTemporaryWorktree(runtime, backup.commit, async combined => {
+                const source = path.join(directory, selectedPath), target = path.join(combined, selectedPath);
+                if (paths.includes(selectedPath)) {
+                  const details = await lstat(source);
+                  if (!details.isFile()) throw apiError("git_file_unsupported", "Cannot restore a symbolic link", 409);
+                  await mkdir(path.dirname(target), { recursive: true });
+                  await cp(source, target);
+                } else await rm(target, { force: true });
+                if (existsSync(target) || (await trackedPaths(combined)).includes(selectedPath)) await git(combined, ["--literal-pathspecs", "add", "-A", "--", selectedPath]);
+                await importGitWorktree(runtime, combined, previousMain, false);
+              });
+            } else {
+              await importGitWorktree(runtime, directory, main, false);
+              runtime.build.main = main;
+              for (const folder of (await listFolders(runtime.projectDir)).sort((a, b) => b.length - a.length)) {
+                if (!info.metadata?.folders?.includes(folder)) await rmdir(path.join(runtime.projectDir, folder)).catch(error => { if (error.code !== "ENOTEMPTY") throw error; });
+              }
+              for (const folder of info.metadata?.folders || []) await mkdir(path.join(runtime.projectDir, safeRelativePath(folder)), { recursive: true });
+            }
+          });
+          const restored = await gitCheckpoint(runtime, (selectedPath ? `Restore ${selectedPath} from ` : "Restore version ") + id.slice(0, 7), { kind: "restore", main: runtime.build.main, restoredFrom: id });
+          database.saveBuild(runtime.id, runtime.build);
+          return { ...restored, backup: backup.commit };
+        } catch (error) {
+          runtime.build.main = previousMain;
+          await git(runtime.projectDir, ["add", "-A"]);
+          await withTemporaryWorktree(runtime, backup.commit, directory => importGitWorktree(runtime, directory, previousMain, false));
+          for (const folder of previousFolders) await mkdir(path.join(runtime.projectDir, folder), { recursive: true });
+          throw error;
+        }
+      }));
+      notifyProjectFiles(runtime.id);
+      response.json(result);
+    } catch (error) { next(error); }
+  });
   app.get("/v1/git", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
@@ -1566,13 +1675,15 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const target = path.join(projectDir, relativePath);
       const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
       if (isTextFile(relativePath) && body.length > MAX_TEXT_BYTES) throw apiError("file_too_large", "text file is too large", 413);
-      await mkdir(path.dirname(target), { recursive: true });
-      if (isTextFile(relativePath) && collaboration.replaceText(relativePath, body.toString("utf8"))) {
-        collaboration.flush();
-      } else {
-        await writeFile(target, body);
-        await collaboration.remove(relativePath);
-      }
+      await withAgentHistory(request, runtime, `Agent upload: ${relativePath}`, async () => {
+        await mkdir(path.dirname(target), { recursive: true });
+        if (isTextFile(relativePath) && collaboration.replaceText(relativePath, body.toString("utf8"))) {
+          collaboration.flush();
+        } else {
+          await writeFile(target, body);
+          await collaboration.remove(relativePath);
+        }
+      });
       response.status(201).json({ file: { path: relativePath, size: body.length, text: isTextFile(relativePath) } });
     } catch (error) { next(error); }
   });
@@ -1588,14 +1699,26 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       catch { throw apiError("invalid_utf8", "upload must be a valid UTF-8 file"); }
       const mode = request.query.mode === "suggesting" ? "suggesting" : request.query.mode === undefined || request.query.mode === "direct" ? "direct" : null;
       if (!mode) throw apiError("invalid_mode", "mode must be suggesting or direct");
-      const result = runtime.collaboration.editFile(relativePath, request.get("X-Base-SHA256"), source, {
-        mode,
-        agent: typeof request.query.agentId === "string" && typeof request.query.agentName === "string" ? { id: request.query.agentId, name: request.query.agentName } : undefined,
-      });
-      runtime.collaboration.flush();
+      const agent = typeof request.query.agentId === "string" && typeof request.query.agentName === "string"
+        ? { id: request.query.agentId.slice(0, 100), name: request.query.agentName.slice(0, 100) } : undefined;
+      const { result, version } = await withGitReader(runtime, () => withGitOperation(runtime, async () => {
+        // Check before making a checkpoint, and again inside editFile. The suspended
+        // collaboration store isolates this commit from concurrent browser edits.
+        const baseSha256 = request.get("X-Base-SHA256");
+        if (!baseSha256 || !/^[a-f0-9]{64}$/.test(baseSha256)) throw apiError("invalid_base_sha256", "X-Base-SHA256 must be a lowercase SHA-256 hex digest");
+        const currentSha256 = sha256(runtime.collaboration.readText(relativePath));
+        if (currentSha256 !== baseSha256) throw apiError("stale_file", "file changed since it was downloaded; download the latest file and retry", 409, { path: relativePath, expectedSha256: baseSha256, currentSha256 });
+        await gitCheckpoint(runtime, "Before agent edit");
+        const result = runtime.collaboration.editFile(relativePath, request.get("X-Base-SHA256"), source, { mode, agent });
+        runtime.collaboration.flush();
+        const version = await gitCheckpoint(runtime, `Agent edit: ${relativePath}`, {
+          kind: "agent", main: runtime.build.main, agentId: agent?.id, agentName: agent?.name || "Coding agent", mode,
+        });
+        return { result, version: result.changeCount ? version.commit : null };
+      }));
       response.setHeader("ETag", `"${result.sha256}"`);
       response.setHeader("X-Content-SHA256", result.sha256);
-      response.json({ file: { path: relativePath, size: Buffer.byteLength(result.source), text: true, sha256: result.sha256 }, edit: { mode: result.mode, changeCount: result.changeCount, suggestionIds: result.suggestionIds } });
+      response.json({ file: { path: relativePath, size: Buffer.byteLength(result.source), text: true, sha256: result.sha256 }, edit: { version, mode: result.mode, changeCount: result.changeCount, suggestionIds: result.suggestionIds } });
     } catch (error) {
       if (error.code === "stale_file") error.details = { ...error.details,
         latestFileUrl: request.originalUrl.replace("/v1/files/edit", "/v1/files"),
@@ -1623,15 +1746,15 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     } catch (error) { next(error); }
   });
   app.post("/v1/files/patch", express.json({ limit: `${MAX_TEXT_BYTES}b` }), (request, response, next) => {
-    resolveProject(request).then(runtime => {
+    resolveProject(request).then(async runtime => {
       assertProjectWritable(runtime);
       const { collaboration } = runtime;
       const relativePath = safeRelativePath(request.query.path);
       if (!isTextFile(relativePath)) throw apiError("not_text", "only text files can be patched", 415);
-      const result = collaboration.patchText(relativePath, request.body?.baseSha256, request.body?.changes, {
+      const result = await withAgentHistory(request, runtime, `Agent edit: ${relativePath}`, () => collaboration.patchText(relativePath, request.body?.baseSha256, request.body?.changes, {
         mode: request.body?.mode,
         agent: request.body?.agent,
-      });
+      }), true);
       collaboration.flush();
       response.setHeader("ETag", `"${result.sha256}"`);
       response.setHeader("X-Content-SHA256", result.sha256);
@@ -1648,7 +1771,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const folder = contentPath(request.body?.path);
       const target = checkedContentTarget(runtime.projectDir, folder);
       if (existsSync(target)) throw apiError("path_exists", "That path already exists", 409);
-      mkdirSync(target, { recursive: true });
+      await withAgentHistory(request, runtime, `Agent folder: ${folder}`, () => mkdirSync(target, { recursive: true }));
       response.status(201).json({ folder });
     } catch (error) { next(error); }
   });
@@ -1684,17 +1807,19 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const { projectDir, collaboration } = runtime;
       const relativePath = contentPath(request.query.path);
       if (relativePath === runtime.build.main || runtime.build.main.startsWith(`${relativePath}/`)) throw apiError("main_file_required", "the main document cannot be deleted", 409);
-      collaboration.flush();
-      const target = path.join(projectDir, relativePath);
-      const entries = contentEntries(projectDir, relativePath);
-      const directory = entries[0].directory;
-      const files = entries.map(file => ({ ...file, content: file.directory ? Buffer.alloc(0) : readFileSync(path.join(projectDir, file.path)), snapshot: file.directory ? null : database.getYjsSnapshot(runtime.id, file.path) }));
       const id = randomUUID();
-      database.createTrash(runtime.id, id, relativePath, directory, files);
-      try {
-        rmSync(target, { recursive: directory, force: false });
-        for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
-      } catch (error) { throw error; }
+      await withAgentHistory(request, runtime, `Agent delete: ${relativePath}`, () => {
+        collaboration.flush();
+        const target = path.join(projectDir, relativePath);
+        const entries = contentEntries(projectDir, relativePath);
+        const directory = entries[0].directory;
+        const files = entries.map(file => ({ ...file, content: file.directory ? Buffer.alloc(0) : readFileSync(path.join(projectDir, file.path)), snapshot: file.directory ? null : database.getYjsSnapshot(runtime.id, file.path) }));
+        database.createTrash(runtime.id, id, relativePath, directory, files);
+        try {
+          rmSync(target, { recursive: directory, force: false });
+          for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
+        } catch (error) { throw error; }
+      });
       response.json({ deleted: { path: relativePath, trashId: id } });
     } catch (error) {
       if (error.code === "ENOENT") next(apiError("file_not_found", "file does not exist", 404));
@@ -1711,13 +1836,15 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       checkedContentTarget(projectDir, to);
       if (to === from || to.startsWith(`${from}/`)) throw apiError("invalid_move", "Cannot move a folder into itself");
       if (existsSync(path.join(projectDir, to))) throw apiError("path_exists", "Destination already exists", 409);
-      collaboration.flush();
-      const entries = contentEntries(projectDir, from);
-      mkdirSync(path.dirname(path.join(projectDir, to)), { recursive: true });
-      renameSync(path.join(projectDir, from), path.join(projectDir, to));
-      for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
-      if (runtime.build.main === from || runtime.build.main.startsWith(`${from}/`)) runtime.build.main = to + runtime.build.main.slice(from.length);
-      database.saveBuild(runtime.id, runtime.build);
+      await withAgentHistory(request, runtime, `Agent move: ${from} → ${to}`, () => {
+        collaboration.flush();
+        const entries = contentEntries(projectDir, from);
+        mkdirSync(path.dirname(path.join(projectDir, to)), { recursive: true });
+        renameSync(path.join(projectDir, from), path.join(projectDir, to));
+        for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
+        if (runtime.build.main === from || runtime.build.main.startsWith(`${from}/`)) runtime.build.main = to + runtime.build.main.slice(from.length);
+        database.saveBuild(runtime.id, runtime.build);
+      });
       response.json({ file: { path: to } });
     } catch (error) { next(error); }
   });

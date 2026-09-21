@@ -1311,6 +1311,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#git-summary").textContent(), /^main · clean/);
     assert.equal(await page.locator("#git-ref").count(), 0);
     assert.equal(await page.locator("#git-sync").count(), 0);
+    await page.waitForFunction(() => document.querySelector("#git-history")?.textContent !== "Loading versions…");
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 
@@ -1468,5 +1469,40 @@ test("consecutive Backspace deletions stay in one review block", async () => {
     const { doc, head } = await editorState(page);
     assert.match(doc, /Hello br\\delbg\{[^}]+\}\{[^}]+\}ave\\deled new world\./);
     assert.equal(head, "Hello br".length);
+  });
+});
+
+test("version history shows agent diffs and restores files through a custom confirmation", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const original = await fetch(`${base}/v1/files?path=main.tex`);
+    const source = await original.text();
+    const edited = await fetch(`${base}/v1/files/edit?path=main.tex&agentId=researcher&agentName=Research%20agent`, {
+      method: "POST", headers: { "X-Base-SHA256": original.headers.get("x-content-sha256")! }, body: source + "\n% Agent checked the equation E = mc^2\n",
+    });
+    assert.equal(edited.status, 200);
+    await page.locator("#git-button").click();
+    await page.locator("#history-agents").click();
+    await page.waitForFunction(() => document.querySelector("#history-diff")?.textContent?.includes("+% Agent checked"));
+    assert.match(await page.locator("#history-meta").textContent(), /Research agent/);
+    assert.equal(await page.locator("#git-history .version-row").count(), 1);
+    await page.screenshot({ path: "/tmp/latexcoder-version-history-light.png" });
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await page.screenshot({ path: "/tmp/latexcoder-version-history-dark.png" });
+    await page.locator("#history-all").click();
+    await page.locator("#git-history .version-row").last().click();
+    await page.waitForFunction(() => !(document.querySelector("#history-restore") as HTMLButtonElement)?.disabled);
+    await page.locator("#history-restore").click();
+    await page.locator("#action-dialog[open]").waitFor();
+    assert.match(await page.locator("#action-message").textContent(), /saved as a checkpoint/);
+    await page.locator("#action-submit").click();
+    await page.waitForFunction(() => document.querySelector("#history-title")?.textContent?.startsWith("Restore version"));
+    await page.waitForFunction(() => !globalThis.__paperE2E.state.doc?.getText("content").toString().includes("Agent checked"));
+    assert.equal(await (await fetch(`${base}/v1/files?path=main.tex`)).text(), source);
+    assert.equal(await page.locator("#history-error").isVisible(), false);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: "/tmp/latexcoder-version-history-mobile.png" });
+    assert.equal(await page.locator("#git-dialog").evaluate(element => element.scrollWidth <= element.clientWidth + 1), true);
   });
 });
