@@ -372,9 +372,11 @@ test("mobile editor can open, compile, view, and close the PDF preview", async (
     assert.equal(await page.locator("#open-pdf").isVisible(), true);
     await page.locator("#open-pdf").click();
     assert.equal(await page.locator("#output-pane").isVisible(), true);
+    assert.equal(await page.locator("#editor-pane").isVisible(), false);
     assert.equal(await page.locator("#open-pdf").getAttribute("aria-expanded"), "true");
     assert.equal(await page.locator("#compile-button").isVisible(), true);
     assert.equal(await page.locator("#close-output").isVisible(), true);
+    assert.equal((await page.locator("#close-output").textContent())?.trim(), "Code");
 
     await page.locator("#compile-button").click();
     await page.locator("#pdf-document canvas").waitFor();

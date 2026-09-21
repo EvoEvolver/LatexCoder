@@ -154,7 +154,7 @@ const elements = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborate-menu", "collaborator-list", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
+  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
@@ -2137,8 +2137,15 @@ function selectOutput(name: "pdf" | "review" | "log"): void {
 }
 
 function setMobileOutputOpen(open: boolean): void {
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
   elements.output_pane.classList.toggle("mobile-open", open);
+  elements.editor_pane.hidden = mobile && open;
   elements.open_pdf.setAttribute("aria-expanded", String(open));
+  elements.open_pdf.setAttribute("aria-pressed", String(open));
+  elements.open_pdf.classList.toggle("active", open);
+  elements.mobile_code.setAttribute("aria-pressed", String(!open));
+  elements.mobile_code.classList.toggle("active", !open);
+  elements.close_output.setAttribute("aria-pressed", String(!open));
 }
 
 setInterval(() => {
@@ -2528,6 +2535,7 @@ elements.open_pdf.addEventListener("click", () => {
   selectOutput("pdf");
   setMobileOutputOpen(true);
 });
+elements.mobile_code.addEventListener("click", () => setMobileOutputOpen(false));
 elements.close_output.addEventListener("click", () => setMobileOutputOpen(false));
 function updatePdfFitButtons(): void {
   for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
@@ -3035,6 +3043,7 @@ try {
 
 function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
+  elements.editor_pane.hidden = mobile && elements.output_pane.classList.contains("mobile-open");
   // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
   for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
   elements.files_pane.hidden = !mobile && filesHidden;
