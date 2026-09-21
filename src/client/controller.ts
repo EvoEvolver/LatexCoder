@@ -148,22 +148,28 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
+  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
+  "collaborate-menu", "collaborator-list", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
-  "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
+  "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
+  "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
+function onDynamicClick(id: string, listener: (event: Event) => void): void {
+  document.addEventListener("click", event => {
+    if ((event.target as Element).closest(`#${id}`)) listener(event);
+  });
+}
+
 function syncThemeControls(): void {
   const preference = themePreference();
   for (const button of themeButtons) {
@@ -274,9 +280,8 @@ function displayName(): string {
 function syncAccountUi(): void {
   const registered = Boolean(state.user);
   elements.guest_name_field.hidden = registered;
-  elements.editor_account_button.hidden = !registered;
+  document.documentElement.dataset.authState = registered ? "registered" : "guest";
   elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
-  elements.editor_account_name.textContent = state.user?.displayName || state.user?.username || "";
 }
 
 function openAccountPanel(): void {
@@ -1610,7 +1615,7 @@ async function refreshProject(open = false, recordOpen = false) {
     state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, permissions: data.project.permissions });
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
-  elements.share_project.hidden = !data.project.permissions?.collaborate;
+  elements.collaborate_menu.hidden = !data.project.permissions?.collaborate;
   elements.project_name.textContent = data.project.name;
   document.title = `${data.project.name} · LaTeX Coder`;
   state.main = data.project.main;
@@ -1820,9 +1825,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   elements.download_project.href = projectApiUrl("v1/project/archive").toString();
   elements.download_project.download = `${project.id}.zip`;
   state.projectCanManage = false;
-  elements.share_project.hidden = true;
-  elements.back_projects.hidden = !state.user;
-  elements.editor_login.hidden = Boolean(state.user);
+  elements.collaborate_menu.hidden = true;
   syncAccountUi();
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
   document.title = `${project.name} · LaTeX Coder`;
@@ -2297,7 +2300,7 @@ async function refreshProjectMembers() {
   }));
 }
 
-async function openAccessDialog() {
+async function openAccessDialog(sectionId = "browser-editing-section") {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
   const result = await request<{ share: ShareDetails }>("v1/project/share", { method: "POST" });
@@ -2307,6 +2310,7 @@ async function openAccessDialog() {
   elements.access_download.href = projectApiUrl("v1/project/archive").toString();
   elements.access_download.download = `${project.id}.zip`;
   elements.access_dialog.showModal();
+  requestAnimationFrame(() => document.getElementById(sectionId)?.scrollIntoView({ block: "start" }));
 }
 
 async function rotateShareSecret() {
@@ -2350,7 +2354,7 @@ elements.display_name.addEventListener("change", () => {
   setAwareness();
 });
 elements.account_button.addEventListener("click", openAccountPanel);
-elements.editor_account_button.addEventListener("click", openAccountPanel);
+onDynamicClick("editor-account-button", openAccountPanel);
 elements.account_close.addEventListener("click", () => elements.account_dialog.close());
 elements.account_cancel.addEventListener("click", () => elements.account_dialog.close());
 elements.account_dialog.addEventListener("cancel", (event: Event) => {
@@ -2402,16 +2406,24 @@ elements.auth_form.addEventListener("submit", async (event: Event) => {
     elements.auth_submit.disabled = false;
   }
 });
-elements.back_projects.addEventListener("click", () => showProjectsPage());
-elements.editor_login.addEventListener("click", () => {
+onDynamicClick("back-projects", () => showProjectsPage());
+onDynamicClick("editor-login", () => {
   window.history.pushState({}, "", "/login");
   showAuthPage();
 });
-elements.share_project.addEventListener("click", () => openAccessDialog().catch(error => showToast(error.message)));
+for (const [id, section] of [
+  ["share-project", "browser-editing-section"],
+  ["collaborate-agent", "agent-editing-section"],
+  ["collaborate-proposal", "agent-proposal-section"],
+  ["collaborate-git", "clone-section"],
+  ["collaborate-members", "collaborator-section"],
+  ["collaborate-secrets", "access-secret-section"],
+] as const) onDynamicClick(id, () => openAccessDialog(section).catch(error => showToast(error.message)));
 elements.download_project.addEventListener("click", (event: Event) => {
   event.preventDefault();
   downloadProject(state.projectId);
 });
+onDynamicClick("menu-download-project", () => downloadProject(state.projectId));
 elements.access_close.addEventListener("click", () => elements.access_dialog.close());
 elements.access_done.addEventListener("click", () => elements.access_dialog.close());
 elements.access_dialog.addEventListener("cancel", (event: Event) => {
@@ -2427,6 +2439,7 @@ elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret()
   if (!elements.access_dialog.open) elements.access_dialog.showModal();
 }));
 elements.invite_user.addEventListener("click", createInvitation);
+onDynamicClick("editor-invite-user", createInvitation);
 elements.invite_regenerate.addEventListener("click", createInvitation);
 elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_done.addEventListener("click", () => elements.invite_dialog.close());
@@ -2446,16 +2459,20 @@ async function logout() {
 }
 elements.logout_button.addEventListener("click", logout);
 elements.account_logout.addEventListener("click", logout);
+onDynamicClick("editor-logout", logout);
 const versionHistory = createVersionHistory({
   request,
   confirm: openActionDialog,
   project: () => state.projectId,
   restored: async () => { await refreshProject(true); await refreshGit(); markPdfStale(); showToast("Version restored. Your previous work is saved in History."); },
 });
-elements.git_button.addEventListener("click", async () => {
+async function openHistory(focusCheckpoint = false): Promise<void> {
   elements.git_dialog.showModal();
   await Promise.all([refreshGit(), versionHistory.refresh()]);
-});
+  if (focusCheckpoint) elements.git_message.focus();
+}
+onDynamicClick("git-button", () => { void openHistory(); });
+onDynamicClick("history-save-checkpoint", () => { void openHistory(true); });
 elements.git_close.addEventListener("click", () => elements.git_dialog.close());
 elements.git_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
@@ -2654,7 +2671,7 @@ async function newFolder(prefix = "") {
 document.getElementById("new-folder")!.addEventListener("click", () => newFolder(fileTree.folder));
 
 const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
-document.getElementById("project-settings")!.addEventListener("click", async () => {
+onDynamicClick("project-settings", async () => {
   try {
     const { settings } = await request<{ settings: EditorSettings }>("v1/settings");
     const main = document.getElementById("settings-main") as HTMLSelectElement;
@@ -2698,6 +2715,7 @@ async function renderTrash() {
   }
 }
 document.getElementById("open-trash")!.addEventListener("click", () => { settingsDialog.close(); trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
+onDynamicClick("menu-open-trash", () => { trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
 
 const editorContextMenu = document.getElementById("editor-context-menu")!;
 const lineContextMenu = document.getElementById("line-context-menu")!;
@@ -2912,6 +2930,7 @@ let searchVersion = 0;
 const openProjectSearch = () => { searchDialog.showModal(); searchQuery.focus(); };
 document.getElementById("project-search")!.addEventListener("click", openProjectSearch);
 document.getElementById("editor-search")!.addEventListener("click", openProjectSearch);
+onDynamicClick("project-search-menu", openProjectSearch);
 document.getElementById("search-close")!.addEventListener("click", () => searchDialog.close());
 searchDialog.addEventListener("close", () => { searchVersion++; replacementPlan = []; applyReplacements.hidden = true; });
 for (const id of ["search-query", "replace-text", "replace-scope", "search-case", "search-regex"]) document.getElementById(id)!.addEventListener("input", () => { searchVersion++; replacementPlan = []; applyReplacements.hidden = true; });

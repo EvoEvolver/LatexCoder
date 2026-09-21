@@ -101,6 +101,9 @@
   [hidden] { display: none !important; }
 }
 
+html[data-auth-state="guest"] [data-user-only],
+html[data-auth-state="registered"] [data-guest-only] { display: none !important; }
+
 .tree-root { display: block; width: 100%; padding: 7px 8px; border-radius: 4px; color: var(--muted-foreground); font-size: 10px; text-align: left; text-transform: uppercase; }
 .tree-item { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; min-height: 32px; border-radius: 4px; }
 .tree-item:hover, .tree-item.folder-selected { background: var(--muted); }

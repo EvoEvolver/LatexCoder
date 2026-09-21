@@ -44,6 +44,11 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
+async function chooseAppMenu(page: any, menu: "project" | "history" | "settings" | "collaborate", item: string): Promise<void> {
+  await page.locator(`#${menu}-menu`).click();
+  await page.locator(item).click();
+}
+
 test("Git pushes update the open browser file tree without reloading the editor", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
@@ -109,7 +114,7 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     assert.notEqual(colors.body, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, colors.foreground);
-    await page.locator("#editor-account-button").click();
+    await chooseAppMenu(page, "settings", "#editor-account-button");
     assert.equal(await page.locator('[data-theme-option="dark"]').getAttribute("aria-checked"), "true");
     await page.locator("#account-close").click();
     await page.locator("#toggle-review").click();
@@ -122,7 +127,7 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     await page.reload();
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
     assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
-    await page.locator("#editor-account-button").click();
+    await chooseAppMenu(page, "settings", "#editor-account-button");
     await page.locator('[data-theme-option="system"]').click();
     assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
     await page.emulateMedia({ colorScheme: "dark" });
@@ -483,7 +488,7 @@ test("settings and project replace preview apply through the real UI", async () 
     await page.request.put(`${base}/v1/files?project=${id}&path=other.tex`, { data: "needle needle", headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    await page.locator("#project-settings").click();
+    await chooseAppMenu(page, "settings", "#project-settings");
     await page.locator("#settings-main").selectOption("other.tex");
     await page.locator("#settings-compiler").selectOption("latexmk");
     await page.locator("#settings-form button[type=submit]").click();
@@ -520,7 +525,7 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await renamed.getByRole("button", { name: "Delete folder", exact: true }).click();
     await page.locator("#action-submit").click();
     await renamed.waitFor({ state: "detached" });
-    await page.locator("#project-settings").click();
+    await chooseAppMenu(page, "settings", "#project-settings");
     await page.locator("#open-trash").click();
     await page.locator("#trash-list button").click();
     await renamed.waitFor();
@@ -537,7 +542,7 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "destination/chapter.tex"));
     assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=destination/chapter.tex`)).text(), "chapter");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator("#project-settings").click();
+    await chooseAppMenu(page, "settings", "#project-settings");
     await page.locator("#settings-dialog[open]").waitFor();
     await page.screenshot({ path: "/tmp/latexcoder-settings-mobile.png" });
   });
@@ -550,7 +555,7 @@ test("automatic compilation is debounced and errors navigate to source", async (
     let calls = 0;
     await page.route("**/v1/compile*", route => { calls++; return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { message: "Compilation failed" } }) }); });
     await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "main.tex:3: Undefined control sequence", stale: true } }) }));
-    await page.locator("#project-settings").click();
+    await chooseAppMenu(page, "settings", "#project-settings");
     await page.locator("#settings-auto").check();
     await page.locator("#settings-form button[type=submit]").click();
     await page.evaluate(() => {
@@ -1463,13 +1468,24 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#settings-dialog #open-trash").count(), 1);
     assert.equal(await page.locator(".topbar #download-project").count(), 0);
     assert.equal(await page.locator("#clone-button").count(), 0);
-    assert.equal(await page.locator("#share-project + #git-button").count(), 1);
-    assert.equal((await page.locator("#share-project").textContent())?.trim(), "Collaborate");
+    assert.equal(await page.locator(".topbar .brand").count(), 0);
+    assert.equal((await page.locator(".topbar").boundingBox())?.height, 40);
+    for (const menu of ["project", "history", "settings", "collaborate"]) assert.equal(await page.locator(`#${menu}-menu`).isVisible(), true);
+    await page.locator("#project-menu").click();
+    assert.equal(await page.locator("#menu-download-project").isVisible(), true);
+    assert.equal(await page.locator("#menu-open-trash").isVisible(), true);
+    await page.screenshot({ path: "/tmp/latexcoder-application-menu.png" });
+    await page.keyboard.press("Escape");
     assert.equal(await page.locator(".topbar #compile-button").count(), 0);
     assert.equal(await page.locator(".output-header #compile-button + .segmented").count(), 1);
     assert.equal((await page.locator("#compile-button").textContent())?.trim(), "Compile");
     assert.ok((await page.locator("#compile-button").boundingBox())!.width >= 108);
 
+    await page.locator("#collaborate-menu").click();
+    for (const item of ["share-project", "collaborate-agent", "collaborate-proposal", "collaborate-git", "collaborate-members", "collaborate-secrets"]) {
+      assert.equal(await page.locator(`#${item}`).isVisible(), true);
+    }
+    await page.screenshot({ path: "/tmp/latexcoder-collaborate-menu.png" });
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
     assert.equal(await page.locator("#access-dialog header strong").textContent(), "Collaborate");
@@ -1513,7 +1529,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForFunction(() => ![...document.querySelectorAll(".file-row")].some(row => row.textContent.includes("delete-me.tex")));
     await page.locator("#toast", { hasText: "File deleted." }).waitFor();
 
-    await page.locator("#git-button").click();
+    await chooseAppMenu(page, "history", "#git-button");
     await page.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
     assert.match(await page.locator("#git-summary").textContent(), /^main · clean/);
     assert.equal(await page.locator("#git-ref").count(), 0);
@@ -1522,14 +1538,14 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 
-    await page.locator("#back-projects").click();
+    await chooseAppMenu(page, "project", "#back-projects");
     const row = page.locator(".project-row", { hasText: "Compact Project" });
     await row.waitFor();
     assert.equal(await row.getAttribute("role"), "link");
     assert.equal(await row.getByRole("button", { name: "Open" }).count(), 0);
     await row.press("Enter");
     await page.waitForURL(`${base}/projects/${projectId}`);
-    await page.locator("#back-projects").click();
+    await chooseAppMenu(page, "project", "#back-projects");
     await row.waitFor();
     await row.locator("summary").click();
     await row.getByText("Delete project").click();
@@ -1567,9 +1583,11 @@ test("login, invitations, and capability links separate members from guests", as
 
     await page.locator(".project-row").first().click();
     assert.equal(await page.locator("#guest-name-field").isHidden(), true);
+    await page.locator("#settings-menu").click();
     assert.equal(await page.locator("#editor-account-button").isVisible(), true);
-    assert.equal(await page.locator("#editor-account-name").textContent(), "Lead Editor");
-    await page.locator("#share-project").click();
+    assert.match(await page.locator("#editor-account-button").textContent(), /Account Settings/);
+    await page.keyboard.press("Escape");
+    await chooseAppMenu(page, "collaborate", "#share-project");
     await page.locator("#access-dialog").waitFor();
     const shareLink = await page.locator("#share-link").inputValue();
     const projectId = new URL(shareLink).pathname.split("/")[2];
@@ -1580,7 +1598,9 @@ test("login, invitations, and capability links separate members from guests", as
     await guest.waitForURL(`${base}/projects/${projectId}`);
     await guest.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await guest.locator("#back-projects").isHidden(), true);
+    await guest.locator("#settings-menu").click();
     assert.equal(await guest.locator("#editor-login").isVisible(), true);
+    await guest.keyboard.press("Escape");
     assert.equal(await guest.evaluate(() => fetch("/v1/projects").then(response => response.status)), 401);
 
     const uninvited = await browser.newPage();
@@ -1603,15 +1623,17 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.goto(shareLink);
     await invited.waitForURL(`${base}/projects/${projectId}`);
     await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await invited.locator("#project-menu").click();
     assert.equal(await invited.locator("#back-projects").isVisible(), true);
-    assert.equal(await invited.locator("#share-project").isVisible(), true);
-    await invited.locator("#share-project").click();
+    await invited.keyboard.press("Escape");
+    assert.equal(await invited.locator("#collaborate-menu").isVisible(), true);
+    await chooseAppMenu(invited, "collaborate", "#share-project");
     await invited.locator("#access-dialog").waitFor();
     assert.notEqual(await invited.locator("#share-link").inputValue(), shareLink);
     assert.match(await invited.locator("#collaborator-list").textContent(), /adminowner/);
     assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.membercollaborator/);
     await invited.locator("#access-close").click();
-    await invited.locator("#git-button").click();
+    await chooseAppMenu(invited, "history", "#git-button");
     await invited.locator("#git-dialog").waitFor();
     assert.equal(await invited.locator("#clone-button").count(), 0);
   }, { authDisabled: false, adminPassword: "browser admin password" });
@@ -1696,7 +1718,7 @@ test("version history shows agent diffs and restores files through a custom conf
       method: "POST", headers: { "X-Base-SHA256": original.headers.get("x-content-sha256")! }, body: source + "\n% Agent checked the equation E = mc^2\n",
     });
     assert.equal(edited.status, 200);
-    await page.locator("#git-button").click();
+    await chooseAppMenu(page, "history", "#git-button");
     await page.locator("#history-agents").click();
     await page.waitForFunction(() => document.querySelector("#history-diff")?.textContent?.includes("+% Agent checked"));
     assert.match(await page.locator("#history-meta").textContent(), /Research agent/);

@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 const iconButton = "icon-button size-8 p-0";
@@ -136,22 +140,75 @@ export function AppShell() {
         </main>
       </div>
 
-      <div id="editor-page" className="app-shell grid h-dvh min-w-80 grid-rows-[3.5rem_minmax(0,1fr)]" hidden>
-        <header className="topbar flex min-w-0 items-center gap-2 border-b bg-background px-3">
-          <Button id="back-projects" className="brand-button gap-2 px-1" variant="ghost" title="All projects"><Icon name="arrow-left" /><Brand compact /></Button>
-          <div className="project-context flex min-w-28 max-w-52 items-center gap-2 border-l pl-3 max-md:hidden"><Icon name="folder-kanban" /><strong id="project-name" className="truncate text-xs" /></div>
-          <div className="document-name flex min-w-0 flex-1 flex-col"><span id="active-file-label" className="truncate text-sm font-medium">main.tex</span><span id="sync-state" className="text-[10px] text-muted-foreground">Connecting</span></div>
-          <div id="presence" className="presence flex min-w-0" aria-label="Active collaborators" />
-          <label id="guest-name-field" className="name-field flex h-9 w-36 items-center gap-2 rounded-md border bg-background px-2 max-lg:hidden"><Icon name="user-round" /><Input id="display-name" className="h-7 border-0 p-0 text-xs shadow-none focus-visible:ring-0" maxLength={28} aria-label="Display name" /></label>
-          <Button id="editor-account-button" variant="outline" size="sm" hidden><Icon name="user-round" /><span id="editor-account-name" className="max-w-28 truncate max-lg:hidden" /></Button>
-          <Button id="editor-login" variant="outline" size="sm" hidden><Icon name="log-in" /><span className="max-sm:hidden">Sign in</span></Button>
-          <Button id="share-project" variant="outline" size="sm"><Icon name="link" /><span className="max-sm:hidden">Collaborate</span></Button>
-          <Button id="git-button" variant="outline" size="sm"><Icon name="git-branch" /><span className="max-sm:hidden">History</span><span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button>
-          <IconButton id="project-settings" icon="settings" title="Project settings" />
+      <div id="editor-page" className="app-shell grid h-dvh min-w-80 grid-rows-[2.5rem_minmax(0,1fr)]" hidden>
+        <header className="topbar flex min-w-0 items-center border-b bg-background px-1.5 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
+          <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button id="project-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Project</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuLabel>Project</DropdownMenuLabel>
+                <DropdownMenuItem id="back-projects" data-user-only><Icon name="arrow-left" />All Projects</DropdownMenuItem>
+                <DropdownMenuItem id="project-search-menu"><Icon name="search" />Search Project<DropdownMenuShortcut>Shift Ctrl F</DropdownMenuShortcut></DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem id="menu-download-project"><Icon name="archive" />Download ZIP</DropdownMenuItem>
+                <DropdownMenuItem id="menu-open-trash"><Icon name="trash-2" />Recently Deleted…</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button id="history-menu" className="h-7 gap-1.5 rounded px-2 text-xs font-medium" variant="ghost">History<span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuLabel>Version control</DropdownMenuLabel>
+                <DropdownMenuItem id="git-button"><Icon name="git-branch" />Version History…</DropdownMenuItem>
+                <DropdownMenuItem id="history-save-checkpoint"><Icon name="git-commit-horizontal" />Save Checkpoint…</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled className="text-[10px] text-muted-foreground">Live edits are checkpointed automatically</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button id="settings-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Settings</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-60">
+                <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+                <DropdownMenuItem id="project-settings"><Icon name="settings" />Project Settings…</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Account</DropdownMenuLabel>
+                <DropdownMenuItem id="editor-account-button" data-user-only><Icon name="user-round" />Account Settings…</DropdownMenuItem>
+                <DropdownMenuItem id="editor-invite-user" data-user-only><Icon name="user-plus" />Invite Team Member…</DropdownMenuItem>
+                <DropdownMenuItem id="editor-logout" data-user-only className="text-destructive focus:text-destructive"><Icon name="log-out" />Sign Out</DropdownMenuItem>
+                <DropdownMenuItem id="editor-login" data-guest-only><Icon name="log-in" />Sign In</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button id="collaborate-menu" className="h-7 rounded px-2 text-xs font-medium text-primary hover:text-primary" variant="ghost"><Icon name="link" /><span>Collaborate</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-64">
+                <DropdownMenuLabel>Share this project</DropdownMenuLabel>
+                <DropdownMenuItem id="share-project"><Icon name="link" />Browser Editing…</DropdownMenuItem>
+                <DropdownMenuItem id="collaborate-agent"><Icon name="terminal-square" />Agent Direct Editing…</DropdownMenuItem>
+                <DropdownMenuItem id="collaborate-proposal"><Icon name="git-pull-request-create-arrow" />Agent Proposed Changes…</DropdownMenuItem>
+                <DropdownMenuItem id="collaborate-git"><Icon name="git-branch" />Git Access…</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem id="collaborate-members"><Icon name="user-round" />Project Members…</DropdownMenuItem>
+                <DropdownMenuItem id="collaborate-secrets"><Icon name="refresh-cw" />Access Secrets…</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </nav>
+
+          <div className="project-title flex min-w-0 flex-1 items-center justify-center gap-1.5 px-3 max-[760px]:hidden">
+            <strong id="project-name" className="max-w-44 truncate text-[11px] font-medium" />
+            <span className="text-[10px] text-muted-foreground">/</span>
+            <span id="active-file-label" className="max-w-56 truncate text-[11px] text-muted-foreground">main.tex</span>
+          </div>
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2 px-1">
+            <span id="sync-state" className="whitespace-nowrap text-[10px] text-muted-foreground max-[520px]:hidden">Connecting</span>
+            <div id="presence" className="presence flex min-w-0 max-[760px]:hidden" aria-label="Active collaborators" />
+            <label id="guest-name-field" className="name-field flex h-7 w-32 items-center gap-1.5 rounded border bg-background px-1.5 max-lg:hidden"><Icon name="user-round" /><Input id="display-name" className="h-6 border-0 p-0 text-[10px] shadow-none focus-visible:ring-0" maxLength={28} aria-label="Display name" /></label>
+          </div>
         </header>
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.75rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
-          <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
+          <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:bottom-0 max-[760px]:left-0 max-[760px]:top-10 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
               <IconButton id="project-search" icon="search" title="Search project" />
               <IconButton id="new-file" icon="file-plus-2" title="New file" />
@@ -257,7 +314,7 @@ export function AppShell() {
         </div>
       </dialog>
 
-      <dialog id="access-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Collaborate" subtitleId="access-project-name" closeId="access-close" /><p className="mb-4 text-xs text-muted-foreground">These are your personal links. Every registered project member has different secrets.</p><section className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="share-link">Browser editing</label><p id="browser-editing-description" className="text-xs text-muted-foreground">A signed-in user who opens this link joins the project as a collaborator. Guests can edit the project without creating an account.</p><CopyRow inputId="share-link" buttonId="copy-share-link" label="Copy" /></section><section id="agent-editing-section" className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="agent-command">Agent direct editing</label><p className="text-xs text-muted-foreground">Copy this command when the agent should edit the live source directly.</p><CopyRow inputId="agent-command" buttonId="copy-agent-link" label="Copy" /></section><section id="agent-proposal-section" className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="proposal-agent-command">Agent proposed changes</label><p className="text-xs text-muted-foreground">Use this safer command to force every agent edit into Review for acceptance or rejection.</p><CopyRow inputId="proposal-agent-command" buttonId="copy-proposal-agent-link" label="Copy" /></section><section id="clone-section" className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="clone-command">Git clone and push</label><p className="text-xs text-muted-foreground">Use your personal Git URL as the remote. Pushed commits synchronize into the live document automatically.</p><CopyRow inputId="clone-command" buttonId="copy-clone-command" label="Copy" /></section><section className="space-y-2 border-t py-4"><strong className="text-sm font-medium">Project members</strong><div id="collaborator-list" className="space-y-1 text-xs" /></section><section className="flex items-center justify-between gap-4 border-t py-4 max-sm:items-start"><div className="space-y-1"><strong className="text-sm font-medium">Your access secrets</strong><p id="rotate-secret-warning" className="text-xs text-muted-foreground">Rotating your secrets immediately invalidates your previous Browser, Agent editing, Agent proposal, and Git links, and signs out their guest sessions. Other registered collaborators and their links keep working.</p></div><Button id="rotate-share-secret" className="shrink-0" variant="outline" type="button"><Icon name="refresh-cw" />Rotate my secrets</Button></section><footer className="flex justify-end gap-2"><Button id="access-download" variant="outline" asChild><a><Icon name="archive" />Download ZIP</a></Button><Button id="access-done">Done</Button></footer></div></dialog>
+      <dialog id="access-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Collaborate" subtitleId="access-project-name" closeId="access-close" /><p className="mb-4 text-xs text-muted-foreground">These are your personal links. Every registered project member has different secrets.</p><section id="browser-editing-section" className="scroll-mt-4 space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="share-link">Browser editing</label><p id="browser-editing-description" className="text-xs text-muted-foreground">A signed-in user who opens this link joins the project as a collaborator. Guests can edit the project without creating an account.</p><CopyRow inputId="share-link" buttonId="copy-share-link" label="Copy" /></section><section id="agent-editing-section" className="scroll-mt-4 space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="agent-command">Agent direct editing</label><p className="text-xs text-muted-foreground">Copy this command when the agent should edit the live source directly.</p><CopyRow inputId="agent-command" buttonId="copy-agent-link" label="Copy" /></section><section id="agent-proposal-section" className="scroll-mt-4 space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="proposal-agent-command">Agent proposed changes</label><p className="text-xs text-muted-foreground">Use this safer command to force every agent edit into Review for acceptance or rejection.</p><CopyRow inputId="proposal-agent-command" buttonId="copy-proposal-agent-link" label="Copy" /></section><section id="clone-section" className="scroll-mt-4 space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="clone-command">Git clone and push</label><p className="text-xs text-muted-foreground">Use your personal Git URL as the remote. Pushed commits synchronize into the live document automatically.</p><CopyRow inputId="clone-command" buttonId="copy-clone-command" label="Copy" /></section><section id="collaborator-section" className="scroll-mt-4 space-y-2 border-t py-4"><strong className="text-sm font-medium">Project members</strong><div id="collaborator-list" className="space-y-1 text-xs" /></section><section id="access-secret-section" className="scroll-mt-4 flex items-center justify-between gap-4 border-t py-4 max-sm:items-start"><div className="space-y-1"><strong className="text-sm font-medium">Your access secrets</strong><p id="rotate-secret-warning" className="text-xs text-muted-foreground">Rotating your secrets immediately invalidates your previous Browser, Agent editing, Agent proposal, and Git links, and signs out their guest sessions. Other registered collaborators and their links keep working.</p></div><Button id="rotate-share-secret" className="shrink-0" variant="outline" type="button"><Icon name="refresh-cw" />Rotate my secrets</Button></section><footer className="flex justify-end gap-2"><Button id="access-download" variant="outline" asChild><a><Icon name="archive" />Download ZIP</a></Button><Button id="access-done">Done</Button></footer></div></dialog>
 
       <dialog id="account-dialog" className={dialogClass}>
         <form id="account-form" className="space-y-4 p-5">
