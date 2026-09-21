@@ -86,6 +86,7 @@ import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/rev
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
+import { projectStructure, type StructureEntry } from "../shared/structure.ts";
 import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
@@ -160,7 +161,7 @@ const elements = Object.fromEntries([
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept",
+  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-list", "structure-pane", "structure-resize", "refresh-structure",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -449,6 +450,58 @@ function renderFiles(): void {
   fileTabs.update(state.files, state.activeFile, state.projectId);
   fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "" }, state.projectId);
 }
+
+let structureVersion = 0;
+async function refreshStructure(): Promise<void> {
+  const version = ++structureVersion;
+  const project = state.projectId;
+  elements.refresh_structure.disabled = true;
+  elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-muted-foreground">Loading structure…</p>';
+  try {
+    const texFiles = state.files.filter(file => file.text && /\.tex$/i.test(file.path));
+    const pairs = await Promise.all(texFiles.map(async file => {
+      if (file.path === state.activeFile && state.view && state.provider?.synced) return [file.path, state.view.state.doc.toString()] as const;
+      const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
+      if (!response.ok) throw new Error(`Could not read ${file.path}`);
+      return [file.path, await response.text()] as const;
+    }));
+    if (version !== structureVersion || project !== state.projectId) return;
+    renderStructure(projectStructure(state.main, new Map(pairs)));
+  } catch (error) {
+    if (version === structureVersion && project === state.projectId) {
+      elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-destructive"></p>';
+      elements.structure_list.querySelector("p")!.textContent = error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    if (version === structureVersion && project === state.projectId) elements.refresh_structure.disabled = false;
+  }
+}
+
+function renderStructure(entries: StructureEntry[]): void {
+  elements.structure_list.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "px-2 py-3 text-xs text-muted-foreground";
+    empty.textContent = "No sections found";
+    elements.structure_list.append(empty);
+    return;
+  }
+  const baseLevel = Math.min(...entries.map(entry => entry.level));
+  for (const entry of entries) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "structure-item block w-full truncate rounded px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+    button.style.paddingLeft = `${8 + Math.min(4, entry.level - baseLevel) * 12}px`;
+    button.textContent = entry.title;
+    button.title = `${entry.path}:${entry.line} - ${entry.title}`;
+    button.dataset.path = entry.path;
+    button.dataset.line = String(entry.line);
+    button.addEventListener("click", () => { void revealSource(entry).catch(error => showToast(error.message)); });
+    elements.structure_list.append(button);
+  }
+}
+
+elements.refresh_structure.addEventListener("click", () => { void refreshStructure(); });
 
 elements.file_list.addEventListener("scroll", () => {
   for (const menu of elements.file_list.querySelectorAll(".file-actions[open]")) menu.removeAttribute("open");
@@ -1667,6 +1720,7 @@ async function refreshProject(open = false, recordOpen = false) {
       state.activeFile = "";
       await openFile(target);
     }
+    void refreshStructure();
   }
   scheduleStaticDiagnostics();
   await refreshGit(false);
@@ -3064,12 +3118,14 @@ const workspaceColumns: Array<[HTMLElement, number]> = [
 ];
 let filesWidth = 208;
 let outputWidth: number | null = null;
+let structureHeight = 220;
 let filesHidden = false;
 try {
   const saved = JSON.parse(localStorage.getItem("workspace-layout") || "null");
   if (saved) {
     if (Number.isFinite(saved.filesWidth)) filesWidth = saved.filesWidth;
     if (Number.isFinite(saved.outputWidth)) outputWidth = saved.outputWidth;
+    if (Number.isFinite(saved.structureHeight)) structureHeight = saved.structureHeight;
     filesHidden = saved.filesHidden === true;
   }
 } catch { /* Ignore unavailable storage or invalid preferences. */ }
@@ -3083,6 +3139,11 @@ function updateWorkspaceLayout() {
   elements.file_list.hidden = !mobile && filesHidden;
   filesResize.hidden = !mobile && filesHidden;
   const width = workspace.clientWidth;
+  const filesHeight = elements.files_pane.clientHeight;
+  if (filesHeight) {
+    structureHeight = Math.max(112, Math.min(structureHeight, filesHeight - 104));
+    elements.files_pane.style.gridTemplateRows = `minmax(96px,1fr) 8px ${structureHeight}px`;
+  }
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 580));
     const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 12;
@@ -3096,8 +3157,36 @@ function updateWorkspaceLayout() {
 }
 
 function saveWorkspaceLayout() {
-  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, filesHidden })); } catch { /* Storage is optional. */ }
+  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, structureHeight, filesHidden })); } catch { /* Storage is optional. */ }
 }
+
+function adjustStructureHeight(delta: number): void {
+  structureHeight -= delta;
+  updateWorkspaceLayout();
+}
+
+elements.structure_resize.addEventListener("pointerdown", event => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  elements.structure_resize.setPointerCapture(event.pointerId);
+  let previous = event.clientY;
+  const move = (next: PointerEvent) => { adjustStructureHeight(next.clientY - previous); previous = next.clientY; };
+  const stop = () => {
+    elements.structure_resize.removeEventListener("pointermove", move);
+    elements.structure_resize.removeEventListener("pointerup", stop);
+    elements.structure_resize.removeEventListener("lostpointercapture", stop);
+    saveWorkspaceLayout();
+  };
+  elements.structure_resize.addEventListener("pointermove", move);
+  elements.structure_resize.addEventListener("pointerup", stop);
+  elements.structure_resize.addEventListener("lostpointercapture", stop);
+});
+elements.structure_resize.addEventListener("keydown", event => {
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  event.preventDefault();
+  adjustStructureHeight((event.key === "ArrowUp" ? -1 : 1) * (event.shiftKey ? 40 : 10));
+  saveWorkspaceLayout();
+});
 
 for (const handle of [filesResize, outputResize]) {
   const adjust = (delta: number) => {

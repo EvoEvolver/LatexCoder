@@ -1454,6 +1454,55 @@ test("sidebar folders expand, collapse, and create nested files", async () => {
   });
 });
 
+test("Structure follows the main document, refreshes manually, navigates, and resizes", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const main = String.raw`\documentclass{article}
+\begin{document}
+\section{Overview}
+\input{chapters/method}
+\section{Conclusion}
+\end{document}`;
+    const method = String.raw`Introduction
+\subsection{Method}
+Details`;
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: main, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: method, headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    const items = page.locator("#structure-list .structure-item");
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 3);
+    assert.deepEqual(await items.allTextContents(), ["Overview", "Method", "Conclusion"]);
+    assert.ok((await items.nth(1).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft)))
+      > (await items.nth(0).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft))));
+
+    await items.nth(1).click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/method.tex"
+      && globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number === 2);
+
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: `${method}\n\\subsection{Evaluation}`, headers: { "Content-Type": "text/plain" } });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(await items.count(), 3, "Structure should not update until requested");
+    await page.locator("#refresh-structure").click();
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 4);
+    assert.deepEqual(await items.allTextContents(), ["Overview", "Method", "Evaluation", "Conclusion"]);
+
+    const before = await page.locator("#structure-pane").boundingBox();
+    const handle = await page.locator("#structure-resize").boundingBox();
+    assert.ok(before && handle);
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y - 60, { steps: 8 });
+    await page.mouse.up();
+    const after = await page.locator("#structure-pane").boundingBox();
+    assert.ok(after && after.height > before.height + 50);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 4);
+    const restored = await page.locator("#structure-pane").boundingBox();
+    assert.ok(restored && Math.abs(restored.height - after.height) < 2);
+    await page.screenshot({ path: "/tmp/latexcoder-structure-panel.png" });
+  });
+});
+
 test("file tabs and typed file tree preserve files across switching, closing and drag moves", async () => {
   await withEditor(async ({ page, base }) => {
     await page.request.put(`${base}/v1/files?path=notes/second.tex`, { data: "Second document." });
