@@ -1650,6 +1650,11 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#menu-download-project").isVisible(), true);
     assert.equal(await page.locator("#menu-open-trash").isVisible(), true);
     await page.screenshot({ path: "/tmp/latexcoder-application-menu.png" });
+    await page.locator("#history-menu").click();
+    assert.equal(await page.locator("#git-button").isVisible(), true);
+    assert.equal(await page.locator("#menu-download-project").isVisible(), false);
+    await page.locator("#project-menu").click();
+    assert.equal(await page.locator("#menu-download-project").isVisible(), true);
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".topbar #compile-button").count(), 0);
     assert.equal(await page.locator(".output-header #compile-button + .segmented").count(), 1);

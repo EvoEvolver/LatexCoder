@@ -144,7 +144,7 @@ export function AppShell() {
           <div id="topbar-actions" className="flex h-full shrink-0 items-center">
             <IconButton id="back-projects" icon="arrow-left" title="All projects" className="mr-0.5 size-7" />
             <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="project-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Project</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuLabel>Project</DropdownMenuLabel>
@@ -156,7 +156,7 @@ export function AppShell() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="history-menu" className="h-7 gap-1.5 rounded px-2 text-xs font-medium" variant="ghost">History<span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuLabel>Version control</DropdownMenuLabel>
@@ -167,7 +167,7 @@ export function AppShell() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="account-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Account</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-60">
                 <DropdownMenuLabel>Account</DropdownMenuLabel>
@@ -178,7 +178,7 @@ export function AppShell() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="collaborate-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Collaborate</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-64">
                 <DropdownMenuLabel>Share this project</DropdownMenuLabel>
