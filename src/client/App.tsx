@@ -3,7 +3,7 @@ import {
   Archive, ArrowLeft, CheckCheck, ChevronDown, ChevronUp, CircleAlert, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
-  Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
+  Maximize2, Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
   ClipboardPaste, Redo2, Scissors, ScanText, Search, Settings, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ const iconComponents = {
   "log-in": LogIn,
   "log-out": LogOut,
   "message-square-plus": MessageSquarePlus,
+  "maximize-2": Maximize2,
   "monitor": Monitor,
   "moon": Moon,
   "more-horizontal": MoreHorizontal,
@@ -212,7 +213,7 @@ export function AppShell() {
             <div id="file-list" className="file-list min-h-0 flex-1 overflow-auto p-1.5" />
             <div id="structure-resize" role="separator" aria-label="Resize files and structure" aria-orientation="horizontal" tabIndex={0} className="group flex h-2 touch-none cursor-row-resize items-center justify-center border-y bg-muted/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><span className="h-0.5 w-8 rounded bg-border group-hover:bg-primary" /></div>
             <section id="structure-pane" className="grid min-h-0 grid-rows-[2.25rem_minmax(0,1fr)] bg-background/55" aria-label="Document structure">
-              <header className="flex items-center justify-between border-b px-2.5"><strong className="text-[11px] font-semibold uppercase text-muted-foreground">Structure</strong><IconButton id="refresh-structure" icon="refresh-cw" title="Refresh structure" className="size-7" /></header>
+              <header className="flex items-center justify-between border-b px-2.5"><strong className="text-[11px] font-semibold uppercase text-muted-foreground">Structure</strong><div className="flex items-center"><IconButton id="open-structure" icon="maximize-2" title="Open expanded structure" className="size-7" /><IconButton id="refresh-structure" icon="refresh-cw" title="Refresh structure" className="size-7" /></div></header>
               <nav id="structure-list" className="min-h-0 overflow-auto p-1.5" aria-label="Document sections"><p className="px-2 py-3 text-xs text-muted-foreground">Loading structure…</p></nav>
             </section>
           </aside>
@@ -227,6 +228,7 @@ export function AppShell() {
             <div id="editor-body" className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden">
               <div className="relative grid min-h-0 min-w-0 overflow-hidden">
                 <div id="editor" className="min-h-0 min-w-0 overflow-hidden" />
+                <section id="structure-view" className="absolute inset-0 min-h-0 overflow-auto bg-background" aria-label="Expanded document structure" hidden><div id="structure-document" className="mx-auto w-full max-w-4xl px-8 py-10 max-sm:px-5 max-sm:py-7" /></section>
             <div id="binary-view" className="binary-view absolute inset-0 grid min-h-0 grid-rows-[2.75rem_minmax(0,1fr)] bg-background" hidden>
               <div className="flex min-w-0 items-center justify-between border-b bg-muted/20 px-2.5"><div className="min-w-0"><strong id="binary-kind" className="text-xs">File preview</strong><span id="binary-status" className="ml-2 text-[10px] text-muted-foreground" /></div><div className="flex items-center"><IconButton id="file-preview-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="file-preview-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="binary-download" className={iconButton} variant="ghost" size="icon" title="Download file" asChild><a download><Icon name="download" /></a></Button></div></div>
               <div id="file-preview-viewport" className="relative min-h-0 min-w-0 overflow-auto bg-muted/40 p-4"><img id="image-preview" className="mx-auto block max-w-none shadow-sm" alt="" hidden /><div id="file-pdf-document" className="flex min-w-min flex-col items-center gap-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /><div id="binary-fallback" className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Icon name="file" /><strong id="binary-name" /><Button id="binary-fallback-download" variant="outline" asChild><a download><Icon name="download" />Download</a></Button></div></div>

@@ -1460,31 +1460,54 @@ test("Structure follows the main document, refreshes manually, navigates, and re
     const main = String.raw`\documentclass{article}
 \begin{document}
 \section{Overview}
+\sectiontldr{The paper starts with its central question.}
 \input{chapters/method}
 \section{Conclusion}
+\sectiontldr{The conclusion states the main result.}
 \end{document}`;
     const method = String.raw`Introduction
 \subsection{Method}
-Details`;
+Details \tldr{The method combines two stages.}`;
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: main, headers: { "Content-Type": "text/plain" } });
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: method, headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     const items = page.locator("#structure-list .structure-item");
-    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 3);
-    assert.deepEqual(await items.allTextContents(), ["Overview", "Method", "Conclusion"]);
-    assert.ok((await items.nth(1).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft)))
-      > (await items.nth(0).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft))));
+    const headings = page.locator('#structure-list .structure-item[data-structure-type="heading"]');
+    const points = page.locator('#structure-list .structure-item[data-structure-type="point"]');
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 6);
+    assert.deepEqual(await headings.allTextContents(), ["Overview", "Method", "Conclusion"]);
+    assert.deepEqual(await points.allTextContents(), ["The paper starts with its central question.", "The method combines two stages.", "The conclusion states the main result."]);
+    assert.ok((await headings.nth(1).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft)))
+      > (await headings.nth(0).evaluate(element => parseFloat(getComputedStyle(element).paddingLeft))));
 
-    await items.nth(1).click();
+    await headings.nth(1).click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/method.tex"
       && globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number === 2);
 
-    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: `${method}\n\\subsection{Evaluation}`, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: `${method}\n\\subsection{Evaluation}\nEvidence. \\tldr{Evaluation confirms the gain.}`, headers: { "Content-Type": "text/plain" } });
     await new Promise(resolve => setTimeout(resolve, 200));
-    assert.equal(await items.count(), 3, "Structure should not update until requested");
+    assert.equal(await items.count(), 6, "Structure should not update until requested");
     await page.locator("#refresh-structure").click();
-    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 4);
-    assert.deepEqual(await items.allTextContents(), ["Overview", "Method", "Evaluation", "Conclusion"]);
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 8);
+    assert.deepEqual(await headings.allTextContents(), ["Overview", "Method", "Evaluation", "Conclusion"]);
+    assert.match((await points.allTextContents()).join(" "), /Evaluation confirms the gain/);
+
+    await page.locator("#open-structure").click();
+    const structureTab = page.getByRole("tab", { name: "Structure", exact: true });
+    await structureTab.waitFor();
+    assert.equal(await structureTab.getAttribute("aria-selected"), "true");
+    assert.equal(await page.locator("#structure-view").isVisible(), true);
+    assert.equal(await page.locator("#editor").isVisible(), false);
+    assert.equal(await page.locator("#structure-document").getByText("Paper at a glance", { exact: true }).count(), 1);
+    assert.match(await page.locator("#structure-document").textContent(), /The method combines two stages/);
+    await page.screenshot({ path: "/tmp/latexcoder-tldr-structure-expanded.png" });
+    await page.getByRole("tab", { name: "main.tex", exact: true }).click();
+    assert.equal(await page.locator("#structure-view").isVisible(), false);
+    await structureTab.click();
+    await page.locator('#structure-document [data-structure-kind="paragraph"]').first().click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/method.tex"
+      && globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number === 3);
+    assert.equal(await structureTab.getAttribute("aria-selected"), "false");
 
     const before = await page.locator("#structure-pane").boundingBox();
     const handle = await page.locator("#structure-resize").boundingBox();
@@ -1496,10 +1519,20 @@ Details`;
     const after = await page.locator("#structure-pane").boundingBox();
     assert.ok(after && after.height > before.height + 50);
     await page.reload();
-    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 4);
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 8);
     const restored = await page.locator("#structure-pane").boundingBox();
     assert.ok(restored && Math.abs(restored.height - after.height) < 2);
     await page.screenshot({ path: "/tmp/latexcoder-structure-panel.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator("#toggle-files").click();
+    await page.locator("#open-structure").click();
+    assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), false);
+    assert.equal(await page.locator("#structure-view").isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
+    await page.getByRole("button", { name: "Close Structure", exact: true }).click();
+    assert.equal(await page.locator("#structure-view").isVisible(), false);
+    assert.equal(await page.getByRole("tab", { name: "Structure", exact: true }).count(), 0);
+    assert.equal(await page.locator("#editor").isVisible(), true);
   });
 });
 

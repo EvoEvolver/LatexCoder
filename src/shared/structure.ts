@@ -1,14 +1,24 @@
 import { withoutComments } from "./references.ts";
 
-export type StructureEntry = {
+export type StructureHeading = {
+  type: "heading";
   level: number;
   kind: "part" | "chapter" | "section" | "subsection" | "subsubsection" | "paragraph" | "subparagraph";
   title: string;
   path: string;
   line: number;
 };
+export type StructurePoint = {
+  type: "point";
+  level: number;
+  kind: "section" | "paragraph";
+  title: string;
+  path: string;
+  line: number;
+};
+export type StructureEntry = StructureHeading | StructurePoint;
 
-const LEVELS: Record<StructureEntry["kind"], number> = {
+const LEVELS: Record<StructureHeading["kind"], number> = {
   part: 0,
   chapter: 1,
   section: 2,
@@ -81,6 +91,7 @@ function includedPath(origin: string, target: string, sources: ReadonlyMap<strin
 export function projectStructure(main: string, sources: ReadonlyMap<string, string>): StructureEntry[] {
   const entries: StructureEntry[] = [];
   const visiting = new Set<string>();
+  let headingLevel = -1;
 
   function visit(filePath: string): void {
     if (visiting.has(filePath)) return;
@@ -88,11 +99,11 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
     if (source === undefined) return;
     visiting.add(filePath);
     const clean = withoutComments(source);
-    const commands = /\\(subsubsection|subsection|section|chapter|part|subparagraph|paragraph|input|include)\*?(?![a-zA-Z@])/g;
+    const commands = /\\(sectiontldr|subsubsection|subsection|section|chapter|part|subparagraph|paragraph|input|include|tldr)\*?(?![a-zA-Z@])/g;
     let match: RegExpExecArray | null;
     while ((match = commands.exec(clean))) {
-      const command = match[1] as StructureEntry["kind"] | "input" | "include";
-      const argumentStart = command === "input" || command === "include"
+      const command = match[1] as StructureHeading["kind"] | "input" | "include" | "tldr" | "sectiontldr";
+      const argumentStart = command === "input" || command === "include" || command === "tldr" || command === "sectiontldr"
         ? match.index + match[0].length
         : skipOptionalArgument(clean, match.index + match[0].length);
       const argument = bracedArgument(clean, argumentStart);
@@ -103,8 +114,22 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
         if (child) visit(child);
         continue;
       }
+      if (command === "tldr" || command === "sectiontldr") {
+        if (command === "sectiontldr" && headingLevel < 0) continue;
+        entries.push({
+          type: "point",
+          level: headingLevel < 0 ? 0 : headingLevel + 1,
+          kind: command === "sectiontldr" ? "section" : "paragraph",
+          title: displayTitle(source.slice(argumentStart, argument.end).replace(/^\s*\{/, "").replace(/\}\s*$/, "")),
+          path: filePath,
+          line: source.slice(0, match.index).split("\n").length,
+        });
+        continue;
+      }
+      headingLevel = LEVELS[command];
       entries.push({
-        level: LEVELS[command],
+        type: "heading",
+        level: headingLevel,
         kind: command,
         title: displayTitle(source.slice(argumentStart, argument.end).replace(/^\s*\{/, "").replace(/\}\s*$/, "")),
         path: filePath,

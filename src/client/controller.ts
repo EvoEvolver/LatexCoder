@@ -161,7 +161,7 @@ const elements = Object.fromEntries([
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-list", "structure-pane", "structure-resize", "refresh-structure",
+  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -429,7 +429,11 @@ function renderSelectionActions() {
   menu.style.top = `${top}px`;
 }
 
-const fileTabs = createFileTabs(document.getElementById("file-tabs")!, path => { void openFile(path); });
+const fileTabs = createFileTabs(
+  document.getElementById("file-tabs")!,
+  path => { void openFile(path); },
+  id => { if (id === "structure") showExpandedStructure(); },
+);
 const fileTree = createFileTree(elements.file_list, {
   open: path => { void openFile(path); },
   search: () => openProjectSearch(),
@@ -452,6 +456,7 @@ function renderFiles(): void {
 }
 
 let structureVersion = 0;
+let structureEntries: StructureEntry[] = [];
 async function refreshStructure(): Promise<void> {
   const version = ++structureVersion;
   const project = state.projectId;
@@ -466,7 +471,8 @@ async function refreshStructure(): Promise<void> {
       return [file.path, await response.text()] as const;
     }));
     if (version !== structureVersion || project !== state.projectId) return;
-    renderStructure(projectStructure(state.main, new Map(pairs)));
+    structureEntries = projectStructure(state.main, new Map(pairs));
+    renderStructure();
   } catch (error) {
     if (version === structureVersion && project === state.projectId) {
       elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-destructive"></p>';
@@ -477,31 +483,107 @@ async function refreshStructure(): Promise<void> {
   }
 }
 
-function renderStructure(entries: StructureEntry[]): void {
+function structureSourceButton(entry: StructureEntry, expanded: boolean): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = expanded
+    ? "structure-document-item block w-full rounded px-3 py-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+    : "structure-item block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+  button.title = `${entry.path}:${entry.line} - ${entry.title}`;
+  button.dataset.path = entry.path;
+  button.dataset.line = String(entry.line);
+  button.dataset.structureType = entry.type;
+  button.dataset.structureKind = entry.kind;
+  button.addEventListener("click", () => { void revealSource(entry).catch(error => showToast(error.message)); });
+  return button;
+}
+
+function renderStructure(): void {
   elements.structure_list.replaceChildren();
-  if (!entries.length) {
+  elements.structure_document.replaceChildren();
+  if (!structureEntries.length) {
     const empty = document.createElement("p");
     empty.className = "px-2 py-3 text-xs text-muted-foreground";
-    empty.textContent = "No sections found";
+    empty.textContent = "No sections or TL;DR points found";
     elements.structure_list.append(empty);
+    const expandedEmpty = empty.cloneNode(true) as HTMLElement;
+    expandedEmpty.className = "py-16 text-center text-sm text-muted-foreground";
+    elements.structure_document.append(expandedEmpty);
     return;
   }
-  const baseLevel = Math.min(...entries.map(entry => entry.level));
-  for (const entry of entries) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "structure-item block w-full truncate rounded px-2 py-1.5 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+  const baseLevel = Math.min(...structureEntries.map(entry => entry.level));
+  const overview = document.createElement("header");
+  overview.className = "mb-8 border-b pb-5";
+  const title = document.createElement("h1");
+  title.className = "text-2xl font-semibold";
+  title.textContent = "Paper at a glance";
+  const source = document.createElement("p");
+  source.className = "mt-1 text-xs text-muted-foreground";
+  source.textContent = state.main;
+  overview.append(title, source);
+  elements.structure_document.append(overview);
+
+  for (const entry of structureEntries) {
+    const button = structureSourceButton(entry, false);
     button.style.paddingLeft = `${8 + Math.min(4, entry.level - baseLevel) * 12}px`;
-    button.textContent = entry.title;
-    button.title = `${entry.path}:${entry.line} - ${entry.title}`;
-    button.dataset.path = entry.path;
-    button.dataset.line = String(entry.line);
-    button.addEventListener("click", () => { void revealSource(entry).catch(error => showToast(error.message)); });
+    if (entry.type === "heading") {
+      button.classList.add("truncate", "font-medium");
+      button.textContent = entry.title;
+    } else {
+      button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-5", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
+      const bullet = document.createElement("span");
+      bullet.className = `mt-[7px] size-1.5 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
+      const text = document.createElement("span");
+      text.className = "line-clamp-2";
+      text.textContent = entry.title;
+      button.append(bullet, text);
+    }
     elements.structure_list.append(button);
+
+    const expanded = structureSourceButton(entry, true);
+    expanded.style.marginLeft = `${Math.min(5, entry.level - baseLevel) * 20}px`;
+    if (entry.type === "heading") {
+      const depth = entry.level - baseLevel;
+      expanded.classList.add(depth === 0 ? "mt-7" : "mt-4", depth <= 1 ? "text-lg" : "text-base", "font-semibold", "text-foreground");
+      expanded.textContent = entry.title;
+    } else {
+      expanded.classList.add("my-1", "flex", "items-start", "gap-3", "border-l-2", entry.kind === "section" ? "border-primary" : "border-border", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
+      const bullet = document.createElement("span");
+      bullet.className = `mt-2 size-2 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
+      const text = document.createElement("span");
+      text.className = "text-sm leading-6";
+      text.textContent = entry.title;
+      expanded.append(bullet, text);
+    }
+    elements.structure_document.append(expanded);
   }
 }
 
 elements.refresh_structure.addEventListener("click", () => { void refreshStructure(); });
+elements.open_structure.addEventListener("click", () => {
+  fileTabs.openAuxiliary({ id: "structure", label: "Structure", controls: "structure-view" });
+});
+
+function showExpandedStructure(): void {
+  setReviewOpen(false);
+  setMobileOutputOpen(false);
+  elements.files_pane.classList.remove("mobile-open");
+  elements.structure_view.hidden = false;
+  elements.editor.hidden = true;
+  elements.binary_view.hidden = true;
+  elements.review_actions.hidden = false;
+  elements.add_comment.hidden = true;
+  elements.suggest_edit.hidden = true;
+}
+
+function hideExpandedStructure(): void {
+  elements.structure_view.hidden = true;
+  const file = state.files.find(candidate => candidate.path === state.activeFile);
+  elements.editor.hidden = !file?.text;
+  elements.binary_view.hidden = file?.text !== false;
+  elements.add_comment.hidden = !file?.text;
+  elements.suggest_edit.hidden = !file?.text;
+}
 
 elements.file_list.addEventListener("scroll", () => {
   for (const menu of elements.file_list.querySelectorAll(".file-actions[open]")) menu.removeAttribute("open");
@@ -1336,6 +1418,8 @@ function setAwareness() {
 async function openFile(relativePath: string): Promise<void> {
   const file = state.files.find(candidate => candidate.path === relativePath);
   if (!file) return;
+  fileTabs.activateFile();
+  hideExpandedStructure();
   elements.files_pane.classList.remove("mobile-open");
   if (relativePath === state.activeFile && (state.view || !file.text)) return;
   if (state.view && state.activeFile) staticSourceCache.set(state.activeFile, state.view.state.doc.toString());
@@ -1347,6 +1431,8 @@ async function openFile(relativePath: string): Promise<void> {
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
+  elements.add_comment.hidden = !file.text;
+  elements.suggest_edit.hidden = !file.text;
   renderFiles();
   if (!file.text) {
     elements.sync_state.textContent = "Preview";
