@@ -149,16 +149,16 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-project-name", "access-secret-close", "access-secret-dialog", "access-secret-done", "agent-access-close", "agent-access-dialog", "agent-access-done", "agent-command", "back-projects",
+  "access-close", "access-dialog", "access-done", "access-project-name", "access-secret-close", "access-secret-dialog", "access-secret-done", "agent-access-close", "agent-access-dialog", "agent-access-done", "agent-command", "agent-command-label", "agent-direct", "agent-editing-description", "agent-propose", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
+  "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "proposal-access-close", "proposal-access-dialog", "proposal-access-done", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
@@ -2482,9 +2482,10 @@ async function copyText(value: string, message: string): Promise<void> {
 
 let currentAccessShare: ShareDetails | null = null;
 let browserShareMode: "view" | "edit" = "edit";
+let agentEditingMode: "direct" | "propose" = "direct";
 const collaborateDialogs = [
-  elements.access_dialog, elements.agent_access_dialog, elements.proposal_access_dialog,
-  elements.git_access_dialog, elements.collaborator_dialog, elements.access_secret_dialog,
+  elements.access_dialog, elements.agent_access_dialog, elements.git_access_dialog,
+  elements.collaborator_dialog, elements.access_secret_dialog,
 ];
 
 function setBrowserShareMode(mode: "view" | "edit"): void {
@@ -2504,16 +2505,30 @@ function setBrowserShareMode(mode: "view" | "edit"): void {
   }
 }
 
+function setAgentEditingMode(mode: "direct" | "propose"): void {
+  agentEditingMode = mode;
+  for (const button of [elements.agent_direct, elements.agent_propose]) {
+    const selected = button.dataset.agentMode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", String(selected));
+  }
+  elements.agent_command_label.textContent = mode === "direct" ? "Direct editing" : "Proposed changes";
+  elements.agent_editing_description.textContent = mode === "direct"
+    ? "Use this command when the agent should edit the live source directly, without review."
+    : "Every agent edit is forced into Review for acceptance or rejection.";
+  if (currentAccessShare) {
+    const path = mode === "direct" ? currentAccessShare.agentPath : currentAccessShare.proposalAgentPath;
+    elements.agent_command.value = `curl -fsSL '${window.location.origin}${path}'`;
+  }
+}
+
 function displayAccessShare(share: ShareDetails): void {
   currentAccessShare = share;
   state.accessShareId = share.id;
-  const agentUrl = `${window.location.origin}${share.agentPath}`;
-  const proposalAgentUrl = `${window.location.origin}${share.proposalAgentPath}`;
   const cloneUrl = `${window.location.origin}${share.clonePath}`;
-  elements.agent_command.value = `curl -fsSL '${agentUrl}'`;
-  elements.proposal_agent_command.value = `curl -fsSL '${proposalAgentUrl}'`;
   elements.clone_command.value = `git clone ${cloneUrl}`;
   setBrowserShareMode(browserShareMode);
+  setAgentEditingMode(agentEditingMode);
 }
 
 async function refreshProjectMembers() {
@@ -2531,7 +2546,7 @@ async function refreshProjectMembers() {
   }));
 }
 
-type CollaboratePanel = "browser" | "agent" | "proposal" | "git" | "members" | "secrets";
+type CollaboratePanel = "browser" | "agent" | "git" | "members" | "secrets";
 async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
@@ -2544,7 +2559,6 @@ async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
   const dialog = {
     browser: elements.access_dialog,
     agent: elements.agent_access_dialog,
-    proposal: elements.proposal_access_dialog,
     git: elements.git_access_dialog,
     members: elements.collaborator_dialog,
     secrets: elements.access_secret_dialog,
@@ -2557,7 +2571,7 @@ async function rotateShareSecret() {
   elements.access_secret_dialog.close();
   const confirmed = await openActionDialog({
     title: "Rotate access secrets?",
-    message: "Your previous View, Edit, Agent editing, Agent proposal, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
+    message: "Your previous View, Edit, Agent editing, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
     submitLabel: "Rotate my secrets",
     danger: true,
   });
@@ -2653,8 +2667,8 @@ onDynamicClick("editor-login", () => {
 });
 for (const [id, panel] of [
   ["share-project", "browser"], ["collaborate-agent", "agent"],
-  ["collaborate-proposal", "proposal"], ["collaborate-git", "git"],
-  ["collaborate-members", "members"], ["collaborate-secrets", "secrets"],
+  ["collaborate-git", "git"], ["collaborate-members", "members"],
+  ["collaborate-secrets", "secrets"],
 ] as const) onDynamicClick(id, () => openCollaboratePanel(panel).catch(error => showToast(error.message)));
 elements.download_project.addEventListener("click", (event: Event) => {
   event.preventDefault();
@@ -2664,7 +2678,6 @@ onDynamicClick("menu-download-project", () => downloadProject(state.projectId));
 for (const [dialog, close, done] of [
   [elements.access_dialog, elements.access_close, elements.access_done],
   [elements.agent_access_dialog, elements.agent_access_close, elements.agent_access_done],
-  [elements.proposal_access_dialog, elements.proposal_access_close, elements.proposal_access_done],
   [elements.git_access_dialog, elements.git_access_close, elements.git_access_done],
   [elements.collaborator_dialog, elements.collaborator_close, elements.collaborator_done],
   [elements.access_secret_dialog, elements.access_secret_close, elements.access_secret_done],
@@ -2675,9 +2688,10 @@ for (const [dialog, close, done] of [
 }
 elements.share_view.addEventListener("click", () => setBrowserShareMode("view"));
 elements.share_edit.addEventListener("click", () => setBrowserShareMode("edit"));
+elements.agent_direct.addEventListener("click", () => setAgentEditingMode("direct"));
+elements.agent_propose.addEventListener("click", () => setAgentEditingMode("propose"));
 elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, `${browserShareMode === "view" ? "View" : "Edit"} link copied.`));
-elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, "Agent editing command copied."));
-elements.copy_proposal_agent_link.addEventListener("click", () => copyText(elements.proposal_agent_command.value, "Agent proposal command copied."));
+elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, `${agentEditingMode === "direct" ? "Direct" : "Propose"} agent command copied.`));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);

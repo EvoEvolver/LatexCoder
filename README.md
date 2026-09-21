@@ -37,8 +37,8 @@ Licensed under the [MIT License](LICENSE).
   LaTeX macros. Humans and agents see and edit the same review state through
   ordinary source reads and hash-checked full-file uploads, including replying, accepting,
   rejecting, and resolving it.
-- Separate Agent direct-edit and proposal capabilities. Proposal secrets force
-  checked edits into reviewable suggestions and reject direct file or Git mutations.
+- Agent editing offers Direct and Propose modes in one panel. Propose secrets
+  force checked edits into reviewable suggestions and reject direct file or Git mutations.
 - An independent Git repository for every project. The collaborative document
   always represents `main`; incoming changes are merged in a temporary worktree.
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live

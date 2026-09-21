@@ -1677,9 +1677,10 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.ok((await page.locator("#compile-button").boundingBox())!.width >= 108);
 
     await page.locator("#collaborate-menu").click();
-    for (const item of ["share-project", "collaborate-agent", "collaborate-proposal", "collaborate-git", "collaborate-members", "collaborate-secrets"]) {
+    for (const item of ["share-project", "collaborate-agent", "collaborate-git", "collaborate-members", "collaborate-secrets"]) {
       assert.equal(await page.locator(`#${item}`).isVisible(), true);
     }
+    assert.equal(await page.locator("#collaborate-proposal").count(), 0);
     await page.screenshot({ path: "/tmp/latexcoder-collaborate-menu.png" });
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
@@ -1700,15 +1701,14 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
     assert.match(await page.locator("#agent-access-dialog p").textContent(), /edit the live source directly/);
     assert.doesNotMatch(await page.locator("#agent-access-dialog p").textContent(), /Yjs/i);
-    await page.locator("#agent-access-close").click();
-
-    await chooseAppMenu(page, "collaborate", "#collaborate-proposal");
-    await page.locator("#proposal-access-dialog").waitFor();
-    assert.match(await page.locator("#proposal-agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+/propose'$`));
-    assert.match(await page.locator("#proposal-access-dialog p").textContent(), /force every agent edit into Review/);
-    const previousProposalCommand = await page.locator("#proposal-agent-command").inputValue();
+    await page.locator("#agent-propose").click();
+    assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+/propose'$`));
+    assert.match(await page.locator("#agent-access-dialog p").textContent(), /forced into Review/);
+    const previousProposalCommand = await page.locator("#agent-command").inputValue();
     const previousProposalLink = previousProposalCommand.slice("curl -fsSL '".length, -1);
-    await page.locator("#proposal-access-close").click();
+    await page.locator("#agent-direct").click();
+    assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
+    await page.locator("#agent-access-close").click();
 
     await chooseAppMenu(page, "collaborate", "#collaborate-git");
     await page.locator("#git-access-dialog").waitFor();
