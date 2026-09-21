@@ -1311,6 +1311,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.match(await page.locator("#git-summary").textContent(), /^main · clean/);
     assert.equal(await page.locator("#git-ref").count(), 0);
     assert.equal(await page.locator("#git-sync").count(), 0);
+    await page.waitForFunction(() => document.querySelector("#git-history")?.textContent !== "Loading versions…");
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 
