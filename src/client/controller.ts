@@ -155,7 +155,7 @@ const elements = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
+  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
@@ -448,6 +448,10 @@ const fileTree = createFileTree(elements.file_list, {
     anchor.download = path.split("/").at(-1)!;
     anchor.click();
   },
+});
+elements.files_menu.addEventListener("click", event => {
+  event.stopPropagation();
+  fileTree.openRootMenu(elements.files_menu);
 });
 
 function renderFiles(): void {
@@ -3228,7 +3232,7 @@ function updateWorkspaceLayout() {
   const filesHeight = elements.files_pane.clientHeight;
   if (filesHeight) {
     structureHeight = Math.max(112, Math.min(structureHeight, filesHeight - 104));
-    elements.files_pane.style.gridTemplateRows = `minmax(96px,1fr) 8px ${structureHeight}px`;
+    elements.files_pane.style.gridTemplateRows = `44px minmax(96px,1fr) 8px ${structureHeight}px`;
   }
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 580));

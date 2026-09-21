@@ -570,7 +570,9 @@ test("file tree right-click menus mirror action menus and target folders", async
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    assert.equal(await page.locator("#files-pane > .pane-header").count(), 0);
+    assert.equal(await page.locator("#files-toolbar").count(), 1);
+    assert.equal(await page.locator("#files-toolbar > button").count(), 1);
+    assert.equal(await page.locator("#files-menu").count(), 1);
     assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
 
     const main = page.locator('.tree-item[data-path="main.tex"]');
@@ -589,6 +591,9 @@ test("file tree right-click menus mirror action menus and target folders", async
     await page.keyboard.press("Escape");
 
     await openRootFileMenu(page);
+    assert.deepEqual(await page.locator(".tree-context-menu").getByRole("menuitem").allTextContents(), common);
+    await page.mouse.click(500, 300);
+    await page.locator("#files-menu").click();
     assert.deepEqual(await page.locator(".tree-context-menu").getByRole("menuitem").allTextContents(), common);
     await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New folder", exact: true }).click();
     await page.locator("#action-input").fill("assets");
@@ -971,6 +976,11 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
       await page.mouse.up();
     };
     const files = await width("#files-pane");
+    const toolbarHeights = await page.locator("#files-toolbar, .editor-toolbar, .output-header").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
+    assert.deepEqual(toolbarHeights, [44, 44, 44]);
+    const toolbarStyles = await page.locator("#files-toolbar, .editor-toolbar, .output-header").evaluateAll(elements => elements.map(element => ({ background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderBottomColor })));
+    assert.equal(new Set(toolbarStyles.map(style => style.background)).size, 1);
+    assert.equal(new Set(toolbarStyles.map(style => style.border)).size, 1);
     assert.equal(await width("#output-resize"), 12);
     assert.ok(await page.locator("#output-resize span").evaluate(element => getComputedStyle(element).width === "4px"));
     await drag("#files-resize", 60);
@@ -1615,7 +1625,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForFunction(() => !(document.querySelector("#project-title") as HTMLElement).hidden);
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
-    assert.equal(await page.locator("#files-pane > .pane-header").count(), 0);
+    assert.equal(await page.locator("#files-toolbar").count(), 1);
+    assert.equal(await page.locator("#files-toolbar > button").count(), 1);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
     assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
     assert.equal(await page.locator("#settings-dialog #download-project").count(), 1);

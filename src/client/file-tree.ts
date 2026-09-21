@@ -217,5 +217,10 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
     render(data: TreeState, projectId: string): void { if (project !== projectId) { closed.clear(); known.clear(); selectedFolder = ""; project = projectId; } current = data; render(); },
     get folder(): string { return selectedFolder; },
     reveal(path: string): void { for (let directory = parent(path); directory; directory = parent(directory)) { known.add(directory); closed.delete(directory); } },
+    openRootMenu(anchor: HTMLElement): void {
+      const bounds = anchor.getBoundingClientRect();
+      selectedFolder = "";
+      openContextMenu(entryActions(), bounds.right - 168, bounds.bottom + 3);
+    },
   };
 }
