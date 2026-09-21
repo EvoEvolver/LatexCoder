@@ -1,5 +1,8 @@
 # LaTeX Coder
 
+**Working with BibTeX? Try [Biblock](https://github.com/EvoEvolver/biblock) -
+safe, auditable bibliography maintenance for humans and agents.**
+
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/latexcoder?referralCode=4KUZ4o&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 LaTeX Coder is a small, collaborative, filesystem-backed LaTeX editor. One
