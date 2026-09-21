@@ -83,7 +83,7 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
     return shared;
   }
 
-  function attach(connection: WebSocket, relativePath: string, shareId: string | null = null, savedAcknowledgments = false): void {
+  function attach(connection: WebSocket, relativePath: string, shareId: string | null = null, savedAcknowledgments = false, readOnly = false): void {
     if (suspended) return connection.close(1012, "project is synchronizing with Git");
     const shared = load(relativePath);
     shared.connections.set(connection, new Set()); connectionShares.set(connection, shareId);
@@ -95,6 +95,16 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
         const bytes = Array.isArray(raw) ? Buffer.concat(raw) : raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
         const decoder = decoding.createDecoder(bytes), type = decoding.readVarUint(decoder);
         if (type === MESSAGE_SYNC) {
+          if (readOnly) {
+            const syncType = decoding.readVarUint(decoder);
+            const encoder = encoding.createEncoder();
+            encoding.writeVarUint(encoder, MESSAGE_SYNC);
+            if (syncType === syncProtocol.messageYjsSyncStep1) {
+              syncProtocol.writeSyncStep2(encoder, shared.doc, decoding.readVarUint8Array(decoder));
+            } else syncProtocol.writeSyncStep2(encoder, shared.doc);
+            connection.send(encoding.toUint8Array(encoder));
+            return;
+          }
           const encoder = encoding.createEncoder(); encoding.writeVarUint(encoder, MESSAGE_SYNC);
           syncProtocol.readSyncMessage(decoder, encoder, shared.doc, connection);
           if (encoding.length(encoder) > 1) connection.send(encoding.toUint8Array(encoder));

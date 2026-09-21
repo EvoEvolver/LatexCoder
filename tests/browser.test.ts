@@ -1683,34 +1683,56 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.screenshot({ path: "/tmp/latexcoder-collaborate-menu.png" });
     await page.locator("#share-project").click();
     await page.locator("#access-dialog").waitFor();
-    assert.equal(await page.locator("#access-dialog header strong").textContent(), "Collaborate");
+    assert.equal(await page.locator("#access-dialog header strong").textContent(), "Browser sharing");
     assert.match(await page.locator("#browser-editing-description").textContent(), /Guests can edit the project without creating an account/);
     assert.doesNotMatch(await page.locator("#browser-editing-description").textContent(), /temporary/i);
-    assert.match(await page.locator("#share-link").inputValue(), new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
-    assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
-    assert.equal(await page.locator("#agent-editing-section label").textContent(), "Agent direct editing");
-    assert.match(await page.locator("#agent-editing-section p").textContent(), /edit the live source directly/);
-    assert.doesNotMatch(await page.locator("#agent-editing-section p").textContent(), /Yjs/i);
-    assert.match(await page.locator("#proposal-agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+/propose'$`));
-    assert.equal(await page.locator("#agent-proposal-section label").textContent(), "Agent proposed changes");
-    assert.match(await page.locator("#agent-proposal-section p").textContent(), /force every agent edit into Review/);
-    assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
-    assert.equal(await page.locator("#clone-section label").textContent(), "Git clone and push");
-    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);
-    assert.match(await page.locator("#collaborator-list").textContent(), /test-userowner/);
-    await page.screenshot({ path: "/tmp/latexcoder-agent-modes.png" });
     const previousShareLink = await page.locator("#share-link").inputValue();
+    assert.match(previousShareLink, new RegExp(`^${base}/share/${projectId}/[A-Za-z0-9_-]+$`));
+    await page.locator("#share-view").click();
+    const previousViewLink = await page.locator("#share-link").inputValue();
+    assert.notEqual(previousViewLink, previousShareLink);
+    assert.match(await page.locator("#browser-editing-description").textContent(), /cannot change the project/);
+    assert.equal(await page.locator("#access-dialog #agent-command").count(), 0);
+    await page.locator("#access-close").click();
+
+    await chooseAppMenu(page, "collaborate", "#collaborate-agent");
+    await page.locator("#agent-access-dialog").waitFor();
+    assert.match(await page.locator("#agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+'$`));
+    assert.match(await page.locator("#agent-access-dialog p").textContent(), /edit the live source directly/);
+    assert.doesNotMatch(await page.locator("#agent-access-dialog p").textContent(), /Yjs/i);
+    await page.locator("#agent-access-close").click();
+
+    await chooseAppMenu(page, "collaborate", "#collaborate-proposal");
+    await page.locator("#proposal-access-dialog").waitFor();
+    assert.match(await page.locator("#proposal-agent-command").inputValue(), new RegExp(`^curl -fsSL '${base}/agent/${projectId}/[A-Za-z0-9_-]+/propose'$`));
+    assert.match(await page.locator("#proposal-access-dialog p").textContent(), /force every agent edit into Review/);
     const previousProposalCommand = await page.locator("#proposal-agent-command").inputValue();
     const previousProposalLink = previousProposalCommand.slice("curl -fsSL '".length, -1);
+    await page.locator("#proposal-access-close").click();
+
+    await chooseAppMenu(page, "collaborate", "#collaborate-git");
+    await page.locator("#git-access-dialog").waitFor();
+    assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
+    await page.locator("#git-access-close").click();
+
+    await chooseAppMenu(page, "collaborate", "#collaborate-members");
+    await page.locator("#collaborator-dialog").waitFor();
+    assert.match(await page.locator("#collaborator-list").textContent(), /test-userOwner/);
+    await page.locator("#collaborator-close").click();
+
+    await chooseAppMenu(page, "collaborate", "#collaborate-secrets");
+    await page.locator("#access-secret-dialog").waitFor();
+    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other registered collaborators and their links keep working/);
+    await page.screenshot({ path: "/tmp/latexcoder-agent-modes.png" });
     await page.locator("#rotate-share-secret").click();
     assert.equal(await page.locator("#action-title").textContent(), "Rotate access secrets?");
     assert.match(await page.locator("#action-message").textContent(), /Other registered collaborators and their links keep working/);
     await page.locator("#action-submit").click();
-    await page.locator("#access-dialog").waitFor();
-    assert.notEqual(await page.locator("#share-link").inputValue(), previousShareLink);
+    await page.locator("#access-secret-dialog").waitFor();
     assert.equal((await page.request.get(previousShareLink, { maxRedirects: 0 })).status(), 403);
+    assert.equal((await page.request.get(previousViewLink, { maxRedirects: 0 })).status(), 403);
     assert.equal((await page.request.get(previousProposalLink)).status(), 403);
-    await page.locator("#access-close").click();
+    await page.locator("#access-secret-close").click();
 
     await openRootFileMenu(page);
     await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New file", exact: true }).click();
@@ -1786,6 +1808,9 @@ test("login, invitations, and capability links separate members from guests", as
     await chooseAppMenu(page, "collaborate", "#share-project");
     await page.locator("#access-dialog").waitFor();
     const shareLink = await page.locator("#share-link").inputValue();
+    await page.locator("#share-view").click();
+    const viewLink = await page.locator("#share-link").inputValue();
+    await page.locator("#access-close").click();
     const projectId = new URL(shareLink).pathname.split("/")[2];
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
 
@@ -1798,6 +1823,26 @@ test("login, invitations, and capability links separate members from guests", as
     assert.equal(await guest.locator("#editor-login").isVisible(), true);
     await guest.keyboard.press("Escape");
     assert.equal(await guest.evaluate(() => fetch("/v1/projects").then(response => response.status)), 401);
+
+    const viewer = await browser.newPage();
+    await viewer.goto(viewLink);
+    await viewer.waitForURL(`${base}/projects/${projectId}`);
+    await viewer.locator(".cm-content").waitFor();
+    await viewer.waitForFunction(() => document.querySelector("#sync-state")?.textContent !== "Synchronizing");
+    assert.equal(await viewer.locator("#sync-state").textContent(), "Viewing live");
+    assert.equal(await viewer.locator(".cm-content").getAttribute("contenteditable"), "false");
+    assert.equal(await viewer.locator("#add-comment").isHidden(), true);
+    assert.equal(await viewer.locator("#suggest-edit").isHidden(), true);
+    assert.equal(await viewer.locator("#collaborate-menu").isHidden(), true);
+    const sourceBeforeViewerMutation = await viewer.evaluate(project => fetch(`/v1/files?project=${project}&path=main.tex`).then(response => response.text()), projectId);
+    await viewer.goto(`${base}/projects/${projectId}?e2e=1`);
+    await viewer.waitForFunction(() => globalThis.__paperE2E?.state?.provider?.synced);
+    await viewer.evaluate(() => globalThis.__paperE2E.state.doc.getText("content").insert(0, "% blocked viewer update\n"));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(await viewer.evaluate(project => fetch(`/v1/files?project=${project}&path=main.tex`).then(response => response.text()), projectId), sourceBeforeViewerMutation);
+    assert.equal(await viewer.evaluate(project => fetch(`/v1/files?project=${project}&path=blocked.tex`, {
+      method: "PUT", headers: { "Content-Type": "text/plain" }, body: "blocked",
+    }).then(response => response.status), projectId), 403);
 
     const uninvited = await browser.newPage();
     await uninvited.goto(`${base}/projects/${projectId}`);
@@ -1824,9 +1869,12 @@ test("login, invitations, and capability links separate members from guests", as
     await chooseAppMenu(invited, "collaborate", "#share-project");
     await invited.locator("#access-dialog").waitFor();
     assert.notEqual(await invited.locator("#share-link").inputValue(), shareLink);
-    assert.match(await invited.locator("#collaborator-list").textContent(), /adminowner/);
-    assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.membercollaborator/);
     await invited.locator("#access-close").click();
+    await chooseAppMenu(invited, "collaborate", "#collaborate-members");
+    await invited.locator("#collaborator-dialog").waitFor();
+    assert.match(await invited.locator("#collaborator-list").textContent(), /adminOwner/);
+    assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.memberEdit/);
+    await invited.locator("#collaborator-close").click();
     await chooseAppMenu(invited, "history", "#git-button");
     await invited.locator("#git-dialog").waitFor();
     assert.equal(await invited.locator("#clone-button").count(), 0);

@@ -163,37 +163,39 @@ export class StateDatabase {
 
   getProjectSession(tokenHash: string) {
     this.db.prepare("DELETE FROM project_sessions WHERE expires_at <= ?").run(Date.now());
-    const rows = this.db.prepare("SELECT project_id, share_id, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as SqlRow[];
+    const rows = this.db.prepare("SELECT project_id, share_id, access_mode, expires_at FROM project_sessions WHERE token_hash = ?").all(tokenHash) as SqlRow[];
     if (!rows.length) return null;
     return {
       projects: new Set(rows.map(row => row.project_id as string)),
       shares: new Map(rows.map(row => [row.project_id as string, row.share_id as string])),
+      access: new Map(rows.map(row => [row.project_id as string, row.access_mode as "view" | "edit"])),
       expiresAt: Math.max(...rows.map(row => Number(row.expires_at))),
     };
   }
 
-  addProjectSession(tokenHash: string, projectId: string, shareId: string, expiresAt: number) {
+  addProjectSession(tokenHash: string, projectId: string, shareId: string, accessMode: "view" | "edit", expiresAt: number) {
     this.transaction(() => {
       this.db.prepare("UPDATE project_sessions SET expires_at = ? WHERE token_hash = ?").run(expiresAt, tokenHash);
       this.db.prepare(`
-        INSERT INTO project_sessions (token_hash, project_id, share_id, expires_at) VALUES (?, ?, ?, ?)
+        INSERT INTO project_sessions (token_hash, project_id, share_id, access_mode, expires_at) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(token_hash, project_id) DO UPDATE SET
           share_id = excluded.share_id,
+          access_mode = excluded.access_mode,
           expires_at = excluded.expires_at
-      `).run(tokenHash, projectId, shareId, expiresAt);
+      `).run(tokenHash, projectId, shareId, accessMode, expiresAt);
     });
   }
 
-  createProjectShare(projectId: string, id: string, username: string, token: string, tokenHash: string, proposalToken: string, proposalTokenHash: string, createdAt: number) {
+  createProjectShare(projectId: string, id: string, username: string, token: string, tokenHash: string, viewToken: string, viewTokenHash: string, proposalToken: string, proposalTokenHash: string, createdAt: number) {
     this.db.prepare(`
-      INSERT INTO project_shares (id, project_id, username, token, token_hash, proposal_token, proposal_token_hash, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, username, token, tokenHash, proposalToken, proposalTokenHash, createdAt);
+      INSERT INTO project_shares (id, project_id, username, token, token_hash, view_token, view_token_hash, proposal_token, proposal_token_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, username, token, tokenHash, viewToken, viewTokenHash, proposalToken, proposalTokenHash, createdAt);
   }
 
   getProjectShareForUser(projectId: string, username: string) {
     const row = this.db.prepare(`
-      SELECT id, project_id, username, token, proposal_token, created_at FROM project_shares
+      SELECT id, project_id, username, token, view_token, proposal_token, created_at FROM project_shares
       WHERE project_id = ? AND username = ?
     `).get(projectId, username) as SqlRow | undefined;
     return row ? {
@@ -201,6 +203,7 @@ export class StateDatabase {
       projectId: row.project_id as string,
       username: row.username as string,
       token: row.token as string,
+      viewToken: row.view_token as string | null,
       proposalToken: row.proposal_token as string | null,
       createdAt: Number(row.created_at),
     } : null;
@@ -216,6 +219,25 @@ export class StateDatabase {
       username: row.username as string | null,
       createdAt: Number(row.created_at),
     } : null;
+  }
+
+  getProjectShareByViewToken(projectId: string, tokenHash: string) {
+    const row = this.db.prepare(`
+      SELECT id, project_id, username, created_at FROM project_shares WHERE project_id = ? AND view_token_hash = ?
+    `).get(projectId, tokenHash) as SqlRow | undefined;
+    return row ? {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      username: row.username as string | null,
+      createdAt: Number(row.created_at),
+    } : null;
+  }
+
+  setProjectShareViewToken(projectId: string, username: string, token: string, tokenHash: string) {
+    const result = this.db.prepare(`
+      UPDATE project_shares SET view_token = ?, view_token_hash = ? WHERE project_id = ? AND username = ?
+    `).run(token, tokenHash, projectId, username);
+    return Number(result.changes) === 1;
   }
 
   getProjectShareByProposalToken(projectId: string, tokenHash: string) {
@@ -237,11 +259,11 @@ export class StateDatabase {
     return Number(result.changes) === 1;
   }
 
-  rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string, proposalToken: string, proposalTokenHash: string) {
+  rotateProjectShare(projectId: string, username: string, token: string, tokenHash: string, viewToken: string, viewTokenHash: string, proposalToken: string, proposalTokenHash: string) {
     return this.transaction(() => {
       const result = this.db.prepare(`
-        UPDATE project_shares SET token = ?, token_hash = ?, proposal_token = ?, proposal_token_hash = ? WHERE project_id = ? AND username = ?
-      `).run(token, tokenHash, proposalToken, proposalTokenHash, projectId, username);
+        UPDATE project_shares SET token = ?, token_hash = ?, view_token = ?, view_token_hash = ?, proposal_token = ?, proposal_token_hash = ? WHERE project_id = ? AND username = ?
+      `).run(token, tokenHash, viewToken, viewTokenHash, proposalToken, proposalTokenHash, projectId, username);
       if (Number(result.changes) !== 1) return false;
       const share = this.getProjectShareForUser(projectId, username);
       this.db.prepare("DELETE FROM project_sessions WHERE project_id = ? AND share_id = ?").run(projectId, share!.id);
@@ -256,10 +278,13 @@ export class StateDatabase {
     return row ? { projectId: row.project_id as string, username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) } : null;
   }
 
-  addProjectMember(projectId: string, username: string, role = "collaborator", joinedAt = Date.now()) {
+  addProjectMember(projectId: string, username: string, role: "owner" | "collaborator" | "viewer" = "collaborator", joinedAt = Date.now()) {
     this.db.prepare(`
       INSERT INTO project_members (project_id, username, role, joined_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(project_id, username) DO NOTHING
+      ON CONFLICT(project_id, username) DO UPDATE SET role = CASE
+        WHEN project_members.role IN ('owner', 'collaborator') OR excluded.role = 'viewer' THEN project_members.role
+        ELSE excluded.role
+      END
     `).run(projectId, username, role, joinedAt);
   }
 

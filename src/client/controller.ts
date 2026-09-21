@@ -149,18 +149,18 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
+  "access-close", "access-dialog", "access-done", "access-project-name", "access-secret-close", "access-secret-dialog", "access-secret-done", "agent-access-close", "agent-access-dialog", "agent-access-done", "agent-command", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
-  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
+  "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
+  "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
+  "project-list", "project-name", "projects-page", "proposal-access-close", "proposal-access-dialog", "proposal-access-done", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
-  "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
+  "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
@@ -207,6 +207,7 @@ const state: AppState = {
   user: null,
   bootstrapReady: true,
   projectCanManage: false,
+  projectCanEdit: true,
   accessShareId: "",
   git: null,
   main: "main.tex",
@@ -253,12 +254,13 @@ function updateSyncStatus() {
   const connected = state.provider.wsconnected;
   elements.sync_state.textContent = !connected ? state.unsaved ? "Offline - unsynced edits" : "Reconnecting"
     : !state.provider.synced ? "Synchronizing"
+    : !state.projectCanEdit ? "Viewing live"
     : state.unsaved ? "Saving..." : "Saved live";
 }
 
 function scheduleAutoCompile() {
   clearTimeout(autoCompileTimer);
-  if (state.settings?.autoCompile && state.projectId) autoCompileTimer = setTimeout(() => {
+  if (state.projectCanEdit && state.settings?.autoCompile && state.projectId) autoCompileTimer = setTimeout(() => {
     if (state.provider?.wsconnected && state.provider.synced) compile();
   }, 1200);
 }
@@ -402,7 +404,7 @@ function renderSelectionActions() {
   const menu = elements.selection_actions;
   menu.hidden = true;
   state.selectionSuggestionIds = [];
-  if (!view) return;
+  if (!view || !state.projectCanEdit) return;
   const selection = view.state.selection.main;
   if (selection.empty) return;
   const ids = [...new Set(parseReviews(view.state.doc.toString())
@@ -455,7 +457,24 @@ elements.files_menu.addEventListener("click", event => {
 
 function renderFiles(): void {
   fileTabs.update(state.files, state.activeFile, state.projectId);
-  fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "" }, state.projectId);
+  fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "", editable: state.projectCanEdit }, state.projectId);
+}
+
+function syncProjectPermissionUi(): void {
+  const editable = state.projectCanEdit;
+  for (const id of ["project-settings", "menu-open-trash", "history-save-checkpoint"]) {
+    const control = document.getElementById(id);
+    if (control) control.hidden = !editable;
+  }
+  elements.git_commit.hidden = !editable;
+  elements.git_message.hidden = !editable;
+  elements.git_resolve.hidden = !editable || !state.git?.conflict;
+  document.getElementById("history-restore")!.hidden = !editable;
+  document.getElementById("history-restore-file")!.hidden = !editable;
+  const textFile = state.files.find(file => file.path === state.activeFile)?.text;
+  elements.add_comment.hidden = !editable || !textFile;
+  elements.suggest_edit.hidden = !editable || !textFile;
+  if (!editable) elements.selection_actions.hidden = true;
 }
 
 let structureVersion = 0;
@@ -584,8 +603,8 @@ function hideExpandedStructure(): void {
   const file = state.files.find(candidate => candidate.path === state.activeFile);
   elements.editor.hidden = !file?.text;
   elements.binary_view.hidden = file?.text !== false;
-  elements.add_comment.hidden = !file?.text;
-  elements.suggest_edit.hidden = !file?.text;
+  elements.add_comment.hidden = !state.projectCanEdit || !file?.text;
+  elements.suggest_edit.hidden = !state.projectCanEdit || !file?.text;
 }
 
 elements.file_list.addEventListener("scroll", () => {
@@ -694,7 +713,9 @@ const reviewTooltip = hoverTooltip((view, position) => {
       }
       const actions = document.createElement("div");
       actions.className = "cm-review-tooltip-actions";
-      if (item.kind === "comment") {
+      if (!state.projectCanEdit) {
+        if (item.kind === "comment") actions.append(tooltipButton("Open thread", () => openCommentThread(item.id)));
+      } else if (item.kind === "comment") {
         actions.append(
           tooltipButton("Reply", () => openCommentThread(item.id, true)),
           tooltipButton("Open thread", () => openCommentThread(item.id)),
@@ -1087,9 +1108,11 @@ function scheduleStaticDiagnostics(): void {
   staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
 }
 
-function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
+function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">, editable = true): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
+    EditorState.readOnly.of(!editable),
+    EditorView.editable.of(editable),
     lineNumbers({
       domEventHandlers: {
         contextmenu(view, line, event) {
@@ -1414,8 +1437,8 @@ async function openFile(relativePath: string): Promise<void> {
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
-  elements.add_comment.hidden = !file.text;
-  elements.suggest_edit.hidden = !file.text;
+  elements.add_comment.hidden = !state.projectCanEdit || !file.text;
+  elements.suggest_edit.hidden = !state.projectCanEdit || !file.text;
   renderFiles();
   if (!file.text) {
     elements.sync_state.textContent = "Preview";
@@ -1430,10 +1453,11 @@ async function openFile(relativePath: string): Promise<void> {
   const ytext = doc.getText("content");
   state.doc = doc;
   state.provider = provider;
-  state.persistence = new IndexeddbPersistence(`project:${state.projectId}:${relativePath}`, doc);
-  state.unsaved = true;
+  state.persistence = state.projectCanEdit ? new IndexeddbPersistence(`project:${state.projectId}:${relativePath}`, doc) : null;
+  state.unsaved = state.projectCanEdit;
   let nonce = 0;
   const requestSave = () => {
+    if (!state.projectCanEdit) return;
     state.unsaved = true;
     if (provider.wsconnected && provider.synced) {
       const message = encoding.createEncoder();
@@ -1449,10 +1473,10 @@ async function openFile(relativePath: string): Promise<void> {
   };
   doc.on("update", (_update, origin) => {
     if (state.provider !== provider) return;
-    if (origin !== provider) { nonce++; requestSave(); }
+    if (state.projectCanEdit && origin !== provider) { nonce++; requestSave(); }
   });
   state.view = new EditorView({
-    state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
+    state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider, state.projectCanEdit) }),
     parent: elements.editor,
   });
   applyEditorDiagnostics();
@@ -1462,7 +1486,8 @@ async function openFile(relativePath: string): Promise<void> {
   provider.on("sync", synced => {
     if (synced) {
       if (state.provider !== provider) return;
-      requestSave();
+      if (state.projectCanEdit) requestSave();
+      else updateSyncStatus();
       renderReviews();
       scheduleStaticDiagnostics();
       applyEditorDiagnostics();
@@ -1474,7 +1499,7 @@ async function openFile(relativePath: string): Promise<void> {
 }
 
 function applyReviewDecisions(ids: string[], decision: ReviewDecision): void {
-  if (!state.view) return;
+  if (!state.view || !state.projectCanEdit) return;
   const selected = new Set(ids);
   const items = parseReviews(state.view.state.doc.toString()).filter(candidate => selected.has(candidate.id));
   if (!items.length) return;
@@ -1682,7 +1707,9 @@ function drawReviews() {
     }
     const actions = document.createElement("div");
     actions.className = "review-buttons flex flex-wrap gap-1.5";
-    if (group.kind === "comment") {
+    if (!state.projectCanEdit) {
+      actions.hidden = true;
+    } else if (group.kind === "comment") {
       const reply = reviewButton("Reply", async () => {
         if (!await selectReviewFile(group.path)) return;
         drawReviews();
@@ -1720,6 +1747,7 @@ function cleanMetadata(value: string): string {
 }
 
 function openReviewDialog() {
+  if (!state.projectCanEdit) return showToast("This link has View access.");
   if (!state.view) return showToast("Open a text file first.");
   const selection = state.view.state.selection.main;
   const selected = state.view.state.sliceDoc(selection.from, selection.to);
@@ -1738,6 +1766,7 @@ function openReviewDialog() {
 
 elements.review_form.addEventListener("submit", (event: Event) => {
   event.preventDefault();
+  if (!state.projectCanEdit) return;
   const review = state.reviewSelection;
   const value = elements.review_text.value;
   if (!review || !value.trim()) return;
@@ -1767,6 +1796,7 @@ async function refreshProject(open = false, recordOpen = false) {
     state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, permissions: data.project.permissions });
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
+  state.projectCanEdit = Boolean(data.project.permissions?.edit);
   elements.collaborate_menu.hidden = !data.project.permissions?.collaborate;
   elements.project_name.textContent = data.project.name;
   document.title = `${data.project.name} · LaTeX Coder`;
@@ -1777,6 +1807,7 @@ async function refreshProject(open = false, recordOpen = false) {
   staticSourceCache.clear();
   state.settings = data.project.settings;
   renderFiles();
+  syncProjectPermissionUi();
   elements.build_output.textContent = data.project.build.log || "No compilation yet.";
   renderBuildErrors(data.project.build.log, data.project.build.errors, data.project.build.status === "error");
   if (data.project.build.pdf) showPdf();
@@ -1949,7 +1980,7 @@ function showProjectsPage(push = true) {
   disconnectEditor();
   resetFilePreview();
   if (elements.git_dialog.open) elements.git_dialog.close();
-  if (elements.access_dialog.open) elements.access_dialog.close();
+  for (const dialog of collaborateDialogs) if (dialog.open) dialog.close();
   elements.editor_page.hidden = true;
   elements.projects_page.hidden = false;
   elements.auth_page.hidden = true;
@@ -1978,7 +2009,9 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   elements.download_project.href = projectApiUrl("v1/project/archive").toString();
   elements.download_project.download = `${project.id}.zip`;
   state.projectCanManage = false;
+  state.projectCanEdit = false;
   elements.collaborate_menu.hidden = true;
+  syncProjectPermissionUi();
   syncAccountUi();
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
   document.title = `${project.name} · LaTeX Coder`;
@@ -2346,7 +2379,7 @@ function renderGitStatus(gitState: GitState): void {
   const conflict = gitState.conflict;
   elements.git_conflict.hidden = !conflict;
   elements.git_conflict_branch.textContent = conflict?.branch || "";
-  elements.git_resolve.hidden = !conflict;
+  elements.git_resolve.hidden = !state.projectCanEdit || !conflict;
 }
 
 async function refreshGit(showErrors = true) {
@@ -2447,17 +2480,40 @@ async function copyText(value: string, message: string): Promise<void> {
   showToast(message);
 }
 
+let currentAccessShare: ShareDetails | null = null;
+let browserShareMode: "view" | "edit" = "edit";
+const collaborateDialogs = [
+  elements.access_dialog, elements.agent_access_dialog, elements.proposal_access_dialog,
+  elements.git_access_dialog, elements.collaborator_dialog, elements.access_secret_dialog,
+];
+
+function setBrowserShareMode(mode: "view" | "edit"): void {
+  browserShareMode = mode;
+  for (const button of [elements.share_view, elements.share_edit]) {
+    const selected = button.dataset.shareMode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", String(selected));
+  }
+  elements.share_link_label.textContent = mode === "view" ? "View link" : "Edit link";
+  elements.browser_editing_description.textContent = mode === "view"
+    ? "Signed-in users join as viewers. Guests can read the source and PDF but cannot change the project."
+    : "Signed-in users join as collaborators. Guests can edit the project without creating an account.";
+  if (currentAccessShare) {
+    const path = mode === "view" ? currentAccessShare.viewPath : currentAccessShare.editPath;
+    elements.share_link.value = `${window.location.origin}${path}`;
+  }
+}
+
 function displayAccessShare(share: ShareDetails): void {
+  currentAccessShare = share;
   state.accessShareId = share.id;
-  const shareUrl = `${window.location.origin}${share.path}`;
   const agentUrl = `${window.location.origin}${share.agentPath}`;
   const proposalAgentUrl = `${window.location.origin}${share.proposalAgentPath}`;
   const cloneUrl = `${window.location.origin}${share.clonePath}`;
-  elements.share_link.value = shareUrl;
   elements.agent_command.value = `curl -fsSL '${agentUrl}'`;
   elements.proposal_agent_command.value = `curl -fsSL '${proposalAgentUrl}'`;
   elements.clone_command.value = `git clone ${cloneUrl}`;
-  elements.share_link.select();
+  setBrowserShareMode(browserShareMode);
 }
 
 async function refreshProjectMembers() {
@@ -2469,40 +2525,49 @@ async function refreshProjectMembers() {
     name.textContent = member.username;
     const role = document.createElement("span");
     role.className = "text-muted-foreground";
-    role.textContent = member.role;
+    role.textContent = member.role === "owner" ? "Owner" : member.role === "viewer" ? "View" : "Edit";
     row.append(name, role);
     return row;
   }));
 }
 
-async function openAccessDialog(sectionId = "browser-editing-section") {
+type CollaboratePanel = "browser" | "agent" | "proposal" | "git" | "members" | "secrets";
+async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
   const project = state.projects.find(candidate => candidate.id === state.projectId);
   if (!project) return;
-  const result = await request<{ share: ShareDetails }>("v1/project/share", { method: "POST" });
-  displayAccessShare(result.share);
-  await refreshProjectMembers();
+  if (panel === "members") await refreshProjectMembers();
+  else {
+    const result = await request<{ share: ShareDetails }>("v1/project/share", { method: "POST" });
+    displayAccessShare(result.share);
+  }
   elements.access_project_name.textContent = project.name;
-  elements.access_download.href = projectApiUrl("v1/project/archive").toString();
-  elements.access_download.download = `${project.id}.zip`;
-  elements.access_dialog.showModal();
-  requestAnimationFrame(() => document.getElementById(sectionId)?.scrollIntoView({ block: "start" }));
+  const dialog = {
+    browser: elements.access_dialog,
+    agent: elements.agent_access_dialog,
+    proposal: elements.proposal_access_dialog,
+    git: elements.git_access_dialog,
+    members: elements.collaborator_dialog,
+    secrets: elements.access_secret_dialog,
+  }[panel];
+  dialog.showModal();
+  if (panel === "browser") elements.share_link.select();
 }
 
 async function rotateShareSecret() {
-  elements.access_dialog.close();
+  elements.access_secret_dialog.close();
   const confirmed = await openActionDialog({
     title: "Rotate access secrets?",
-    message: "Your previous Browser, Agent editing, Agent proposal, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
+    message: "Your previous View, Edit, Agent editing, Agent proposal, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
     submitLabel: "Rotate my secrets",
     danger: true,
   });
   if (!confirmed) {
-    elements.access_dialog.showModal();
+    elements.access_secret_dialog.showModal();
     return;
   }
   const result = await request<{ share: ShareDetails }>("v1/project/share/rotate", { method: "POST" });
   displayAccessShare(result.share);
-  elements.access_dialog.showModal();
+  elements.access_secret_dialog.showModal();
   showToast("Your secrets were rotated. Previous links no longer work.");
 }
 
@@ -2586,32 +2651,37 @@ onDynamicClick("editor-login", () => {
   window.history.pushState({}, "", "/login");
   showAuthPage();
 });
-for (const [id, section] of [
-  ["share-project", "browser-editing-section"],
-  ["collaborate-agent", "agent-editing-section"],
-  ["collaborate-proposal", "agent-proposal-section"],
-  ["collaborate-git", "clone-section"],
-  ["collaborate-members", "collaborator-section"],
-  ["collaborate-secrets", "access-secret-section"],
-] as const) onDynamicClick(id, () => openAccessDialog(section).catch(error => showToast(error.message)));
+for (const [id, panel] of [
+  ["share-project", "browser"], ["collaborate-agent", "agent"],
+  ["collaborate-proposal", "proposal"], ["collaborate-git", "git"],
+  ["collaborate-members", "members"], ["collaborate-secrets", "secrets"],
+] as const) onDynamicClick(id, () => openCollaboratePanel(panel).catch(error => showToast(error.message)));
 elements.download_project.addEventListener("click", (event: Event) => {
   event.preventDefault();
   downloadProject(state.projectId);
 });
 onDynamicClick("menu-download-project", () => downloadProject(state.projectId));
-elements.access_close.addEventListener("click", () => elements.access_dialog.close());
-elements.access_done.addEventListener("click", () => elements.access_dialog.close());
-elements.access_dialog.addEventListener("cancel", (event: Event) => {
-  event.preventDefault();
-  elements.access_dialog.close();
-});
-elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, "Editable link copied."));
+for (const [dialog, close, done] of [
+  [elements.access_dialog, elements.access_close, elements.access_done],
+  [elements.agent_access_dialog, elements.agent_access_close, elements.agent_access_done],
+  [elements.proposal_access_dialog, elements.proposal_access_close, elements.proposal_access_done],
+  [elements.git_access_dialog, elements.git_access_close, elements.git_access_done],
+  [elements.collaborator_dialog, elements.collaborator_close, elements.collaborator_done],
+  [elements.access_secret_dialog, elements.access_secret_close, elements.access_secret_done],
+] as const) {
+  close.addEventListener("click", () => dialog.close());
+  done.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("cancel", (event: Event) => { event.preventDefault(); dialog.close(); });
+}
+elements.share_view.addEventListener("click", () => setBrowserShareMode("view"));
+elements.share_edit.addEventListener("click", () => setBrowserShareMode("edit"));
+elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, `${browserShareMode === "view" ? "View" : "Edit"} link copied.`));
 elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, "Agent editing command copied."));
 elements.copy_proposal_agent_link.addEventListener("click", () => copyText(elements.proposal_agent_command.value, "Agent proposal command copied."));
 elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);
-  if (!elements.access_dialog.open) elements.access_dialog.showModal();
+  if (!elements.access_secret_dialog.open) elements.access_secret_dialog.showModal();
 }));
 elements.invite_user.addEventListener("click", createInvitation);
 onDynamicClick("editor-invite-user", createInvitation);
@@ -2639,6 +2709,7 @@ const versionHistory = createVersionHistory({
   request,
   confirm: openActionDialog,
   project: () => state.projectId,
+  editable: () => state.projectCanEdit,
   restored: async () => { await refreshProject(true); await refreshGit(); markPdfStale(); showToast("Version restored. Your previous work is saved in History."); },
 });
 async function openHistory(focusCheckpoint = false): Promise<void> {
@@ -2692,6 +2763,7 @@ elements.selection_accept.addEventListener("click", () => {
   state.view?.focus();
 });
 elements.suggest_edit.addEventListener("click", () => {
+  if (!state.projectCanEdit) return;
   state.suggesting = !state.suggesting;
   elements.suggest_edit.classList.toggle("active", state.suggesting);
   elements.suggest_edit.setAttribute("aria-pressed", String(state.suggesting));
@@ -2935,7 +3007,9 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   editorContextMenu.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach(button => {
     const action = button.dataset.editorAction;
     const manager = editorUndoManagers.get(view);
-    button.disabled = action === "undo" ? !manager?.undoStack.length
+    const writeAction = action === "undo" || action === "redo" || action === "cut" || action === "delete" || action === "paste" || action === "comment";
+    button.disabled = !state.projectCanEdit && writeAction ? true
+      : action === "undo" ? !manager?.undoStack.length
       : action === "redo" ? !manager?.redoStack.length
       : action === "comment" ? selection.empty || overlapsReview
       : action === "copy" || action === "cut" || action === "delete" ? selection.empty

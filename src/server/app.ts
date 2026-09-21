@@ -37,7 +37,8 @@ type AuthenticatedUser = { username: string; displayName: string };
 type CookieSession = { key: string; token: string };
 type CookieRequest = { headers: { cookie?: string } };
 type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
-type SharePaths = { id: string; path: string; agentPath: string; proposalAgentPath: string; clonePath: string };
+type SharePaths = { id: string; viewPath: string; editPath: string; agentPath: string; proposalAgentPath: string; clonePath: string };
+type ProjectAccessMode = "view" | "edit";
 export { safeRelativePath } from "./core.ts";
 
 function parseBody<T>(schema: ZodType<T>, value: unknown): T {
@@ -817,11 +818,28 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     return user ? database.getProjectMember(runtime.id, user.username) : null;
   }
 
-  function hasProjectAccess(request: ProjectAccessRequest, runtime: ProjectRuntime): boolean {
-    if (projectMembership(request, runtime)) return true;
+  function membershipAccessMode(request: CookieRequest, runtime: ProjectRuntime): ProjectAccessMode | null {
+    const membership = projectMembership(request, runtime);
+    if (!membership) return null;
+    return membership.role === "viewer" ? "view" : "edit";
+  }
+
+  function findViewShare(runtime: ProjectRuntime, supplied: unknown) {
+    if (typeof supplied !== "string" || !supplied) return null;
+    return database.getProjectShareByViewToken(runtime.id, sha256(supplied));
+  }
+
+  function projectAccessMode(request: ProjectAccessRequest, runtime: ProjectRuntime): ProjectAccessMode | null {
+    const membership = membershipAccessMode(request, runtime);
+    if (membership) return membership;
     const session = projectSession(request);
-    if (session?.record.projects.has(runtime.id)) return true;
-    return Boolean(findProjectShare(runtime, request.query?.access) || findProposalShare(runtime, request.query?.access));
+    if (session?.record.projects.has(runtime.id)) return session.record.access.get(runtime.id) || "edit";
+    if (findProjectShare(runtime, request.query?.access) || findProposalShare(runtime, request.query?.access)) return "edit";
+    return findViewShare(runtime, request.query?.access) ? "view" : null;
+  }
+
+  function hasProjectAccess(request: ProjectAccessRequest, runtime: ProjectRuntime): boolean {
+    return projectAccessMode(request, runtime) !== null;
   }
 
   function projectAccessShareId(request: ProjectAccessRequest, runtime: ProjectRuntime): string | null {
@@ -855,10 +873,10 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     response.append("Set-Cookie", sessionCookie(request, "lc_user", token, USER_SESSION_SECONDS));
   }
 
-  function issueProjectSession(request: Request, response: Response, projectId: string, shareId: string | null): void {
+  function issueProjectSession(request: Request, response: Response, projectId: string, shareId: string | null, accessMode: ProjectAccessMode): void {
     const existing = projectSession(request);
     const token = existing?.token || randomToken();
-    database.addProjectSession(sha256(token), projectId, shareId, Date.now() + PROJECT_SESSION_SECONDS * 1000);
+    database.addProjectSession(sha256(token), projectId, shareId, accessMode, Date.now() + PROJECT_SESSION_SECONDS * 1000);
     response.append("Set-Cookie", sessionCookie(request, "lc_access", token, PROJECT_SESSION_SECONDS));
   }
 
@@ -885,10 +903,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     return database.getProjectShareByProposalToken(runtime.id, sha256(supplied));
   }
 
-  function sharePaths(runtime: ProjectRuntime, shareId: string, shareToken: string, proposalToken: string): SharePaths {
+  function sharePaths(runtime: ProjectRuntime, shareId: string, shareToken: string, viewToken: string, proposalToken: string): SharePaths {
     return {
       id: shareId,
-      path: `/share/${encodeURIComponent(runtime.id)}/${shareToken}`,
+      viewPath: `/share/${encodeURIComponent(runtime.id)}/${viewToken}`,
+      editPath: `/share/${encodeURIComponent(runtime.id)}/${shareToken}`,
       agentPath: `/agent/${encodeURIComponent(runtime.id)}/${shareToken}`,
       proposalAgentPath: `/agent/${encodeURIComponent(runtime.id)}/${proposalToken}/propose`,
       clonePath: `/git/${encodeURIComponent(runtime.id)}/${shareToken}`,
@@ -898,18 +917,24 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   function memberProjectShare(runtime: ProjectRuntime, username: string): SharePaths {
     const existing = database.getProjectShareForUser(runtime.id, username);
     if (existing) {
+      let viewToken = existing.viewToken;
+      if (!viewToken) {
+        viewToken = randomToken();
+        database.setProjectShareViewToken(runtime.id, username, viewToken, sha256(viewToken));
+      }
       let proposalToken = existing.proposalToken;
       if (!proposalToken) {
         proposalToken = randomToken();
         database.setProjectShareProposalToken(runtime.id, username, proposalToken, sha256(proposalToken));
       }
-      return sharePaths(runtime, existing.id, existing.token, proposalToken);
+      return sharePaths(runtime, existing.id, existing.token, viewToken, proposalToken);
     }
     const id = randomProjectId();
     const token = randomToken();
+    const viewToken = randomToken();
     const proposalToken = randomToken();
-    database.createProjectShare(runtime.id, id, username, token, sha256(token), proposalToken, sha256(proposalToken), Date.now());
-    return sharePaths(runtime, id, token, proposalToken);
+    database.createProjectShare(runtime.id, id, username, token, sha256(token), viewToken, sha256(viewToken), proposalToken, sha256(proposalToken), Date.now());
+    return sharePaths(runtime, id, token, viewToken, proposalToken);
   }
 
   async function loadProject(id: unknown): Promise<ProjectRuntime> {
@@ -1030,6 +1055,13 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const allowed = readOnly || request.path === "/v1/search" || request.path === "/v1/files/edit" || request.path === "/v1/files/edit/conflict" || request.path === "/v1/files/patch";
       if (!allowed) throw apiError("proposal_read_only", "this Agent capability can only submit reviewable text suggestions", 403);
     }
+    if (projectAccessMode(request, runtime) === "view" && !["GET", "HEAD"].includes(request.method)) {
+      const readOnlyPost = new Set([
+        "/v1/search/project", "/v1/search/replace/preview", "/v1/search",
+        "/v1/build/position", "/v1/build/source", "/v1/compile",
+      ]).has(request.path);
+      if (!readOnlyPost) throw apiError("project_view_only", "this project link allows viewing but not editing", 403);
+    }
     return runtime;
   };
   const resolveGitProject = async (request: Request): Promise<ProjectRuntime> => {
@@ -1041,7 +1073,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   const resolveGitPushProject = async (request: Request): Promise<ProjectRuntime> => {
     const runtime = await loadProject(request.params.projectId);
     const share = findProjectShare(runtime, request.params.shareToken);
-    if (!share?.username || !database.getProjectMember(runtime.id, share.username)) {
+    const membership = share?.username ? database.getProjectMember(runtime.id, share.username) : null;
+    if (!membership || membership.role === "viewer") {
       throw apiError("project_access_required", "a registered member's personal Git URL is required for push", 401);
     }
     return runtime;
@@ -1163,11 +1196,14 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   app.get("/share/:projectId/:token", async (request, response, next) => {
     try {
       const runtime = await loadProject(request.params.projectId);
-      const share = findProjectShare(runtime, request.params.token);
+      const editShare = findProjectShare(runtime, request.params.token);
+      const viewShare = findViewShare(runtime, request.params.token);
+      const share = editShare || viewShare;
       if (!share) throw apiError("share_link_invalid", "project share link is invalid", 403);
+      const accessMode: ProjectAccessMode = editShare ? "edit" : "view";
       const user = currentUser(request);
-      if (user) database.addProjectMember(runtime.id, user.username);
-      else issueProjectSession(request, response, runtime.id, share.id);
+      if (user) database.addProjectMember(runtime.id, user.username, accessMode === "edit" ? "collaborator" : "viewer");
+      else issueProjectSession(request, response, runtime.id, share.id, accessMode);
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
     } catch (error) { next(error); }
   });
@@ -1360,7 +1396,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         folders: await listFolders(runtime.projectDir),
         settings: database.getSettings(runtime.id),
         build: runtime.build,
-        permissions: { manage: isProjectOwner(request, runtime), collaborate: Boolean(projectMembership(request, runtime)) },
+        permissions: {
+          manage: isProjectOwner(request, runtime),
+          edit: projectAccessMode(request, runtime) === "edit",
+          collaborate: membershipAccessMode(request, runtime) === "edit",
+        },
       } });
     } catch (error) { next(error); }
   });
@@ -1411,12 +1451,13 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const current = database.getProjectShareForUser(runtime.id, user.username);
       if (!current) throw apiError("share_not_found", "create your project access secret first", 404);
       const shareToken = randomToken();
+      const viewToken = randomToken();
       const proposalToken = randomToken();
-      if (!database.rotateProjectShare(runtime.id, user.username, shareToken, sha256(shareToken), proposalToken, sha256(proposalToken))) {
+      if (!database.rotateProjectShare(runtime.id, user.username, shareToken, sha256(shareToken), viewToken, sha256(viewToken), proposalToken, sha256(proposalToken))) {
         throw apiError("share_not_found", "project access grant does not exist", 404);
       }
       runtime.collaboration.disconnectShare(current.id, "project access secret changed");
-      response.json({ share: sharePaths(runtime, current.id, shareToken, proposalToken) });
+      response.json({ share: sharePaths(runtime, current.id, shareToken, viewToken, proposalToken) });
     } catch (error) { next(error); }
   });
   app.get("/v1/project/members", async (request, response, next) => {
@@ -2028,9 +2069,10 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const scoped = parts.length > 1;
       const runtime = await loadProject(scoped ? parts[0] : await defaultProjectForRequest(request));
       requireProjectAccess(request, runtime);
+      const accessMode = projectAccessMode(request, runtime)!;
       const shareId = projectAccessShareId(request, runtime);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
-      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId, url.searchParams.get("saved") === "1"));
+      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId, url.searchParams.get("saved") === "1", accessMode === "view"));
     })().catch(() => {
       socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       socket.destroy();

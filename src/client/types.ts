@@ -14,7 +14,7 @@ export type GitState = { branch: string; dirty: boolean; files: GitFile[]; histo
 export type PdfBox = { page: number; left: number; top: number; width: number; height: number };
 export type AppState = {
   activeFile: string; projectId: string; projects: ProjectSummary[]; user: CurrentUser | null; bootstrapReady: boolean;
-  projectCanManage: boolean; accessShareId: string; git: GitState | null; main: string; files: ProjectFile[]; folders: string[];
+  projectCanManage: boolean; projectCanEdit: boolean; accessShareId: string; git: GitState | null; main: string; files: ProjectFile[]; folders: string[];
   settings: EditorSettings | null; view: EditorView | null; doc: Y.Doc | null; provider: WebsocketProvider | null;
   persistence: IndexeddbPersistence | null; unsaved: boolean; pdfDocument: PDFDocumentProxy | null;
   pdfLoadingTask: PDFDocumentLoadingTask | null; pdfRequestVersion: number; pdfRenderVersion: number; pdfZoom: number; pdfFitMode: "width" | "page";
@@ -27,10 +27,10 @@ export type AppState = {
 export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean };
 export type ReviewDecision = "accept" | "reject" | "resolve";
 export type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
-export type ShareDetails = { id: string; path: string; agentPath: string; proposalAgentPath: string; clonePath: string };
+export type ShareDetails = { id: string; viewPath: string; editPath: string; agentPath: string; proposalAgentPath: string; clonePath: string };
 export type ProjectMember = { username: string; role: string };
 export type BuildInfo = { log: string; status?: string; pdf?: boolean; errors?: Array<{ path: string; line: number; message: string }>; stale?: boolean; sourceRevision?: string | null };
-export type ProjectDetail = ProjectSummary & { main: string; files: ProjectFile[]; folders: string[]; settings: EditorSettings; build: BuildInfo; permissions?: { manage?: boolean; collaborate?: boolean } };
+export type ProjectDetail = ProjectSummary & { main: string; files: ProjectFile[]; folders: string[]; settings: EditorSettings; build: BuildInfo; permissions?: { manage?: boolean; edit?: boolean; collaborate?: boolean } };
 export type SourcePosition = { path: string; line: number; from?: number; to?: number };
 export type PdfPosition = { page: number; x: number; y: number; revision: string; boxes?: PdfBox[] };
 export type ReplacementPreview = { path: string; baseSha256: string; before: string; source: string };

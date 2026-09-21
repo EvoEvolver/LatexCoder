@@ -386,6 +386,9 @@ test("invite-only users and project capability sessions enforce access boundarie
     const shareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST", headers: { Cookie: memberCookie } });
     assert.equal(shareResponse.status, 200);
     const share = (await shareResponse.json()).share;
+    assert.match(share.viewPath, new RegExp(`^/share/${project.id}/[A-Za-z0-9_-]+$`));
+    assert.match(share.editPath, new RegExp(`^/share/${project.id}/[A-Za-z0-9_-]+$`));
+    assert.notEqual(share.viewPath, share.editPath);
     assert.match(share.agentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+$`));
     assert.match(share.proposalAgentPath, new RegExp(`^/agent/${project.id}/[A-Za-z0-9_-]+/propose$`));
     const agentWorkspace = await fetch(`${base}${share.agentPath}`);
@@ -456,7 +459,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal((await fetch(`${base}/v1/git?${new URLSearchParams({ project: project.id, access: proposalToken })}`)).status, 403);
     assert.equal((await fetch(`${base}/v1/files?project=${project.id}&access=wrong&path=main.tex`)).status, 401);
 
-    const exchange = await fetch(`${base}${share.path}`, { redirect: "manual" });
+    const exchange = await fetch(`${base}${share.editPath}`, { redirect: "manual" });
     assert.equal(exchange.status, 303);
     assert.equal(exchange.headers.get("location"), `/projects/${project.id}`);
     const projectCookie = exchange.headers.get("set-cookie").split(";", 1)[0];
@@ -467,13 +470,26 @@ test("invite-only users and project capability sessions enforce access boundarie
       headers: { Cookie: signedCollaboratorCookies },
     });
     assert.equal(signedCollaboratorProject.status, 200);
-    assert.equal((await signedCollaboratorProject.json()).project.permissions.manage, false);
+    assert.deepEqual((await signedCollaboratorProject.json()).project.permissions, { manage: false, edit: true, collaborate: false });
     assert.equal((await fetch(`${base}/v1/project/share/rotate?project=${project.id}`, {
       method: "POST",
       headers: { Cookie: adminCookie },
     })).status, 401);
 
-    const joinResponse = await fetch(`${base}${share.path}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
+    const viewJoinResponse = await fetch(`${base}${share.viewPath}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
+    assert.equal(viewJoinResponse.status, 303);
+    const registeredViewerProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
+    assert.equal(registeredViewerProject.status, 200);
+    assert.deepEqual((await registeredViewerProject.json()).project.permissions, { manage: false, edit: false, collaborate: false });
+    assert.equal((await fetch(`${base}/v1/files?project=${project.id}&path=main.tex`, { headers: { Cookie: adminCookie } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/files?project=${project.id}&path=viewer-write.tex`, {
+      method: "PUT", headers: { Cookie: adminCookie, "Content-Type": "text/plain" }, body: "blocked",
+    })).status, 403);
+    assert.equal((await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST", headers: { Cookie: adminCookie } })).status, 403);
+    const viewerMembers = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: memberCookie } })).json();
+    assert.deepEqual(viewerMembers.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "viewer"]]);
+
+    const joinResponse = await fetch(`${base}${share.editPath}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
     assert.equal(joinResponse.status, 303);
     const adminProjectsAfterJoin = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json();
     assert.deepEqual(adminProjectsAfterJoin.projects.map(item => item.id).sort(), [initialProject, project.id].sort());
@@ -485,14 +501,14 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.ok(Date.parse(sharedRecencyOrder.projects[0].lastOpenedAt) > Date.parse(sharedRecencyOrder.projects[1].lastOpenedAt));
     const registeredCollaboratorProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
     assert.equal(registeredCollaboratorProject.status, 200);
-    assert.deepEqual((await registeredCollaboratorProject.json()).project.permissions, { manage: false, collaborate: true });
+    assert.deepEqual((await registeredCollaboratorProject.json()).project.permissions, { manage: false, edit: true, collaborate: true });
     const adminShareResponse = await fetch(`${base}/v1/project/share?project=${project.id}`, {
       method: "POST",
       headers: { Cookie: adminCookie },
     });
     assert.equal(adminShareResponse.status, 200);
     const adminShare = (await adminShareResponse.json()).share;
-    assert.notEqual(adminShare.path, share.path);
+    assert.notEqual(adminShare.editPath, share.editPath);
     const members = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: adminCookie } })).json();
     assert.deepEqual(members.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "collaborator"]]);
 
@@ -510,20 +526,22 @@ test("invite-only users and project capability sessions enforce access boundarie
       headers: { Cookie: memberCookie },
     });
     assert.equal(sameOwnerShareResponse.status, 200);
-    assert.equal((await sameOwnerShareResponse.json()).share.path, share.path);
+    assert.equal((await sameOwnerShareResponse.json()).share.editPath, share.editPath);
     const rotateResponse = await fetch(`${base}/v1/project/share/rotate?project=${project.id}`, {
       method: "POST",
       headers: { Cookie: memberCookie },
     });
     assert.equal(rotateResponse.status, 200);
     const rotatedShare = (await rotateResponse.json()).share;
-    assert.notEqual(rotatedShare.path, share.path);
-    assert.equal((await fetch(`${base}${share.path}`, { redirect: "manual" })).status, 403);
+    assert.notEqual(rotatedShare.editPath, share.editPath);
+    assert.notEqual(rotatedShare.viewPath, share.viewPath);
+    assert.equal((await fetch(`${base}${share.editPath}`, { redirect: "manual" })).status, 403);
+    assert.equal((await fetch(`${base}${share.viewPath}`, { redirect: "manual" })).status, 403);
     assert.equal((await fetch(`${base}${share.agentPath}`)).status, 403);
     assert.notEqual((await fetch(`${base}${share.clonePath}/info/refs?service=git-upload-pack`)).status, 200);
     assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: projectCookie } })).status, 401);
-    assert.equal((await fetch(`${base}${rotatedShare.path}`, { redirect: "manual" })).status, 303);
-    assert.equal((await fetch(`${base}${adminShare.path}`, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${base}${rotatedShare.editPath}`, { redirect: "manual" })).status, 303);
+    assert.equal((await fetch(`${base}${adminShare.editPath}`, { redirect: "manual" })).status, 303);
     assert.equal((await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } })).status, 200);
 
     const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
@@ -569,7 +587,7 @@ test("user and project sessions survive a server restart", async () => {
     const projects = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: userCookie } })).json();
     const projectId = projects.defaultProjectId;
     const share = await (await fetch(`${base}/v1/project/share?project=${projectId}`, { method: "POST", headers: { Cookie: userCookie } })).json();
-    const exchange = await fetch(`${base}${share.share.path}`, { redirect: "manual" });
+    const exchange = await fetch(`${base}${share.share.editPath}`, { redirect: "manual" });
     const projectCookie = exchange.headers.get("set-cookie")!.split(";", 1)[0];
     await stop();
 

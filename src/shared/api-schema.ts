@@ -25,7 +25,7 @@ export const projectSummarySchema = z.object({
   createdAt: z.string().optional(),
   lastOpenedAt: z.string().optional(),
   membership: z.string().optional(),
-  permissions: z.object({ manage: z.boolean().optional(), collaborate: z.boolean().optional() }).optional(),
+  permissions: z.object({ manage: z.boolean().optional(), edit: z.boolean().optional(), collaborate: z.boolean().optional() }).optional(),
 });
 export const apiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }) });
 

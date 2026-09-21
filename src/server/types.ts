@@ -27,7 +27,7 @@ export type EditOptions = { mode?: EditMode; agent?: AgentIdentity };
 export type EditResult = { source: string; sha256: string; mode: EditMode; suggestionIds: string[]; changeCount?: number };
 
 export interface CollaborationStore {
-  attach(connection: WebSocket, relativePath: string, shareId?: string | null, savedAcknowledgments?: boolean): void;
+  attach(connection: WebSocket, relativePath: string, shareId?: string | null, savedAcknowledgments?: boolean, readOnly?: boolean): void;
   disconnectShare(shareId: string, reason: string): void;
   editFile(relativePath: string, baseSha256: string, updated: string, options?: EditOptions): EditResult;
   flush(): void;

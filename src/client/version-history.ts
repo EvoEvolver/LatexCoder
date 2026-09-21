@@ -6,6 +6,7 @@ type Dependencies = {
   confirm(options: { title: string; message: string; submitLabel: string; danger: boolean }): Promise<unknown>;
   restored(): Promise<void>;
   project(): string;
+  editable(): boolean;
 };
 const node = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -31,7 +32,7 @@ export function createVersionHistory(deps: Dependencies) {
     if (!selected || restoring) return;
     file = path;
     const id = selected.version.id, epoch = ++fileGeneration, project = deps.project();
-    restoreFile.hidden = false; restoreFile.disabled = true;
+    restoreFile.hidden = !deps.editable(); restoreFile.disabled = true;
     node("history-file-label").textContent = path;
     node("history-diff-note").textContent = "";
     diff.textContent = "Loading changes…";
@@ -82,7 +83,7 @@ export function createVersionHistory(deps: Dependencies) {
         const count = document.createElement("small"); count.textContent = item.added === null ? "Binary" : `+${item.added} −${item.removed}`;
         button.append(label, count); button.addEventListener("click", () => void showFile(item.path)); node("history-files").append(button);
       }
-      restore.disabled = false;
+      restore.disabled = !deps.editable();
       if (detail.files.length) await showFile(detail.files[0].path);
       else diff.textContent = "No file changes in this checkpoint.";
     } catch (reason) { if (epoch === selectionGeneration && project === deps.project()) fail(reason); }

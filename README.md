@@ -25,7 +25,9 @@ Licensed under the [MIT License](LICENSE).
 
 - A user-scoped project dashboard with stable, shareable editor URLs.
 - Invite-only core-team accounts for project creation and management, plus
-  password-bearing share links that establish scoped guest sessions.
+  personal, password-bearing share links with exactly two permission levels:
+  View and Edit. View links stay live but cannot change project content; Edit
+  links provide the full collaborative workspace.
 - Persistent member profiles with editable display names used in presence,
   comments, and suggestions.
 - System-aware Light and Dark themes with a persistent per-browser preference,
@@ -71,7 +73,7 @@ Licensed under the [MIT License](LICENSE).
 | LaTeX Coder | Overleaf |
 | --- | --- |
 | **Deployment:** Small, self-hosted Node service for trusted teams; project data stays in ordinary local directories. | **Deployment:** Mature hosted collaboration platform, with separate on-premises editions. |
-| **Access:** Invite-only members see projects they own or have joined. Each member has a personal project secret; guests exchange a member's high-entropy link for a scoped HttpOnly session. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
+| **Access:** Invite-only members see projects they own or have joined. Each member gets distinct personal View and Edit links; signed-in recipients join with that permission, while guests receive a scoped HttpOnly session. | **Access:** Account-based sharing with collaborator roles and managed permissions. |
 | **Real-time model:** Yjs documents synchronize over WebSockets and always represent the project's `main` branch. | **Real-time model:** Uses Operational Transformation and WebSockets for simultaneous editing. |
 | **Review workflow:** Comments and revisions are explicit LaTeX macros, so they are visible and editable to both humans and agents through the same source and patch APIs. | **Review workflow:** Comments and Track Changes are managed by the platform UI; Track Changes is premium, and Overleaf warns that mixing active Git use with comments or tracked changes can lose or displace that review state. |
 | **Git model:** Every project directory is the actual Git working tree. Clean incoming commits are imported into Yjs; conflicts are retained on generic conflict branches. | **Git model:** Overleaf history is separate from Git and translated through a Git bridge, which supports one linear `master` history. Git integration is a premium feature. |

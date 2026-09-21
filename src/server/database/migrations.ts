@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 7;
+export const LATEST_SCHEMA_VERSION = 8;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -175,6 +175,30 @@ const migrations: Migration[] = [
       if (!hasColumn(database, "project_shares", "proposal_token")) database.exec("ALTER TABLE project_shares ADD COLUMN proposal_token TEXT;");
       if (!hasColumn(database, "project_shares", "proposal_token_hash")) database.exec("ALTER TABLE project_shares ADD COLUMN proposal_token_hash TEXT;");
       database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_shares_proposal_token_idx ON project_shares(proposal_token_hash) WHERE proposal_token_hash IS NOT NULL;");
+    },
+  },
+  {
+    version: 8,
+    name: "view-only project access",
+    up(database) {
+      if (!hasColumn(database, "project_shares", "view_token")) database.exec("ALTER TABLE project_shares ADD COLUMN view_token TEXT;");
+      if (!hasColumn(database, "project_shares", "view_token_hash")) database.exec("ALTER TABLE project_shares ADD COLUMN view_token_hash TEXT;");
+      if (!hasColumn(database, "project_sessions", "access_mode")) database.exec("ALTER TABLE project_sessions ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'edit' CHECK (access_mode IN ('view', 'edit'));");
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS project_shares_view_token_idx
+          ON project_shares(view_token_hash) WHERE view_token_hash IS NOT NULL;
+        CREATE TABLE project_members_v8 (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          username TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('owner', 'collaborator', 'viewer')),
+          joined_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, username)
+        ) STRICT;
+        INSERT INTO project_members_v8 SELECT project_id, username, role, joined_at FROM project_members;
+        DROP TABLE project_members;
+        ALTER TABLE project_members_v8 RENAME TO project_members;
+        CREATE INDEX project_members_user_idx ON project_members(username, joined_at);
+      `);
     },
   },
 ];

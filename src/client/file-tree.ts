@@ -1,7 +1,7 @@
 import { Braces, ChevronRight, createIcons, File, FileCheck2, FileCode2, FileText, Folder, FolderOpen, Image, MoreHorizontal } from "lucide";
 
 export type TreeFile = { path: string; text: boolean };
-type TreeState = { files: TreeFile[]; directories: string[]; active: string; main: string };
+type TreeState = { files: TreeFile[]; directories: string[]; active: string; main: string; editable?: boolean };
 type TreeCallbacks = {
   open(path: string): void;
   search(): void;
@@ -39,16 +39,20 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
   function sharedActions(directory: string): MenuAction[] {
     return [
       { label: "Search", run: callbacks.search },
+      ...(current?.editable === false ? [] : [
       { label: "New file", run: () => callbacks.create(directory, false) },
       { label: "New folder", run: () => callbacks.create(directory, true) },
       { label: "Upload", run: () => callbacks.upload(directory) },
+      ] satisfies MenuAction[]),
     ];
   }
 
   function entryActions(entry?: { path: string; folder: boolean }): MenuAction[] {
     if (!entry || !current) return sharedActions("");
     const directory = entry.folder ? entry.path : parent(entry.path);
-    const specific: MenuAction[] = entry.folder
+    const specific: MenuAction[] = current.editable === false
+      ? entry.folder ? [] : [{ label: "Download", run: () => callbacks.download(entry.path) }]
+      : entry.folder
       ? [
           { label: "Rename folder", run: () => callbacks.rename(entry.path, true) },
           { label: "Delete folder", run: () => callbacks.remove(entry.path, true), danger: true, disabled: current.main.startsWith(`${entry.path}/`), title: "The folder containing the main document cannot be deleted" },
@@ -137,7 +141,7 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
         row.classList.toggle("active", !entry.folder && entry.path === current.active);
         row.classList.toggle("bg-accent", !entry.folder && entry.path === current.active);
         row.classList.toggle("folder-selected", entry.folder && entry.path === selectedFolder);
-        row.draggable = true;
+        row.draggable = current.editable !== false;
         row.addEventListener("dragstart", event => { dragged = entry.path; if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", entry.path); } });
         row.addEventListener("dragend", () => { dragged = ""; clearTimeout(hoverTimer); hoverTimer = undefined; host.querySelectorAll(".drop-target").forEach(element => element.classList.remove("drop-target")); });
 

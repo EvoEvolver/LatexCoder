@@ -28,7 +28,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
 
   const database = new StateDatabase(stateDir);
   try {
-    assert.equal(database.schemaVersion(), 7);
+    assert.equal(database.schemaVersion(), 8);
     assert.equal(database.ping(), true);
     const upgraded = new DatabaseSync(filename, { readOnly: true });
     try {
@@ -39,6 +39,8 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
       assert.ok(columns("builds").includes("source_revision"));
       assert.ok(columns("projects").includes("last_opened_at"));
       assert.ok(columns("project_shares").includes("proposal_token_hash"));
+      assert.ok(columns("project_shares").includes("view_token_hash"));
+      assert.ok(columns("project_sessions").includes("access_mode"));
     } finally {
       upgraded.close();
     }
@@ -88,7 +90,7 @@ test("health endpoints distinguish liveness and readiness", async () => {
     const ready = await readyResponse.json();
     assert.equal(readyResponse.status, 200);
     assert.equal(ready.status, "ready");
-    assert.equal(ready.schemaVersion, 7);
+    assert.equal(ready.schemaVersion, 8);
     assert.deepEqual(ready.queue, { active: 0, queued: 0, concurrency: 2, accepting: true });
     assert.equal(typeof ready.dependencies.git.available, "boolean");
   } finally {
