@@ -1529,8 +1529,11 @@ Details \tldr{The method combines two stages.}`;
     assert.equal(await page.locator("#structure-document").getByText("Paper at a glance", { exact: true }).count(), 1);
     assert.match(await page.locator("#structure-document").textContent(), /The method combines two stages/);
     await page.screenshot({ path: "/tmp/latexcoder-tldr-structure-expanded.png" });
-    await page.getByRole("tab", { name: "main.tex", exact: true }).click();
+    const mainTab = page.getByRole("tab", { name: "main.tex", exact: true });
+    await mainTab.click();
     assert.equal(await page.locator("#structure-view").isVisible(), false);
+    assert.equal(await structureTab.getAttribute("aria-selected"), "false");
+    assert.equal(await mainTab.getAttribute("aria-selected"), "true");
     await structureTab.click();
     await page.locator('#structure-document [data-structure-kind="paragraph"]').first().click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/method.tex"

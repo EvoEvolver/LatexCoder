@@ -27,7 +27,7 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
       button.title = path;
       const basename = path.split("/").at(-1)!;
       button.textContent = paths.some(other => other !== path && other.split("/").at(-1) === basename) ? path : basename;
-      button.addEventListener("click", () => { auxiliaryActive = false; open(path); });
+      button.addEventListener("click", () => open(path));
       button.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
@@ -35,7 +35,7 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
         const next = event.key === "Home" ? paths[0]
           : event.key === "End" ? paths.at(-1)!
           : paths[(index + (event.key === "ArrowLeft" ? -1 : 1) + paths.length) % paths.length];
-        auxiliaryActive = false; open(next);
+        open(next);
       });
 
       const close = document.createElement("button");
