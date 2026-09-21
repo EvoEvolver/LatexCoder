@@ -154,7 +154,7 @@ const elements = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
@@ -570,7 +570,7 @@ elements.open_structure.addEventListener("click", () => {
 function showExpandedStructure(): void {
   setReviewOpen(false);
   setMobileOutputOpen(false);
-  elements.files_pane.classList.remove("mobile-open");
+  setMobileFilesOpen(false);
   elements.structure_view.hidden = false;
   elements.editor.hidden = true;
   elements.binary_view.hidden = true;
@@ -1403,7 +1403,7 @@ async function openFile(relativePath: string): Promise<void> {
   if (!file) return;
   fileTabs.activateFile();
   hideExpandedStructure();
-  elements.files_pane.classList.remove("mobile-open");
+  setMobileFilesOpen(false);
   if (relativePath === state.activeFile && (state.view || !file.text)) return;
   if (state.view && state.activeFile) staticSourceCache.set(state.activeFile, state.view.state.doc.toString());
   disconnectEditor();
@@ -3215,6 +3215,7 @@ try {
 
 function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
+  elements.files_pane.style.transform = mobile && elements.files_pane.classList.contains("mobile-open") ? "translateX(0)" : "";
   elements.editor_pane.hidden = mobile && elements.output_pane.classList.contains("mobile-open");
   // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
   for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
@@ -3304,11 +3305,17 @@ for (const handle of [filesResize, outputResize]) {
     saveWorkspaceLayout();
   });
 }
-elements.toggle_files.addEventListener("click", () => {
-  if (narrowWorkspace.matches) elements.files_pane.classList.toggle("mobile-open");
-  else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
+function setMobileFilesOpen(open: boolean): void {
+  elements.files_pane.classList.toggle("mobile-open", open);
   updateWorkspaceLayout();
+}
+
+elements.toggle_files.addEventListener("click", () => {
+  if (narrowWorkspace.matches) setMobileFilesOpen(!elements.files_pane.classList.contains("mobile-open"));
+  else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
+  if (!narrowWorkspace.matches) updateWorkspaceLayout();
 });
+elements.close_files.addEventListener("click", () => setMobileFilesOpen(false));
 document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
 document.getElementById("close-review")!.addEventListener("click", () => setReviewOpen(false));
 new ResizeObserver(updateWorkspaceLayout).observe(workspace);

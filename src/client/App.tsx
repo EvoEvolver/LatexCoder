@@ -208,7 +208,7 @@ export function AppShell() {
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)_0.5rem_13.75rem] border-r bg-muted/35 max-[760px]:fixed max-[760px]:bottom-0 max-[760px]:left-0 max-[760px]:top-10 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <input id="upload-input" type="file" multiple hidden />
-            <div id="files-toolbar" className={cn(paneToolbar, "justify-end")}><IconButton id="files-menu" icon="more-horizontal" title="File actions" /></div>
+            <div id="files-toolbar" className={cn(paneToolbar, "justify-between")}><IconButton id="close-files" icon="x" title="Close files" className="min-[761px]:hidden" /><IconButton id="files-menu" icon="more-horizontal" title="File actions" /></div>
             <div id="file-list" className="file-list min-h-0 flex-1 overflow-auto p-1.5" />
             <div id="structure-resize" role="separator" aria-label="Resize files and structure" aria-orientation="horizontal" tabIndex={0} className="group flex h-2 touch-none cursor-row-resize items-center justify-center border-y bg-muted/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><span className="h-0.5 w-8 rounded bg-border group-hover:bg-primary" /></div>
             <section id="structure-pane" className="grid min-h-0 grid-rows-[2.25rem_minmax(0,1fr)] bg-background/55" aria-label="Document structure">

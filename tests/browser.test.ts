@@ -574,7 +574,7 @@ test("file tree right-click menus mirror action menus and target folders", async
     await page.goto(`${base}/?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await page.locator("#files-toolbar").count(), 1);
-    assert.equal(await page.locator("#files-toolbar > button").count(), 1);
+    assert.equal(await page.locator("#files-toolbar > button").evaluateAll(buttons => buttons.filter(button => getComputedStyle(button).display !== "none").length), 1);
     assert.equal(await page.locator("#files-menu").count(), 1);
     assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
 
@@ -1026,7 +1026,17 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     assert.equal(await page.locator("#files-resize").isVisible(), false);
     await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), true);
+    await page.waitForFunction(() => document.getElementById("files-pane")!.getBoundingClientRect().x >= -1);
+    assert.equal(await page.locator("#close-files").isVisible(), true);
+    const mobileFiles = await page.locator("#files-pane").boundingBox();
+    const mobileClose = await page.locator("#close-files").boundingBox();
+    assert.ok(mobileFiles && mobileFiles.x >= -1 && mobileFiles.width >= 250, `Files drawer must be fully visible: ${JSON.stringify(mobileFiles)}`);
+    assert.ok(mobileClose && mobileClose.x >= 0 && mobileClose.x < mobileFiles.width, "Files close button must be inside the viewport");
     await page.screenshot({ path: "/tmp/latexcoder-resizable-mobile.png" });
+    await page.locator("#close-files").click();
+    assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), false);
+    assert.equal(await page.locator("#toggle-files").getAttribute("aria-expanded"), "false");
+    await page.waitForFunction(() => document.getElementById("files-pane")!.getBoundingClientRect().right <= 1);
   });
 });
 
@@ -1634,7 +1644,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
     assert.equal(await page.locator("#files-toolbar").count(), 1);
-    assert.equal(await page.locator("#files-toolbar > button").count(), 1);
+    assert.equal(await page.locator("#files-toolbar > button").evaluateAll(buttons => buttons.filter(button => getComputedStyle(button).display !== "none").length), 1);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
     assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
     assert.equal(await page.locator("#settings-dialog #download-project").count(), 1);
