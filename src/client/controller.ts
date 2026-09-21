@@ -154,13 +154,13 @@ const elements = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
+  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "upload-file", "upload-input", "selection-actions", "selection-accept",
+  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -431,9 +431,11 @@ function renderSelectionActions() {
 const fileTabs = createFileTabs(document.getElementById("file-tabs")!, path => { void openFile(path); });
 const fileTree = createFileTree(elements.file_list, {
   open: path => { void openFile(path); },
+  search: () => openProjectSearch(),
   rename: (path, folder) => { void renameEntry(path, folder); },
   remove: (path, folder) => { void deleteEntry(path, folder); },
   create: (path, folder) => { void (folder ? newFolder(path) : newFile(path)); },
+  upload: path => openUpload(path),
   move: moveFilePath,
   download: path => {
     const anchor = document.createElement("a");
@@ -2599,12 +2601,17 @@ elements.file_preview_zoom_in.addEventListener("click", () => {
   if (!elements.image_preview.hidden) sizeImagePreview();
   else renderFilePdf();
 });
-elements.upload_file.addEventListener("click", () => elements.upload_input.click());
+let uploadFolder = "";
+function openUpload(folderPath = ""): void {
+  uploadFolder = folderPath;
+  elements.upload_input.click();
+}
 elements.upload_input.addEventListener("change", async () => {
   try {
     for (const file of elements.upload_input.files) {
       const archive = file.name.toLowerCase().endsWith(".zip");
-      await request(archive ? "v1/files/import" : `v1/files?path=${encodeURIComponent(file.name)}`, {
+      const relativePath = uploadFolder && !archive ? `${uploadFolder}/${file.name}` : file.name;
+      await request(archive ? "v1/files/import" : `v1/files?path=${encodeURIComponent(relativePath)}`, {
         method: archive ? "POST" : "PUT",
         headers: { "Content-Type": archive ? "application/zip" : "application/octet-stream" },
         body: file,
@@ -2614,8 +2621,8 @@ elements.upload_input.addEventListener("change", async () => {
     showToast("Upload complete.");
   } catch (error) { showToast(error.message); }
   elements.upload_input.value = "";
+  uploadFolder = "";
 });
-elements.new_file.addEventListener("click", () => newFile(fileTree.folder));
 async function newFile(folderPath = "") {
   const name = await openActionDialog({
     title: "New file",
@@ -2704,7 +2711,6 @@ async function newFolder(prefix = "") {
   try { await request("v1/files/folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: name }) }); await refreshProject(); }
   catch (error) { showToast(error.message); }
 }
-document.getElementById("new-folder")!.addEventListener("click", () => newFolder(fileTree.folder));
 
 const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
 onDynamicClick("project-settings", async () => {
@@ -2964,7 +2970,6 @@ let replacementProject = "";
 const applyReplacements = document.getElementById("replace-apply") as HTMLButtonElement;
 let searchVersion = 0;
 const openProjectSearch = () => { searchDialog.showModal(); searchQuery.focus(); };
-document.getElementById("project-search")!.addEventListener("click", openProjectSearch);
 document.getElementById("editor-search")!.addEventListener("click", openProjectSearch);
 onDynamicClick("project-search-menu", openProjectSearch);
 document.getElementById("search-close")!.addEventListener("click", () => searchDialog.close());
@@ -3076,8 +3081,6 @@ function updateWorkspaceLayout() {
   for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
   elements.files_pane.hidden = !mobile && filesHidden;
   elements.file_list.hidden = !mobile && filesHidden;
-  document.getElementById("files-heading")!.hidden = !mobile && filesHidden;
-  document.getElementById("files-actions")!.hidden = !mobile && filesHidden;
   filesResize.hidden = !mobile && filesHidden;
   const width = workspace.clientWidth;
   if (width && !mobile) {

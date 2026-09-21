@@ -208,13 +208,7 @@ export function AppShell() {
 
         <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.75rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:bottom-0 max-[760px]:left-0 max-[760px]:top-10 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
-            <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
-              <IconButton id="project-search" icon="search" title="Search project" />
-              <IconButton id="new-file" icon="file-plus-2" title="New file" />
-              <IconButton id="new-folder" icon="folder-plus" title="New folder" />
-              <IconButton id="upload-file" icon="upload" title="Upload" />
-              <input id="upload-input" type="file" multiple hidden />
-            </div></div>
+            <input id="upload-input" type="file" multiple hidden />
             <div id="file-list" className="file-list min-h-0 flex-1 overflow-auto p-1.5" />
           </aside>
           <div id="files-resize" role="separator" aria-label="Resize files" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>

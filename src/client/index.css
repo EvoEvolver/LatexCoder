@@ -104,7 +104,6 @@
 html[data-auth-state="guest"] [data-user-only],
 html[data-auth-state="registered"] [data-guest-only] { display: none !important; }
 
-.tree-root { display: block; width: 100%; padding: 7px 8px; border-radius: 4px; color: var(--muted-foreground); font-size: 10px; text-align: left; text-transform: uppercase; }
 .tree-item { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; min-height: 32px; border-radius: 4px; }
 .tree-item:hover, .tree-item.folder-selected { background: var(--muted); }
 .tree-item.active { background: var(--accent); color: var(--primary); }
@@ -124,8 +123,10 @@ html[data-auth-state="registered"] [data-guest-only] { display: none !important;
 .tree-menu-panel { position: fixed; z-index: 50; width: 168px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); box-shadow: 0 8px 24px oklch(.24 .012 145 / .14); }
 .tree-menu-panel button { display: block; width: 100%; padding: 8px; border-radius: 3px; font-size: 12px; text-align: left; }
 .tree-menu-panel button:hover { background: var(--muted); }
+.tree-menu-panel button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .tree-menu-panel button.danger { color: var(--destructive); }
 .tree-menu-panel button:disabled { cursor: not-allowed; opacity: .4; }
+.tree-menu-separator { height: 1px; margin: 4px -4px; background: var(--border); }
 .drop-target { background: var(--accent) !important; outline: 1px solid var(--ring); outline-offset: -1px; }
 .tree-empty { padding: 12px; color: var(--muted-foreground); font-size: 12px; }
 

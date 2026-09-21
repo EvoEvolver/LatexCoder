@@ -49,6 +49,21 @@ async function chooseAppMenu(page: any, menu: "project" | "history" | "account" 
   await page.locator(item).click();
 }
 
+async function openRootFileMenu(page: any): Promise<void> {
+  await page.locator(".tree-context-menu").waitFor({ state: "attached" });
+  await page.locator("#file-list").evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    element.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.bottom - 8,
+    }));
+  });
+  await page.locator(".tree-context-menu").waitFor();
+}
+
 test("Git pushes update the open browser file tree without reloading the editor", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
@@ -518,13 +533,13 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await page.waitForFunction(() => globalThis.__paperE2E?.state.view);
     const folder = page.locator('.tree-item[data-path="notes"]');
     await folder.locator('summary').click();
-    await folder.getByRole("button", { name: "Rename folder", exact: true }).click();
+    await folder.getByRole("menuitem", { name: "Rename folder", exact: true }).click();
     await page.locator("#action-input").fill("renamed");
     await page.locator("#action-submit").click();
     const renamed = page.locator('.tree-item[data-path="renamed"]');
     await renamed.waitFor();
     await renamed.locator('summary').click();
-    await renamed.getByRole("button", { name: "Delete folder", exact: true }).click();
+    await renamed.getByRole("menuitem", { name: "Delete folder", exact: true }).click();
     await page.locator("#action-submit").click();
     await renamed.waitFor({ state: "detached" });
     await chooseAppMenu(page, "project", "#project-settings");
@@ -534,7 +549,8 @@ test("folder menus rename, delete and restore complete directories", async () =>
     assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=renamed/chapter.tex`)).text(), "chapter");
     await page.screenshot({ path: "/tmp/latexcoder-trash.png" });
     await page.locator("#trash-close").click();
-    await page.locator("#new-folder").click();
+    await openRootFileMenu(page);
+    await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New folder", exact: true }).click();
     await page.locator("#action-input").fill("destination");
     await page.locator("#action-submit").click();
     const destination = page.locator('.tree-item[data-path="destination"]');
@@ -547,6 +563,48 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#settings-dialog[open]").waitFor();
     await page.screenshot({ path: "/tmp/latexcoder-settings-mobile.png" });
+  });
+});
+
+test("file tree right-click menus mirror action menus and target folders", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    assert.equal(await page.locator("#files-pane > .pane-header").count(), 0);
+    assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
+
+    const main = page.locator('.tree-item[data-path="main.tex"]');
+    await main.locator(".tree-row").click({ button: "right" });
+    const contextMenu = main.locator(".tree-menu-panel");
+    await contextMenu.waitFor();
+    const common = ["Search", "New file", "New folder", "Upload"];
+    const fileActions = [...common, "Download", "Rename", "Delete file"];
+    assert.deepEqual(await contextMenu.getByRole("menuitem").allTextContents(), fileActions);
+    await contextMenu.getByRole("menuitem", { name: "Search", exact: true }).click();
+    await page.locator("#search-dialog[open]").waitFor();
+    await page.locator("#search-close").click();
+
+    await main.locator("summary").click();
+    assert.deepEqual(await main.locator(".tree-menu-panel").getByRole("menuitem").allTextContents(), fileActions);
+    await page.keyboard.press("Escape");
+
+    await openRootFileMenu(page);
+    assert.deepEqual(await page.locator(".tree-context-menu").getByRole("menuitem").allTextContents(), common);
+    await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New folder", exact: true }).click();
+    await page.locator("#action-input").fill("assets");
+    await page.locator("#action-submit").click();
+    const folder = page.locator('.tree-item[data-path="assets"]');
+    await folder.waitFor();
+    await folder.locator(":scope > .tree-row").click({ button: "right" });
+    const folderMenu = folder.locator(":scope > .tree-menu");
+    assert.deepEqual(await folderMenu.getByRole("menuitem").allTextContents(), [...common, "Rename folder", "Delete folder"]);
+    await folderMenu.getByRole("menuitem", { name: "Upload", exact: true }).click();
+    await page.locator("#upload-input").setInputFiles({ name: "figure.png", mimeType: "image/png", buffer: Buffer.from("image") });
+    await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "assets/figure.png"));
+    const { defaultProjectId: projectId } = await (await page.request.get(`${base}/v1/projects`)).json();
+    assert.equal((await page.request.get(`${base}/v1/files?project=${projectId}&path=assets/figure.png`)).status(), 200);
+    await folder.locator(":scope > .tree-row").click({ button: "right" });
+    await page.screenshot({ path: "/tmp/latexcoder-file-context-menu.png" });
   });
 });
 
@@ -1311,7 +1369,7 @@ test("project reviews span files, folders default closed, and files download", a
     const row = page.locator(".file-item", { has: page.locator('.file-row[title="chapters/other.tex"]') });
     await row.locator("summary").click();
     const downloading = page.waitForEvent("download");
-    await row.getByRole("button", { name: "Download", exact: true }).click();
+    await row.getByRole("menuitem", { name: "Download", exact: true }).click();
     const download = await downloading;
     assert.equal(download.suggestedFilename(), "other.tex");
     await page.locator('[data-output="review"]').click();
@@ -1372,7 +1430,10 @@ test(`${platform} modifier-click follows includes, citations, and label referenc
 
 test("sidebar folders expand, collapse, and create nested files", async () => {
   await withEditor(async ({ page, base }) => {
-    await page.locator("#new-file").click();
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await openRootFileMenu(page);
+    await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New file", exact: true }).click();
     await page.locator("#action-input").fill("chapters/intro/section.tex");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro/section.tex");
@@ -1385,7 +1446,7 @@ test("sidebar folders expand, collapse, and create nested files", async () => {
     await folder.locator(":scope > .tree-row").click();
     assert.equal(await file.isVisible(), true);
     await nested.locator("summary").click();
-    await nested.getByRole("button", { name: "New file", exact: true }).click();
+    await nested.getByRole("menuitem", { name: "New file", exact: true }).click();
     assert.equal(await page.locator("#action-input").inputValue(), "chapters/intro/chapter.tex");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/intro/chapter.tex");
@@ -1411,7 +1472,9 @@ test("file tabs and typed file tree preserve files across switching, closing and
     assert.equal((await page.request.get(`${base}/v1/files?path=notes/second.tex`)).status(), 200);
     assert.equal(await page.locator('[data-path="picture.png"] .icon-image').count(), 1);
     if (await page.locator('[data-tree-path="notes"]').getAttribute("aria-expanded") !== "true") await page.locator('[data-tree-path="notes"]').click();
-    await page.locator('[data-path="notes/second.tex"]').dragTo(page.locator(".tree-root"));
+    const fileListBounds = await page.locator("#file-list").boundingBox();
+    assert.ok(fileListBounds);
+    await page.locator('[data-path="notes/second.tex"]').dragTo(page.locator("#file-list"), { targetPosition: { x: fileListBounds.width / 2, y: fileListBounds.height - 8 } });
     await page.locator('[data-tree-path="second.tex"]').waitFor();
     assert.equal((await page.request.get(`${base}/v1/files?path=second.tex`)).status(), 200);
     assert.equal(await page.getByRole("button", { name: "Close main.tex", exact: true }).count(), 0);
@@ -1470,10 +1533,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.waitForFunction(() => !(document.querySelector("#project-title") as HTMLElement).hidden);
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
-    assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
+    assert.equal(await page.locator("#files-pane > .pane-header").count(), 0);
     assert.equal(await page.locator(".file-item").count(), await page.locator(".file-actions").count());
-    assert.equal(await page.locator("#files-pane > .pane-header #download-project").count(), 0);
-    assert.equal(await page.locator("#files-pane > .pane-header #open-trash").count(), 0);
+    assert.equal(await page.locator("#files-heading, #new-file, #new-folder, #upload-file").count(), 0);
     assert.equal(await page.locator("#settings-dialog #download-project").count(), 1);
     assert.equal(await page.locator("#settings-dialog #open-trash").count(), 1);
     assert.equal(await page.locator(".topbar #download-project").count(), 0);
@@ -1529,7 +1591,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal((await page.request.get(previousProposalLink)).status(), 403);
     await page.locator("#access-close").click();
 
-    await page.locator("#new-file").click();
+    await openRootFileMenu(page);
+    await page.locator(".tree-context-menu").getByRole("menuitem", { name: "New file", exact: true }).click();
     await page.locator("#action-input").fill("delete-me.tex");
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "delete-me.tex"

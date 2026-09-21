@@ -4,12 +4,15 @@ export type TreeFile = { path: string; text: boolean };
 type TreeState = { files: TreeFile[]; directories: string[]; active: string; main: string };
 type TreeCallbacks = {
   open(path: string): void;
+  search(): void;
   rename(path: string, folder: boolean): void;
   remove(path: string, folder: boolean): void;
   create(path: string, folder: boolean): void;
+  upload(path: string): void;
   move(from: string, to: string): Promise<void>;
   download(path: string): void;
 };
+type MenuAction = { label: string; run(): void; danger?: boolean; disabled?: boolean; title?: string } | "separator";
 
 export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
   const closed = new Set<string>();
@@ -19,8 +22,66 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
   let dragged = "";
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let current: TreeState | undefined;
+  let contextPanel: HTMLElement | undefined;
   const parent = (value: string): string => value.includes("/") ? value.slice(0, value.lastIndexOf("/")) : "";
   const basename = (value: string): string => value.split("/").at(-1)!;
+
+  function closeMenus(except?: HTMLDetailsElement): void {
+    host.querySelectorAll<HTMLDetailsElement>("details[open]").forEach(menu => { if (menu !== except) menu.open = false; });
+    if (contextPanel) contextPanel.hidden = true;
+  }
+
+  function positionPanel(panel: HTMLElement, x: number, y: number): void {
+    panel.style.left = `${Math.max(8, Math.min(innerWidth - panel.offsetWidth - 8, x))}px`;
+    panel.style.top = `${Math.max(8, Math.min(innerHeight - panel.offsetHeight - 8, y))}px`;
+  }
+
+  function sharedActions(directory: string): MenuAction[] {
+    return [
+      { label: "Search", run: callbacks.search },
+      { label: "New file", run: () => callbacks.create(directory, false) },
+      { label: "New folder", run: () => callbacks.create(directory, true) },
+      { label: "Upload", run: () => callbacks.upload(directory) },
+    ];
+  }
+
+  function entryActions(entry?: { path: string; folder: boolean }): MenuAction[] {
+    if (!entry || !current) return sharedActions("");
+    const directory = entry.folder ? entry.path : parent(entry.path);
+    const specific: MenuAction[] = entry.folder
+      ? [
+          { label: "Rename folder", run: () => callbacks.rename(entry.path, true) },
+          { label: "Delete folder", run: () => callbacks.remove(entry.path, true), danger: true, disabled: current.main.startsWith(`${entry.path}/`), title: "The folder containing the main document cannot be deleted" },
+        ]
+      : [
+          { label: "Download", run: () => callbacks.download(entry.path) },
+          { label: "Rename", run: () => callbacks.rename(entry.path, false) },
+          { label: "Delete file", run: () => callbacks.remove(entry.path, false), danger: true, disabled: entry.path === current.main, title: "The main document cannot be deleted" },
+        ];
+    return [...sharedActions(directory), "separator", ...specific];
+  }
+
+  function populateMenu(panel: HTMLElement, actions: MenuAction[], close: () => void): void {
+    panel.replaceChildren();
+    panel.setAttribute("role", "menu");
+    for (const action of actions) {
+      if (action === "separator") {
+        const separator = document.createElement("div"); separator.className = "tree-menu-separator"; separator.setAttribute("role", "separator"); panel.append(separator); continue;
+      }
+      const item = document.createElement("button"); item.type = "button"; item.textContent = action.label; item.className = action.danger ? "danger" : "";
+      item.setAttribute("role", "menuitem"); item.disabled = Boolean(action.disabled); if (action.title) item.title = action.title;
+      item.addEventListener("click", () => { close(); action.run(); }); panel.append(item);
+    }
+  }
+
+  function openContextMenu(actions: MenuAction[], x: number, y: number): void {
+    if (!contextPanel) return;
+    closeMenus();
+    populateMenu(contextPanel, actions, () => { if (contextPanel) contextPanel.hidden = true; });
+    contextPanel.hidden = false;
+    positionPanel(contextPanel, x, y);
+    contextPanel.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+  }
 
   function addDropTarget(element: HTMLElement, directory: string): void {
     element.addEventListener("dragover", event => {
@@ -55,11 +116,6 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
     host.replaceChildren();
     host.setAttribute("role", "tree");
     host.setAttribute("aria-label", "Project files");
-    const root = document.createElement("button");
-    root.type = "button"; root.className = "tree-root"; root.textContent = "Project files";
-    root.title = "Create here or drag files here to move to project root";
-    root.addEventListener("click", () => { selectedFolder = ""; render(); });
-    addDropTarget(root, ""); host.append(root);
 
     const directories = new Set(current.directories);
     for (const file of current.files) for (let directory = parent(file.path); directory; directory = parent(directory)) directories.add(directory);
@@ -116,35 +172,47 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
         menu.className = "file-actions tree-menu";
         menu.innerHTML = '<summary aria-label="Actions" title="Actions"><i data-lucide="more-horizontal"></i></summary><div class="tree-menu-panel"></div>';
         const panel = menu.querySelector<HTMLElement>("div")!;
-        const actions: Array<[string, () => void, boolean?]> = entry.folder
-          ? [["New file", () => callbacks.create(entry.path, false)], ["New folder", () => callbacks.create(entry.path, true)], ["Rename folder", () => callbacks.rename(entry.path, true)], ["Delete folder", () => callbacks.remove(entry.path, true), true]]
-          : [["Download", () => callbacks.download(entry.path)], ["Rename", () => callbacks.rename(entry.path, false)], ["Delete file", () => callbacks.remove(entry.path, false), true]];
-        for (const [label, action, danger] of actions) {
-          const item = document.createElement("button"); item.type = "button"; item.textContent = label; item.className = danger ? "danger" : "";
-          item.disabled = Boolean(danger && (entry.path === current.main || current.main.startsWith(`${entry.path}/`)));
-          if (item.disabled) item.title = "The main document cannot be deleted";
-          item.addEventListener("click", () => { menu.open = false; action(); }); panel.append(item);
-        }
+        populateMenu(panel, entryActions(entry), () => { menu.open = false; });
+        let contextPoint: { x: number; y: number } | undefined;
         menu.addEventListener("toggle", () => {
           if (!menu.open) return;
-          host.querySelectorAll<HTMLDetailsElement>("details[open]").forEach(other => { if (other !== menu) other.open = false; });
+          closeMenus(menu);
           const bounds = menu.getBoundingClientRect();
-          panel.style.left = `${Math.max(8, Math.min(innerWidth - 180, bounds.right - 168))}px`;
-          panel.style.top = `${Math.max(8, Math.min(innerHeight - panel.offsetHeight - 8, bounds.bottom + 3))}px`;
+          positionPanel(panel, contextPoint?.x ?? bounds.right - panel.offsetWidth, contextPoint?.y ?? bounds.bottom + 3);
+          contextPoint = undefined;
+        });
+        row.addEventListener("contextmenu", event => {
+          event.preventDefault(); event.stopPropagation();
+          selectedFolder = entry.folder ? entry.path : parent(entry.path);
+          contextPoint = { x: event.clientX, y: event.clientY };
+          if (menu.open) { closeMenus(menu); positionPanel(panel, event.clientX, event.clientY); }
+          else menu.open = true;
         });
         row.append(button, menu); host.append(row);
         if (entry.folder && expanded) branch(entry.path, depth + 1);
       }
     }
     branch("", 0);
-    if (!current.files.length && !directories.size) { const empty = document.createElement("p"); empty.className = "tree-empty"; empty.textContent = "Create a file or drop it into a folder."; host.append(empty); }
+    if (!current.files.length && !directories.size) { const empty = document.createElement("p"); empty.className = "tree-empty"; empty.textContent = "No files"; host.append(empty); }
+    contextPanel = document.createElement("div"); contextPanel.className = "tree-menu-panel tree-context-menu"; contextPanel.hidden = true; host.append(contextPanel);
     createIcons({ root: host, icons: { Braces, ChevronRight, File, FileCheck2, FileCode2, FileText, Folder, FolderOpen, Image, MoreHorizontal } });
     host.querySelectorAll("svg[data-lucide]").forEach(icon => icon.removeAttribute("data-lucide"));
     if (focused) host.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
     host.scrollTop = scrollTop;
   }
 
-  document.addEventListener("click", event => { host.querySelectorAll<HTMLDetailsElement>("details[open]").forEach(menu => { if (!menu.contains(event.target as Node)) menu.open = false; }); });
+  addDropTarget(host, "");
+  host.addEventListener("contextmenu", event => {
+    if ((event.target as Element).closest(".tree-item, .tree-menu-panel")) return;
+    event.preventDefault(); selectedFolder = ""; openContextMenu(entryActions(), event.clientX, event.clientY);
+  });
+  document.addEventListener("click", event => {
+    host.querySelectorAll<HTMLDetailsElement>("details[open]").forEach(menu => { if (!menu.contains(event.target as Node)) menu.open = false; });
+    if (contextPanel && !contextPanel.contains(event.target as Node)) contextPanel.hidden = true;
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") closeMenus();
+  });
   return {
     render(data: TreeState, projectId: string): void { if (project !== projectId) { closed.clear(); known.clear(); selectedFolder = ""; project = projectId; } current = data; render(); },
     get folder(): string { return selectedFolder; },
