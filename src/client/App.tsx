@@ -141,14 +141,16 @@ export function AppShell() {
       </div>
 
       <div id="editor-page" className="app-shell grid h-dvh min-w-80 grid-rows-[2.5rem_minmax(0,1fr)]" hidden>
-        <header className="topbar flex min-w-0 items-center border-b bg-background px-1.5 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
-          <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
+        <header id="editor-topbar" className="topbar relative flex min-w-0 items-center border-b bg-background px-1.5 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
+          <div id="topbar-actions" className="flex h-full shrink-0 items-center">
+            <IconButton id="back-projects" icon="arrow-left" title="All projects" className="mr-0.5 size-7" />
+            <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button id="project-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Project</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuLabel>Project</DropdownMenuLabel>
-                <DropdownMenuItem id="back-projects" data-user-only><Icon name="arrow-left" />All Projects</DropdownMenuItem>
                 <DropdownMenuItem id="project-search-menu"><Icon name="search" />Search Project<DropdownMenuShortcut>Shift Ctrl F</DropdownMenuShortcut></DropdownMenuItem>
+                <DropdownMenuItem id="project-settings"><Icon name="settings" />Project Settings…</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem id="menu-download-project"><Icon name="archive" />Download ZIP</DropdownMenuItem>
                 <DropdownMenuItem id="menu-open-trash"><Icon name="trash-2" />Recently Deleted…</DropdownMenuItem>
@@ -167,11 +169,8 @@ export function AppShell() {
             </DropdownMenu>
 
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button id="settings-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Settings</Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button id="account-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Account</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-60">
-                <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-                <DropdownMenuItem id="project-settings"><Icon name="settings" />Project Settings…</DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuLabel>Account</DropdownMenuLabel>
                 <DropdownMenuItem id="editor-account-button" data-user-only><Icon name="user-round" />Account Settings…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-invite-user" data-user-only><Icon name="user-plus" />Invite Team Member…</DropdownMenuItem>
@@ -181,7 +180,7 @@ export function AppShell() {
             </DropdownMenu>
 
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button id="collaborate-menu" className="h-7 rounded px-2 text-xs font-medium text-primary hover:text-primary" variant="ghost"><Icon name="link" /><span>Collaborate</span></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button id="collaborate-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Collaborate</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-64">
                 <DropdownMenuLabel>Share this project</DropdownMenuLabel>
                 <DropdownMenuItem id="share-project"><Icon name="link" />Browser Editing…</DropdownMenuItem>
@@ -193,14 +192,14 @@ export function AppShell() {
                 <DropdownMenuItem id="collaborate-secrets"><Icon name="refresh-cw" />Access Secrets…</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </nav>
-
-          <div className="project-title flex min-w-0 flex-1 items-center justify-center gap-1.5 px-3 max-[760px]:hidden">
-            <strong id="project-name" className="max-w-44 truncate text-[11px] font-medium" />
-            <span className="text-[10px] text-muted-foreground">/</span>
-            <span id="active-file-label" className="max-w-56 truncate text-[11px] text-muted-foreground">main.tex</span>
+            </nav>
           </div>
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2 px-1">
+
+          <div id="project-title" className="project-title pointer-events-none absolute left-1/2 max-w-56 -translate-x-1/2 truncate px-3 text-center max-[760px]:hidden">
+            <strong id="project-name" className="truncate text-[11px] font-medium" />
+          </div>
+          <span id="active-file-label" className="sr-only">main.tex</span>
+          <div id="topbar-status" className="ml-auto flex min-w-0 shrink-0 items-center gap-2 px-1">
             <span id="sync-state" className="whitespace-nowrap text-[10px] text-muted-foreground max-[520px]:hidden">Connecting</span>
             <div id="presence" className="presence flex min-w-0 max-[760px]:hidden" aria-label="Active collaborators" />
             <label id="guest-name-field" className="name-field flex h-7 w-32 items-center gap-1.5 rounded border bg-background px-1.5 max-lg:hidden"><Icon name="user-round" /><Input id="display-name" className="h-6 border-0 p-0 text-[10px] shadow-none focus-visible:ring-0" maxLength={28} aria-label="Display name" /></label>

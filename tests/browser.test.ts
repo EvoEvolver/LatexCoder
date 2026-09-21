@@ -44,7 +44,7 @@ async function withEditor(run: (context: any) => Promise<void>, options: any = {
 
 const LIPSUM = "Hello brave new world.";
 
-async function chooseAppMenu(page: any, menu: "project" | "history" | "settings" | "collaborate", item: string): Promise<void> {
+async function chooseAppMenu(page: any, menu: "project" | "history" | "account" | "collaborate", item: string): Promise<void> {
   await page.locator(`#${menu}-menu`).click();
   await page.locator(item).click();
 }
@@ -114,7 +114,7 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     assert.notEqual(colors.body, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, "rgb(255, 255, 255)");
     assert.notEqual(colors.editor, colors.foreground);
-    await chooseAppMenu(page, "settings", "#editor-account-button");
+    await chooseAppMenu(page, "account", "#editor-account-button");
     assert.equal(await page.locator('[data-theme-option="dark"]').getAttribute("aria-checked"), "true");
     await page.locator("#account-close").click();
     await page.locator("#toggle-review").click();
@@ -127,7 +127,7 @@ test("appearance supports persistent Light, Dark, and System themes", async () =
     await page.reload();
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
     assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
-    await chooseAppMenu(page, "settings", "#editor-account-button");
+    await chooseAppMenu(page, "account", "#editor-account-button");
     await page.locator('[data-theme-option="system"]').click();
     assert.equal(await page.locator("html").evaluate(element => element.classList.contains("dark")), false);
     await page.emulateMedia({ colorScheme: "dark" });
@@ -490,7 +490,7 @@ test("settings and project replace preview apply through the real UI", async () 
     await page.request.put(`${base}/v1/files?project=${id}&path=other.tex`, { data: "needle needle", headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    await chooseAppMenu(page, "settings", "#project-settings");
+    await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#settings-main").selectOption("other.tex");
     await page.locator("#settings-compiler").selectOption("latexmk");
     await page.locator("#settings-form button[type=submit]").click();
@@ -527,7 +527,7 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await renamed.getByRole("button", { name: "Delete folder", exact: true }).click();
     await page.locator("#action-submit").click();
     await renamed.waitFor({ state: "detached" });
-    await chooseAppMenu(page, "settings", "#project-settings");
+    await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#open-trash").click();
     await page.locator("#trash-list button").click();
     await renamed.waitFor();
@@ -544,7 +544,7 @@ test("folder menus rename, delete and restore complete directories", async () =>
     await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "destination/chapter.tex"));
     assert.equal(await (await page.request.get(`${base}/v1/files?project=${id}&path=destination/chapter.tex`)).text(), "chapter");
     await page.setViewportSize({ width: 390, height: 844 });
-    await chooseAppMenu(page, "settings", "#project-settings");
+    await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#settings-dialog[open]").waitFor();
     await page.screenshot({ path: "/tmp/latexcoder-settings-mobile.png" });
   });
@@ -557,7 +557,7 @@ test("automatic compilation is debounced and errors navigate to source", async (
     let calls = 0;
     await page.route("**/v1/compile*", route => { calls++; return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { message: "Compilation failed" } }) }); });
     await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "main.tex:3: Undefined control sequence", stale: true } }) }));
-    await chooseAppMenu(page, "settings", "#project-settings");
+    await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#settings-auto").check();
     await page.locator("#settings-form button[type=submit]").click();
     await page.evaluate(() => {
@@ -1460,6 +1460,14 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.locator("#action-submit").click();
     await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Compact Project");
     await page.waitForURL(/\/projects\/[A-Za-z0-9_-]{12}$/);
+    const centeredTitle = await page.locator("#project-title").boundingBox();
+    assert.equal((await page.locator("#project-title").textContent())?.trim(), "Compact Project");
+    assert.ok(centeredTitle && Math.abs(centeredTitle.x + centeredTitle.width / 2 - 400) < 1, "project title must be centered on the viewport");
+    assert.equal(await page.locator("#project-title #active-file-label").count(), 0);
+    await page.locator("#topbar-status").evaluate(element => { element.style.width = "400px"; });
+    await page.waitForFunction(() => (document.querySelector("#project-title") as HTMLElement).hidden);
+    await page.locator("#topbar-status").evaluate(element => { element.style.width = ""; });
+    await page.waitForFunction(() => !(document.querySelector("#project-title") as HTMLElement).hidden);
     const projectId = new URL(page.url()).pathname.split("/").at(-1)!;
     assert.match(projectId, /^[A-Za-z0-9_-]{12}$/);
     assert.equal(await page.locator("#files-pane > .pane-header details").count(), 0);
@@ -1472,7 +1480,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#clone-button").count(), 0);
     assert.equal(await page.locator(".topbar .brand").count(), 0);
     assert.equal((await page.locator(".topbar").boundingBox())?.height, 40);
-    for (const menu of ["project", "history", "settings", "collaborate"]) assert.equal(await page.locator(`#${menu}-menu`).isVisible(), true);
+    for (const menu of ["project", "history", "account", "collaborate"]) assert.equal(await page.locator(`#${menu}-menu`).isVisible(), true);
+    assert.equal(await page.locator("#collaborate-menu svg").count(), 0);
+    assert.equal(await page.locator("#collaborate-menu").evaluate(element => getComputedStyle(element).color), await page.locator("#project-menu").evaluate(element => getComputedStyle(element).color));
     await page.locator("#project-menu").click();
     assert.equal(await page.locator("#menu-download-project").isVisible(), true);
     assert.equal(await page.locator("#menu-open-trash").isVisible(), true);
@@ -1540,14 +1550,14 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#git-history").getByText("Initial project").count(), 1);
     await page.locator("#git-close").click();
 
-    await chooseAppMenu(page, "project", "#back-projects");
+    await page.locator("#back-projects").click();
     const row = page.locator(".project-row", { hasText: "Compact Project" });
     await row.waitFor();
     assert.equal(await row.getAttribute("role"), "link");
     assert.equal(await row.getByRole("button", { name: "Open" }).count(), 0);
     await row.press("Enter");
     await page.waitForURL(`${base}/projects/${projectId}`);
-    await chooseAppMenu(page, "project", "#back-projects");
+    await page.locator("#back-projects").click();
     await row.waitFor();
     await row.locator("summary").click();
     await row.getByText("Delete project").click();
@@ -1585,7 +1595,7 @@ test("login, invitations, and capability links separate members from guests", as
 
     await page.locator(".project-row").first().click();
     assert.equal(await page.locator("#guest-name-field").isHidden(), true);
-    await page.locator("#settings-menu").click();
+    await page.locator("#account-menu").click();
     assert.equal(await page.locator("#editor-account-button").isVisible(), true);
     assert.match(await page.locator("#editor-account-button").textContent(), /Account Settings/);
     await page.keyboard.press("Escape");
@@ -1600,7 +1610,7 @@ test("login, invitations, and capability links separate members from guests", as
     await guest.waitForURL(`${base}/projects/${projectId}`);
     await guest.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await guest.locator("#back-projects").isHidden(), true);
-    await guest.locator("#settings-menu").click();
+    await guest.locator("#account-menu").click();
     assert.equal(await guest.locator("#editor-login").isVisible(), true);
     await guest.keyboard.press("Escape");
     assert.equal(await guest.evaluate(() => fetch("/v1/projects").then(response => response.status)), 401);
@@ -1625,9 +1635,7 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.goto(shareLink);
     await invited.waitForURL(`${base}/projects/${projectId}`);
     await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    await invited.locator("#project-menu").click();
     assert.equal(await invited.locator("#back-projects").isVisible(), true);
-    await invited.keyboard.press("Escape");
     assert.equal(await invited.locator("#collaborate-menu").isVisible(), true);
     await chooseAppMenu(invited, "collaborate", "#share-project");
     await invited.locator("#access-dialog").waitFor();

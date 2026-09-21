@@ -148,13 +148,13 @@ const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elements = Object.fromEntries([
-  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command",
+  "access-close", "access-dialog", "access-done", "access-download", "access-project-name", "agent-command", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
-  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "review-actions",
+  "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-file", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "proposal-agent-command", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "suggest-edit", "sync-state",
@@ -280,9 +280,37 @@ function displayName(): string {
 function syncAccountUi(): void {
   const registered = Boolean(state.user);
   elements.guest_name_field.hidden = registered;
+  elements.back_projects.hidden = !registered;
   document.documentElement.dataset.authState = registered ? "registered" : "guest";
   elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
 }
+
+let projectTitleLayoutFrame = 0;
+function updateProjectTitleVisibility(): void {
+  cancelAnimationFrame(projectTitleLayoutFrame);
+  projectTitleLayoutFrame = requestAnimationFrame(() => {
+    const title = elements.project_title;
+    if (window.matchMedia("(max-width: 760px)").matches) {
+      title.hidden = true;
+      title.setAttribute("aria-hidden", "true");
+      return;
+    }
+    title.hidden = false;
+    const titleBounds = title.getBoundingClientRect();
+    const actionsBounds = elements.topbar_actions.getBoundingClientRect();
+    const statusBounds = elements.topbar_status.getBoundingClientRect();
+    const overlaps = titleBounds.left < actionsBounds.right + 12 || titleBounds.right > statusBounds.left - 12;
+    title.hidden = overlaps;
+    title.setAttribute("aria-hidden", String(overlaps));
+  });
+}
+
+const topbarResizeObserver = new ResizeObserver(updateProjectTitleVisibility);
+topbarResizeObserver.observe(elements.editor_topbar);
+topbarResizeObserver.observe(elements.topbar_actions);
+topbarResizeObserver.observe(elements.topbar_status);
+new MutationObserver(updateProjectTitleVisibility).observe(elements.project_name, { childList: true, characterData: true, subtree: true });
+updateProjectTitleVisibility();
 
 function openAccountPanel(): void {
   if (!state.user) return;
