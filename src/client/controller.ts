@@ -782,7 +782,16 @@ window.addEventListener("blur", () => setReferenceControl(false));
 function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
-    lineNumbers(),
+    lineNumbers({
+      domEventHandlers: {
+        contextmenu(view, line, event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openLineContextMenu(event as MouseEvent, view.state.doc.lineAt(line.from).number);
+          return true;
+        },
+      },
+    }),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     ViewPlugin.define(view => {
@@ -851,7 +860,10 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     keymap.of([...yUndoManagerKeymap, ...defaultKeymap, ...searchKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
-      if (update.docChanged || update.selectionSet) closeEditorContextMenu();
+      if (update.docChanged || update.selectionSet) {
+        closeEditorContextMenu();
+        closeLineContextMenu();
+      }
       if (update.docChanged) {
         queueReviewRender();
         elements.git_dirty.hidden = false;
@@ -2456,7 +2468,11 @@ async function renderTrash() {
 document.getElementById("open-trash")!.addEventListener("click", () => { settingsDialog.close(); trashDialog.showModal(); void renderTrash().catch(error => showToast(error.message)); });
 
 const editorContextMenu = document.getElementById("editor-context-menu")!;
+const lineContextMenu = document.getElementById("line-context-menu")!;
+const lineContextReference = document.getElementById("line-context-reference")!;
+const copyLineReference = document.getElementById("copy-line-reference") as HTMLButtonElement;
 let contextView: EditorView | null = null;
+let currentLineReference = "";
 
 function closeEditorContextMenu() {
   editorContextMenu.hidden = true;
@@ -2464,7 +2480,24 @@ function closeEditorContextMenu() {
   contextView = null;
 }
 
+function closeLineContextMenu(): void {
+  lineContextMenu.hidden = true;
+  currentLineReference = "";
+}
+
+function openLineContextMenu(event: MouseEvent, lineNumber: number): void {
+  closeEditorContextMenu();
+  currentLineReference = `${state.activeFile}:${lineNumber}`;
+  lineContextReference.textContent = currentLineReference;
+  lineContextMenu.hidden = false;
+  const bounds = lineContextMenu.getBoundingClientRect();
+  lineContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - bounds.width - 8))}px`;
+  lineContextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - bounds.height - 8))}px`;
+  copyLineReference.focus({ preventScroll: true });
+}
+
 function openEditorContextMenu(event: MouseEvent, view: EditorView) {
+  closeLineContextMenu();
   contextView = view;
   view.dom.dataset.contextMenu = "open";
   const selection = view.state.selection.main;
@@ -2598,10 +2631,27 @@ editorContextMenu.addEventListener("keydown", event => {
   const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
   buttons[next]?.focus();
 });
-document.addEventListener("pointerdown", event => { if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu(); }, true);
-window.addEventListener("blur", closeEditorContextMenu);
-window.addEventListener("resize", closeEditorContextMenu);
-document.addEventListener("scroll", event => { if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu(); }, true);
+copyLineReference.addEventListener("click", async () => {
+  const reference = currentLineReference;
+  closeLineContextMenu();
+  if (reference) await copyText(reference, `Copied ${reference}`);
+});
+lineContextMenu.addEventListener("keydown", event => {
+  if (event.key !== "Escape" && event.key !== "Tab") return;
+  event.preventDefault();
+  closeLineContextMenu();
+  state.view?.focus();
+});
+document.addEventListener("pointerdown", event => {
+  if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu();
+  if (!lineContextMenu.contains(event.target as Node)) closeLineContextMenu();
+}, true);
+window.addEventListener("blur", () => { closeEditorContextMenu(); closeLineContextMenu(); });
+window.addEventListener("resize", () => { closeEditorContextMenu(); closeLineContextMenu(); });
+document.addEventListener("scroll", event => {
+  if (!editorContextMenu.contains(event.target as Node)) closeEditorContextMenu();
+  if (!lineContextMenu.contains(event.target as Node)) closeLineContextMenu();
+}, true);
 
 async function revealSource(destination: { path: string; line: number; from?: number; to?: number }) {
   const project = state.projectId;

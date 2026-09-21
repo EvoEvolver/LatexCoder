@@ -581,6 +581,29 @@ test("empty selection uses the custom context menu and pastes at the clicked car
   });
 });
 
+test("line number context menu copies the active file path and line without changing selection", async () => {
+  await withEditor(async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await createEditor(page, "first line\nsecond line\nthird line");
+    const selection = await page.evaluate(() => {
+      const { view } = globalThis.__paperTest.state;
+      view.dispatch({ selection: { anchor: 1, head: 5 } });
+      return { from: view.state.selection.main.from, to: view.state.selection.main.to };
+    });
+    await page.locator(".cm-lineNumbers .cm-gutterElement").filter({ hasText: /^2$/ }).click({ button: "right" });
+    await page.locator("#line-context-menu").waitFor();
+    assert.equal(await page.locator("#line-context-reference").textContent(), "main.tex:2");
+    assert.equal(await page.locator("#editor-context-menu").isVisible(), false);
+    assert.deepEqual(await page.evaluate(() => {
+      const { main } = globalThis.__paperTest.state.view.state.selection;
+      return { from: main.from, to: main.to };
+    }), selection);
+    await page.screenshot({ path: "/tmp/latexcoder-line-context-menu.png" });
+    await page.locator("#copy-line-reference").click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "main.tex:2");
+  });
+});
+
 test("selection context menu adds comments and blocks overlapping comments", async () => {
   await withEditor(async ({ page }) => {
     await createEditor(page, LIPSUM);
