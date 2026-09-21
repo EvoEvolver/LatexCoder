@@ -152,7 +152,7 @@ const elements = Object.fromEntries([
   "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborator-list", "editor-account-button", "editor-account-name", "editor-login", "editor-page", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-pane", "guest-name-field", "image-preview", "new-file", "new-project", "output-pane", "pdf-document", "review-actions",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
-  "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
+  "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-link", "share-project", "suggest-edit", "sync-state",
   "git-button", "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
@@ -1649,6 +1649,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   state.pdfLoadingTask = null;
   state.pdfDocument = null;
   state.pdfHighlights = null;
+  document.getElementById("pdf-freshness")!.hidden = true;
   elements.pdf_document.replaceChildren();
   elements.pdf_document.hidden = true;
   elements.empty_output.hidden = false;
@@ -1862,8 +1863,7 @@ function markPdfStale() {
   const freshness = document.getElementById("pdf-freshness")!;
   if (!state.pdfDocument) return;
   freshness.hidden = false;
-  freshness.textContent = "PDF outdated - showing last successful compilation";
-  freshness.classList.add("text-amber-700");
+  freshness.textContent = "PDF outdated";
 }
 
 async function refreshPdfStatus() {
@@ -1873,10 +1873,9 @@ async function refreshPdfStatus() {
     const { build } = await request<{ build: BuildInfo }>("v1/build");
     if (project !== state.projectId) return;
     const freshness = document.getElementById("pdf-freshness")!;
-    freshness.hidden = false;
     const stale = build.stale || state.pdfSourceRevision !== build.sourceRevision;
-    freshness.textContent = stale ? "PDF outdated - showing last successful compilation" : "PDF current";
-    freshness.classList.toggle("text-amber-700", stale);
+    freshness.hidden = !stale;
+    freshness.textContent = stale ? "PDF outdated" : "";
   } catch { markPdfStale(); }
 }
 
@@ -1939,7 +1938,7 @@ function setReviewOpen(open: boolean): void {
 function selectOutput(name: "pdf" | "review" | "log"): void {
   if (name === "review") { setReviewOpen(true); return; }
   document.querySelectorAll<HTMLElement>("[data-output]:not([data-output=review])").forEach(button => button.classList.toggle("active", button.dataset.output === name));
-  elements.pdf_view.hidden = name !== "pdf";
+  elements.pdf_surface.hidden = name !== "pdf";
   elements.build_log.hidden = name !== "log";
   if (name === "log") elements.build_log.scrollTop = 0;
 }

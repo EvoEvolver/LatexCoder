@@ -364,6 +364,7 @@ test("source navigation loads a new PDF revision once and then reuses it", async
       view.dispatch({ changes: { from: view.state.doc.length, insert: " TARGET" } });
     });
     await page.route("**/v1/build/position*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ page: 2, x: 50, y: 50, revision: "navigation-revision", boxes: [{ page: 2, left: 40, top: 40, width: 60, height: 20 }] }) }));
+    await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "", stale: false, sourceRevision: "navigation-revision" } }) }));
     let downloads = 0;
     await page.route("**/v1/build/pdf*", route => {
       downloads++;
@@ -376,6 +377,22 @@ test("source navigation loads a new PDF revision once and then reuses it", async
       assert.equal(downloads, 1);
       assert.equal(await page.locator("#pdf-document canvas").count(), 2);
     }
+    assert.equal(await page.locator("#pdf-freshness").isHidden(), true);
+    assert.equal(await page.locator("#pdf-freshness").textContent(), "");
+    await page.evaluate(() => {
+      const { view } = globalThis.__paperE2E.state;
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " STALE" } });
+    });
+    await page.locator("#pdf-freshness").waitFor();
+    assert.equal(await page.locator("#pdf-freshness").textContent(), "PDF outdated");
+    const floatingStatus = await page.evaluate(() => {
+      const surface = document.querySelector("#pdf-surface").getBoundingClientRect();
+      const status = document.querySelector("#pdf-freshness").getBoundingClientRect();
+      return { right: surface.right - status.right, bottom: surface.bottom - status.bottom, width: status.width, height: status.height };
+    });
+    assert.ok(floatingStatus.right >= 8 && floatingStatus.right <= 16);
+    assert.ok(floatingStatus.bottom >= 8 && floatingStatus.bottom <= 16);
+    assert.ok(floatingStatus.width < 140 && floatingStatus.height < 40);
     assert.ok(await page.locator('#pdf-document canvas[data-page="2"]').evaluate((canvas: HTMLCanvasElement) => {
       const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
       return pixels.some((value, index) => index % 4 !== 3 && value < 200 && pixels[index - index % 4 + 3] > 0);
