@@ -154,7 +154,7 @@ const elements = Object.fromEntries([
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
-  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "diagnostic-navigation", "diagnostic-next", "diagnostic-previous", "diagnostic-status", "display-name", "download-project",
+  "build-log", "build-output", "clone-command", "clone-section", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-proposal-agent-link", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
@@ -236,7 +236,6 @@ const state: AppState = {
   toastTimer: null,
   compileDiagnostics: [],
   staticDiagnostics: [],
-  diagnosticIndex: -1,
 };
 const { request, projectApiUrl } = createApiClient(() => state.projectId);
 const reviewMutation = Annotation.define();
@@ -1038,13 +1037,6 @@ function navigableDiagnostics(): BuildDiagnostic[] {
 
 function applyEditorDiagnostics(): void {
   const diagnostics = navigableDiagnostics();
-  const errors = diagnostics.filter(diagnostic => diagnostic.severity === "error").length;
-  const warnings = diagnostics.length - errors;
-  elements.diagnostic_navigation.hidden = !diagnostics.length;
-  elements.diagnostic_status.querySelector("span")!.textContent = String(diagnostics.length);
-  elements.diagnostic_status.title = `${errors} errors, ${warnings} warnings. Go to first diagnostic`;
-  if (!diagnostics.length) state.diagnosticIndex = -1;
-  else state.diagnosticIndex = Math.min(state.diagnosticIndex, diagnostics.length - 1);
   if (!state.view) return;
   const source = state.view.state.doc;
   const active = diagnostics.filter(diagnostic => diagnostic.path === state.activeFile).map(diagnostic => {
@@ -1094,19 +1086,6 @@ function scheduleStaticDiagnostics(): void {
   clearTimeout(staticDiagnosticTimer);
   staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
 }
-
-async function goToDiagnostic(direction: -1 | 0 | 1): Promise<void> {
-  const diagnostics = navigableDiagnostics();
-  if (!diagnostics.length) return;
-  state.diagnosticIndex = direction === 0 ? 0 : (state.diagnosticIndex + direction + diagnostics.length) % diagnostics.length;
-  const diagnostic = diagnostics[state.diagnosticIndex];
-  await revealSource({ path: diagnostic.path!, line: diagnostic.line! });
-  applyEditorDiagnostics();
-}
-
-elements.diagnostic_status.addEventListener("click", () => { void goToDiagnostic(0); });
-elements.diagnostic_previous.addEventListener("click", () => { void goToDiagnostic(-1); });
-elements.diagnostic_next.addEventListener("click", () => { void goToDiagnostic(1); });
 
 function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
@@ -2241,36 +2220,50 @@ async function refreshPdfStatus() {
   } catch { markPdfStale(); }
 }
 
+function resolveDiagnosticPath(pathname?: string): string | undefined {
+  const normalized = pathname?.trim().replace(/^['"]|['"]$/g, "").replaceAll("\\", "/").replace(/^\.\//, "");
+  if (normalized) {
+    const exact = state.files.find(file => file.text && file.path === normalized);
+    if (exact) return exact.path;
+    const suffix = state.files.find(file => file.text && normalized.endsWith(`/${file.path}`));
+    if (suffix) return suffix.path;
+    const basename = normalized.split("/").at(-1);
+    const basenameMatches = state.files.filter(file => file.text && file.path.split("/").at(-1) === basename);
+    if (basenameMatches.length === 1) return basenameMatches[0].path;
+  }
+  return state.files.some(file => file.text && file.path === state.main) && (!normalized || normalized === "main.tex")
+    ? state.main
+    : undefined;
+}
+
 function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compileErrors>, failed = false) {
   const list = document.getElementById("build-errors")!;
   list.replaceChildren();
-  const errors = buildDiagnostics(log, mappedErrors);
-  state.compileDiagnostics = errors.map(diagnostic => {
-    const file = diagnostic.path ? state.files.find(file => file.path === diagnostic.path || diagnostic.path!.endsWith(`/${file.path}`)) : undefined;
-    return file ? { ...diagnostic, path: file.path } : diagnostic;
-  });
-  applyEditorDiagnostics();
+  const errors = buildDiagnostics(log, mappedErrors, state.main);
   if (failed && !errors.some(error => error.severity === "error")) errors.unshift({ severity: "error", message: log.trim() || "Compilation failed." });
+  const resolvedErrors = errors.map(error => ({ ...error, resolvedPath: error.line ? resolveDiagnosticPath(error.path) : undefined }));
+  state.compileDiagnostics = resolvedErrors.map(({ resolvedPath, ...diagnostic }) => resolvedPath ? { ...diagnostic, path: resolvedPath } : diagnostic);
+  applyEditorDiagnostics();
   const count = document.getElementById("log-error-count")!;
-  const fatalCount = errors.filter(error => error.severity === "error").length;
+  const fatalCount = resolvedErrors.filter(error => error.severity === "error").length;
   count.textContent = String(fatalCount);
   count.hidden = !fatalCount;
   list.hidden = !errors.length;
   const heading = document.createElement("h3");
   heading.className = "mb-2 text-sm font-semibold";
-  const warningCount = errors.length - fatalCount;
+  const warningCount = resolvedErrors.length - fatalCount;
   heading.textContent = `${fatalCount} ${fatalCount === 1 ? "error" : "errors"} · ${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`;
   list.append(heading);
   const items = document.createElement("ol");
   items.className = "list-decimal space-y-2 pl-5";
   list.append(items);
-  for (const [index, error] of errors.entries()) {
-    const file = error.path ? state.files.find(file => file.path === error.path || error.path!.endsWith(`/${file.path}`)) : undefined;
+  const firstFatalIndex = resolvedErrors.findIndex(error => error.severity === "error");
+  for (const [index, error] of resolvedErrors.entries()) {
     const item = document.createElement("li");
     item.className = "text-xs";
     const button = document.createElement("button");
     button.className = "block w-full rounded border p-2 text-left whitespace-pre-wrap break-words hover:bg-accent " + (error.severity === "error" ? "border-red-200 text-red-800 dark:border-red-900 dark:text-red-300" : "border-amber-200 text-amber-800 dark:border-amber-900 dark:text-amber-300");
-    if (index === 0 && error.severity === "error") {
+    if (index === firstFatalIndex) {
       button.id = "first-fatal-error";
       const badge = document.createElement("strong");
       badge.className = "mb-1 block text-xs";
@@ -2278,15 +2271,16 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
       button.append(badge);
     }
     const message = document.createElement("span");
-    message.textContent = `${error.path ? `${file?.path || error.path}:${error.line} · ` : ""}${error.message}`;
+    const displayedPath = error.resolvedPath || error.path;
+    message.textContent = `${displayedPath ? `${displayedPath}${error.line ? `:${error.line}` : ""} · ` : ""}${error.message}`;
     button.append(message);
-    if (file && error.line) {
+    if (error.resolvedPath && error.line) {
       button.title = "Go to source";
       const action = document.createElement("span");
       action.className = "mt-1 block text-[11px] underline";
       action.textContent = "Go to source";
       button.append(action);
-      button.addEventListener("click", () => { void revealSource({ path: file.path, line: error.line! }).catch(error => showToast(error.message)); });
+      button.addEventListener("click", () => { void revealSource({ path: error.resolvedPath!, line: error.line!, from: error.from, to: error.to }).catch(error => showToast(error.message)); });
     } else button.disabled = true;
     item.append(button);
     items.append(item);
@@ -3236,11 +3230,11 @@ function updateWorkspaceLayout() {
   }
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 580));
-    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 12;
+    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
     const output = Math.max(320, Math.min(remaining - 240, outputWidth ?? remaining * 0.46));
     workspace.style.gridTemplateColumns = filesHidden
-      ? `0px 0px minmax(0,1fr) 12px ${output}px`
-      : `${filesWidth}px 8px minmax(0,1fr) 12px ${output}px`;
+      ? `0px 0px minmax(0,1fr) 8px ${output}px`
+      : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
   }
   elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
   elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
@@ -3283,7 +3277,7 @@ for (const handle of [filesResize, outputResize]) {
     if (narrowWorkspace.matches) return;
     if (handle === filesResize) filesWidth += delta;
     else {
-      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 12;
+      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
       outputWidth = Math.max(320, Math.min(remaining - 240, elements.output_pane.getBoundingClientRect().width - delta));
     }
     updateWorkspaceLayout();

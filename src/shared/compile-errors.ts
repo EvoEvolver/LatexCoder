@@ -1,6 +1,6 @@
-export function compileErrors(log: string) {
+export function compileErrors(log: string, defaultPath = "main.tex") {
   const errors: Array<{ path: string; line: number; message: string }> = [];
-  let current = "main.tex";
+  let current = defaultPath;
   let message = "";
   for (const row of log.split("\n")) {
     const opening = /\((?:\.\/)?([^\s()]+\.tex)\b/.exec(row);
@@ -27,8 +27,8 @@ export type BuildDiagnostic = {
   source?: "compiler" | "latex";
 };
 
-export function buildDiagnostics(log: string, mappedErrors?: ReturnType<typeof compileErrors>): BuildDiagnostic[] {
-  const located = mappedErrors?.length ? mappedErrors : compileErrors(log);
+export function buildDiagnostics(log: string, mappedErrors?: ReturnType<typeof compileErrors>, defaultPath = "main.tex"): BuildDiagnostic[] {
+  const located = mappedErrors?.length ? mappedErrors : compileErrors(log, defaultPath);
   const diagnostics: BuildDiagnostic[] = located.map(error => ({ ...error, severity: /warning|overfull|underfull/i.test(error.message) ? "warning" : "error" }));
   for (const row of log.split("\n")) {
     const message = row.trim();

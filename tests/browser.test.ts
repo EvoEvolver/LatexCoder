@@ -619,7 +619,11 @@ test("automatic compilation is debounced and errors navigate to source", async (
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     let calls = 0;
     await page.route("**/v1/compile*", route => { calls++; return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { message: "Compilation failed" } }) }); });
-    await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "main.tex:3: Undefined control sequence", stale: true } }) }));
+    await page.route("**/v1/build?*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: {
+      log: "LaTeX Warning: Citation `missing' undefined\n! Undefined control sequence",
+      errors: [{ path: "/tmp/latexcoder-build/main.tex", line: 3, message: "Undefined control sequence" }],
+      stale: true,
+    } }) }));
     await chooseAppMenu(page, "project", "#project-settings");
     await page.locator("#settings-auto").check();
     await page.locator("#settings-form button[type=submit]").click();
@@ -627,12 +631,12 @@ test("automatic compilation is debounced and errors navigate to source", async (
       const { view } = globalThis.__paperE2E.state;
       for (const text of [" A", " B", " C"]) view.dispatch({ changes: { from: view.state.doc.length, insert: text } });
     });
-    await page.locator("#build-errors button").waitFor();
+    await page.locator("#first-fatal-error").waitFor();
     assert.equal(await page.locator('[data-output="log"]').getAttribute("class").then(value => value.includes("active")), true);
     assert.match(await page.locator("#first-fatal-error").textContent(), /First fatal errormain.tex:3 · Undefined control sequence/);
     assert.equal(await page.locator("#build-log").isVisible(), true);
     assert.equal(await page.locator("#pdf-view").isVisible(), false);
-    assert.equal(await page.locator("#diagnostic-navigation").isVisible(), true);
+    assert.equal(await page.locator("#diagnostic-navigation").count(), 0);
     assert.equal(await page.locator(".cm-diagnostic-marker.error").count(), 1);
     assert.equal(await page.locator(".cm-diagnostic-range.error").count(), 1);
     await page.screenshot({ path: "/tmp/latexcoder-log-desktop.png" });
@@ -640,7 +644,7 @@ test("automatic compilation is debounced and errors navigate to source", async (
     await page.screenshot({ path: "/tmp/latexcoder-log-mobile.png" });
     await page.setViewportSize({ width: 1280, height: 720 });
     assert.equal(calls, 1);
-    await page.locator("#build-errors button").click();
+    await page.locator("#first-fatal-error").click();
     await page.waitForFunction(() => {
       const { view } = globalThis.__paperE2E.state;
       return view.state.doc.lineAt(view.state.selection.main.head).number === 3;
@@ -822,7 +826,7 @@ test("project search opens cross-file matches and respects case", async () => {
   });
 });
 
-test("inline diagnostics cover citations, references, labels, and cross-file navigation", async () => {
+test("inline diagnostics cover citations, references, and labels without a toolbar button group", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     const files = [
@@ -836,7 +840,7 @@ test("inline diagnostics cover citations, references, labels, and cross-file nav
     });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    await page.waitForFunction(() => document.querySelector("#diagnostic-status span")?.textContent === "4");
+    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 3);
     assert.equal(await page.locator(".cm-diagnostic-marker.warning").count(), 3);
     assert.equal(await page.locator(".cm-diagnostic-range.warning").count(), 3);
     await page.locator(".cm-diagnostic-range.warning").first().hover();
@@ -844,15 +848,7 @@ test("inline diagnostics cover citations, references, labels, and cross-file nav
     assert.match(await page.locator(".cm-diagnostic-tooltip").textContent(), /Undefined citation|reference|Duplicate label/);
     await page.screenshot({ path: "/tmp/latexcoder-inline-diagnostics.png" });
 
-    await page.locator("#diagnostic-status").click();
-    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapter.tex");
-    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 1);
-    assert.equal(await page.locator(".cm-diagnostic-marker.warning").count(), 1);
-    await page.locator("#diagnostic-next").click();
-    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "main.tex");
-    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 3);
-    const selectedLine = await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number);
-    assert.equal(selectedLine, 1);
+    assert.equal(await page.locator("#diagnostic-navigation").count(), 0);
   });
 });
 
@@ -981,8 +977,17 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     const toolbarStyles = await page.locator("#files-toolbar, #file-tabs, .output-header").evaluateAll(elements => elements.map(element => ({ background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderBottomColor })));
     assert.equal(new Set(toolbarStyles.map(style => style.background)).size, 1);
     assert.equal(new Set(toolbarStyles.map(style => style.border)).size, 1);
-    assert.equal(await width("#output-resize"), 12);
-    assert.ok(await page.locator("#output-resize span").evaluate(element => getComputedStyle(element).width === "4px"));
+    assert.equal(await width("#output-resize"), 8);
+    const resizeStyles = await page.locator("#files-resize, #output-resize").evaluateAll(elements => elements.map(element => {
+      const handle = element.querySelector("span");
+      return {
+        background: getComputedStyle(element).backgroundColor,
+        width: element.getBoundingClientRect().width,
+        handleHeight: handle ? getComputedStyle(handle).height : "",
+        handleWidth: handle ? getComputedStyle(handle).width : "",
+      };
+    }));
+    assert.deepEqual(resizeStyles, [resizeStyles[0], resizeStyles[0]]);
     await drag("#files-resize", 60);
     assert.ok(await width("#files-pane") > files + 50);
     const output = await width("#output-pane");

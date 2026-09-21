@@ -22,7 +22,7 @@ export type AppState = {
   filePreviewDocument: PDFDocumentProxy | null; filePreviewLoadingTask: PDFDocumentLoadingTask | null;
   filePreviewVersion: number; filePreviewZoom: number; reviewSelection: { from: number; to: number; selected: string } | null;
   selectionSuggestionIds: string[]; suggesting: boolean; toastTimer: ReturnType<typeof setTimeout> | null;
-  compileDiagnostics: BuildDiagnostic[]; staticDiagnostics: BuildDiagnostic[]; diagnosticIndex: number;
+  compileDiagnostics: BuildDiagnostic[]; staticDiagnostics: BuildDiagnostic[];
 };
 export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean };
 export type ReviewDecision = "accept" | "reject" | "resolve";

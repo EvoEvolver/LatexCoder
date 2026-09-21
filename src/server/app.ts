@@ -1898,9 +1898,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const runtime = await resolveProject(request);
       runtime.collaboration.flush();
       const currentRevision = await compilationSourceRevision(runtime.projectDir, runtime.build.main, database.getSettings(runtime.id).compiler);
-      const diagnostics = buildDiagnostics(runtime.build.log, runtime.build.errors);
+      const diagnostics = buildDiagnostics(runtime.build.log, runtime.build.errors, runtime.build.main);
       response.setHeader("Cache-Control", "no-store");
-      response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log), diagnostics, firstFatalError: diagnostics.find(item => item.severity === "error") || null } });
+      response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log, runtime.build.main), diagnostics, firstFatalError: diagnostics.find(item => item.severity === "error") || null } });
     }
     catch (error) { next(error); }
   });
@@ -1911,7 +1911,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const build = request.query.cached === "1" ? runtime.build : await ensureLatestPdf(runtime);
       if (!build.pdf || !existsSync(path.join(runtime.buildDir, "latest.pdf"))) throw apiError("pdf_not_found", "No successful PDF yet", 404);
       response.setHeader("Cache-Control", "no-store");
-      const diagnostics = buildDiagnostics(build.log, build.errors);
+      const diagnostics = buildDiagnostics(build.log, build.errors, build.main);
       response.setHeader("X-Build-Error-Count", diagnostics.filter(item => item.severity === "error").length);
       response.setHeader("X-Build-Warning-Count", diagnostics.filter(item => item.severity === "warning").length);
       const logQuery = new URLSearchParams({ project: runtime.id });

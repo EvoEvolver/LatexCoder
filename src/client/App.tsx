@@ -1,6 +1,6 @@
 import { VersionHistory } from "./VersionHistory";
 import {
-  Archive, ArrowLeft, CheckCheck, ChevronDown, ChevronUp, CircleAlert, Copy, Download, File, FileCheck2, FilePlus2,
+  Archive, ArrowLeft, CheckCheck, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
   Maximize2, Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
@@ -25,9 +25,6 @@ const iconComponents = {
   "archive": Archive,
   "arrow-left": ArrowLeft,
   "check-check": CheckCheck,
-  "chevron-down": ChevronDown,
-  "chevron-up": ChevronUp,
-  "circle-alert": CircleAlert,
   "copy": Copy,
   "clipboard-paste": ClipboardPaste,
   "download": Download,
@@ -208,7 +205,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.75rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
+        <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane grid min-h-0 min-w-0 grid-rows-[2.75rem_minmax(0,1fr)_0.5rem_13.75rem] border-r bg-muted/35 max-[760px]:fixed max-[760px]:bottom-0 max-[760px]:left-0 max-[760px]:top-10 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <input id="upload-input" type="file" multiple hidden />
             <div id="files-toolbar" className={cn(paneToolbar, "justify-end")}><IconButton id="files-menu" icon="more-horizontal" title="File actions" /></div>
@@ -225,7 +222,7 @@ export function AppShell() {
             <div id="file-tabs" className="file-tabs" role="tablist" aria-label="Open files" />
             <div className={cn(paneToolbar, "editor-toolbar justify-between")}>
               <div id="review-actions" className="review-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Hide files" /><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" /><span className="max-[480px]:hidden">Comment</span></Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span className="max-[480px]:hidden">Suggest</span></Button></div>
-              <div className="editor-actions flex items-center gap-1"><div id="diagnostic-navigation" className="flex items-center rounded-md border bg-background" hidden><Button id="diagnostic-status" variant="ghost" size="sm" className="h-7 gap-1 rounded-r-none px-2 text-[10px]" type="button" title="Go to first diagnostic"><Icon name="circle-alert" /><span>0</span></Button><IconButton id="diagnostic-previous" icon="chevron-up" title="Previous diagnostic" className="size-7 rounded-none border-l" /><IconButton id="diagnostic-next" icon="chevron-down" title="Next diagnostic" className="size-7 rounded-l-none border-l" /></div><div className="segmented grid grid-cols-2 rounded-md border bg-muted p-0.5 min-[761px]:hidden" role="group" aria-label="Mobile workspace view"><Button id="mobile-code" className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" aria-pressed="true">Code</Button><Button id="open-pdf" className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" title="Show PDF preview" aria-controls="output-pane" aria-expanded="false" aria-pressed="false">PDF</Button></div><IconButton id="editor-search" icon="search" title="Search project" /><Button id="toggle-review" data-output="review" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs" aria-expanded="false" title="Review"><Icon name="message-square-plus" /><span className="max-[480px]:hidden">Review</span> <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div>
+              <div className="editor-actions flex items-center gap-1"><div className="segmented grid grid-cols-2 rounded-md border bg-muted p-0.5 min-[761px]:hidden" role="group" aria-label="Mobile workspace view"><Button id="mobile-code" className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" aria-pressed="true">Code</Button><Button id="open-pdf" className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" title="Show PDF preview" aria-controls="output-pane" aria-expanded="false" aria-pressed="false">PDF</Button></div><IconButton id="editor-search" icon="search" title="Search project" /><Button id="toggle-review" data-output="review" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs" aria-expanded="false" title="Review"><Icon name="message-square-plus" /><span className="max-[480px]:hidden">Review</span> <span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div>
             </div>
             <div id="editor-body" className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden">
               <div className="relative grid min-h-0 min-w-0 overflow-hidden">
@@ -242,7 +239,7 @@ export function AppShell() {
               </aside>
             </div>
           </section>
-          <div id="output-resize" role="separator" aria-label="Resize editor and PDF" aria-orientation="vertical" tabIndex={0} className="group flex w-3 touch-none cursor-col-resize items-center justify-center border-x bg-muted/70 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-12 w-1 rounded-full bg-muted-foreground/60 group-hover:bg-primary" /></div>
+          <div id="output-resize" role="separator" aria-label="Resize editor and PDF" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
 
           <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:bottom-0 max-[760px]:[&.mobile-open]:left-0 max-[760px]:[&.mobile-open]:right-0 max-[760px]:[&.mobile-open]:top-10 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
             <div className={cn(paneToolbar, "pane-header output-header justify-between max-[760px]:grid max-[760px]:h-auto max-[760px]:min-h-0 max-[760px]:grid-cols-1 max-[760px]:gap-1 max-[760px]:py-1")}>

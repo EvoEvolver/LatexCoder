@@ -19,6 +19,9 @@ test("build diagnostics prioritize the earliest fatal error without hiding warni
   assert.ok(diagnostics.some(item => item.path === "main.tex" && item.line === 4));
   assert.equal(diagnostics.at(-1)?.severity, "warning");
   assert.equal(buildDiagnostics("! Undefined control sequence\nl.4 text").length, 1);
+  assert.deepEqual(compileErrors("! Undefined control sequence\nl.9 text", "paper/root.tex"), [
+    { path: "paper/root.tex", line: 9, message: "Undefined control sequence" },
+  ]);
 });
 
 test("source offsets map across hidden review notes and SyncTeX boxes retain PDF units", () => {

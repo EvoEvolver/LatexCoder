@@ -76,7 +76,7 @@ export function createCompileService({ stateDir, database, queue, logger, server
       runtime.build = {
         status: success ? "success" : "error", main, startedAt: runtime.build.startedAt, finishedAt: new Date().toISOString(),
         log: result.output || (success ? "Compilation completed." : `Compiler exited with code ${result.code}.`),
-        errors: compileErrors(result.output || "").map(error => {
+        errors: compileErrors(result.output || "", main).map(error => {
           const file = Object.keys(sourceMaps).find(file => error.path === file || error.path.endsWith(`/${file}`));
           return file ? { ...error, path: file, line: sourceMaps[file].lines[error.line - 1] || error.line } : error;
         }),
@@ -128,7 +128,7 @@ export function createCompileService({ stateDir, database, queue, logger, server
         && runtime.build.sourceRevision === currentRevision && existsSync(path.join(runtime.buildDir, "latest.pdf"))) return runtime.build;
       const result = await compileProject(runtime, main);
       if (!result.success) {
-        const diagnostics = buildDiagnostics(result.build.log, result.build.errors);
+        const diagnostics = buildDiagnostics(result.build.log, result.build.errors, result.build.main);
         if (!diagnostics.some(item => item.severity === "error")) diagnostics.unshift({ severity: "error", message: result.build.log || "LaTeX compilation failed" });
         throw apiError("compile_failed", "LaTeX compilation failed; inspect error.details for diagnostics", 422, {
           main: result.build.main,
