@@ -424,6 +424,11 @@ async function gitUploadPack(runtime: ProjectRuntime, args: string[], input: Uin
   }, input);
 }
 
+async function prepareGitPull(runtime: ProjectRuntime): Promise<{ commit: string; created: boolean }> {
+  await ensureGitRepository(runtime.projectDir);
+  return gitCheckpoint(runtime, "Automatic checkpoint before Git pull");
+}
+
 async function syncGitIngress(runtime: ProjectRuntime): Promise<{ ingressDir: string; head: string }> {
   const ingressDir = path.join(runtime.projectRoot, "receive.git");
   if (!existsSync(ingressDir)) await git(runtime.projectDir, ["init", "--bare", ingressDir]);
@@ -493,7 +498,9 @@ working tree always remains on \`main\`. \`GET /v1/git\` returns status and
 history. \`POST /v1/git/commit\` creates a collaborative checkpoint.
 Edits are checkpointed automatically after 30 idle seconds, or every five
 minutes during continuous editing, without disconnecting collaborators.
-Clone and fetch checkpoint current Yjs content before advertising refs.
+Clone, fetch, and pull checkpoint current Yjs content before advertising refs.
+When that advances remote \`main\`, a normal \`git pull\` merges it with the
+Agent's committed local branch, so browser users never need to commit first.
 Each registered collaborator gets a personal smart HTTP URL at
 \`/git/<project-id>/<share-secret>\`. Clone it and push \`main\` normally; no
 upstream configuration is required. A push checkpoints current Yjs changes and
@@ -708,7 +715,7 @@ The personal URL accepts pushes from registered project members. A push
 checkpoints current Yjs changes, then automatically merges the pushed commit
 into Yjs-backed main. If it cannot merge safely, the incoming commit is kept on
 a conflict branch and the live document stays unchanged. Browser edits are
-checkpointed automatically, and clone/fetch checkpoint current Yjs content
+checkpointed automatically, and clone/fetch/pull checkpoint current Yjs content
 before advertising refs. Use the checked full-file upload unless the user specifically asks for a
 Git workflow.
 `;
@@ -1517,7 +1524,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         : await resolveGitProject(request);
       const advertised = await withGitReader(runtime, async () => {
         if (service === "git-upload-pack") {
-          await withLiveGitOperation(runtime, () => gitCheckpoint(runtime, "Automatic checkpoint"));
+          await withLiveGitOperation(runtime, () => prepareGitPull(runtime));
           return gitUploadPack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"));
         }
         return (await withLiveGitOperation(runtime, () => gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol")))).output;

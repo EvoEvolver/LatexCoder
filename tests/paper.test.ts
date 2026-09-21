@@ -818,7 +818,7 @@ test("automatic Git checkpoints capture live Yjs edits without closing collabora
   }, { gitCheckpointIdleMs: 100, gitCheckpointMaxWaitMs: 500 });
 });
 
-test("Git clone and fetch checkpoint current content without a manual commit", async () => {
+test("Git clone, fetch, and pull checkpoint current content without a browser commit", async () => {
   await withServer(async ({ base, projectDir, collaboration }) => {
     const { project } = await (await fetch(`${base}/v1/project`)).json();
     const { share } = await (await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST" })).json();
@@ -832,6 +832,16 @@ test("Git clone and fetch checkpoint current content without a manual commit", a
       text.insert(0, "% latest before fetch\n");
       await testGit(clone, ["fetch", "origin"]);
       assert.match(await testGit(clone, ["show", "origin/main:main.tex"]), /latest before fetch/);
+
+      await writeFile(path.join(clone, "agent.tex"), "committed by agent\n", "utf8");
+      await testGit(clone, ["add", "agent.tex"]);
+      await testGit(clone, ["commit", "-m", "Agent work before pull"]);
+      text.insert(0, "% latest before pull\n");
+      await testGit(clone, ["pull", "--no-rebase", "origin", "main"]);
+      assert.match(await readFile(path.join(clone, "main.tex"), "utf8"), /latest before pull/);
+      assert.equal(await readFile(path.join(clone, "agent.tex"), "utf8"), "committed by agent\n");
+      assert.equal((await testGit(clone, ["rev-list", "--parents", "-1", "HEAD"])).split(" ").length, 3);
+
       const head = await testGit(projectDir, ["rev-parse", "HEAD"]);
       await testGit(clone, ["fetch", "origin"]);
       assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), head);

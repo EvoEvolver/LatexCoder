@@ -215,8 +215,11 @@ not create a commit. Automatic and manual checkpoints flush Yjs and serialize
 Git index/ref writes without disconnecting editors. Incoming Git merges briefly
 suspend live synchronization while importing their result.
 
-Clone and fetch checkpoint the latest Yjs content before advertising Git refs,
-so browser users do not need to commit or push before someone pulls their work.
+Clone, fetch, and pull checkpoint the latest Yjs content before advertising Git
+refs, so browser users do not need to commit or push before someone pulls their
+work. If the Agent also has committed local changes, a normal `git pull` merges
+the new collaborative checkpoint into its branch and returns a working tree
+containing both sides.
 
 The **History** button opens persistent, paginated versions with per-file diffs,
 line numbers, and an **Agent edits** filter. Each version can restore the entire
