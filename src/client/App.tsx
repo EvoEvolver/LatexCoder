@@ -154,7 +154,7 @@ export function AppShell() {
           <ThemeButton id="editor-theme" />
         </header>
 
-        <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.5rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
+        <main id="workspace" className="workspace grid min-h-0 w-full max-w-full grid-cols-[13rem_0.5rem_minmax(0,1fr)_0.75rem_minmax(0,46%)] overflow-hidden max-[760px]:!grid-cols-1">
           <aside id="files-pane" className="files-pane flex min-h-0 min-w-0 flex-col border-r bg-muted/35 max-[760px]:fixed max-[760px]:inset-y-14 max-[760px]:left-0 max-[760px]:z-30 max-[760px]:w-64 max-[760px]:-translate-x-full max-[760px]:bg-background max-[760px]:shadow-xl max-[760px]:transition-transform max-[760px]:[&.mobile-open]:translate-x-0">
             <div className="pane-header flex min-h-11 shrink-0 flex-wrap items-center justify-between border-b px-1.5"><strong id="files-heading" className="text-[11px] uppercase text-muted-foreground">Files</strong><div id="files-actions" className="flex min-w-0 flex-wrap items-center gap-0.5">
               <IconButton id="project-search" icon="search" title="Search project" />
@@ -187,7 +187,7 @@ export function AppShell() {
               </aside>
             </div>
           </section>
-          <div id="output-resize" role="separator" aria-label="Resize editor and output" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-8 w-0.5 rounded bg-border group-hover:bg-primary" /></div>
+          <div id="output-resize" role="separator" aria-label="Resize editor and PDF" aria-orientation="vertical" tabIndex={0} className="group flex w-3 touch-none cursor-col-resize items-center justify-center border-x bg-muted/70 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden"><span className="h-12 w-1 rounded-full bg-muted-foreground/60 group-hover:bg-primary" /></div>
 
           <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:inset-0 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
             <div className="pane-header output-header flex min-h-11 flex-wrap items-center justify-between border-b bg-muted px-2.5">
@@ -195,7 +195,7 @@ export function AppShell() {
               <div className="flex items-center"><IconButton id="pdf-fit-width" icon="stretch-horizontal" title="Fit page width" className="[&.active]:bg-accent [&.active]:text-primary" /><IconButton id="pdf-fit-page" icon="stretch-vertical" title="Fit whole page" className="[&.active]:bg-accent [&.active]:text-primary" /><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button><IconButton id="close-output" icon="x" title="Back to editor" className="mobile-output-close lg:hidden" /></div>
               <span id="pdf-freshness" className="w-full pb-1 text-[10px] text-muted-foreground" hidden />
             </div>
-            <div id="pdf-view" className="pdf-view relative min-h-0 min-w-0 overflow-auto bg-zinc-700"><div id="empty-output" className="empty-output absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-zinc-300"><Icon name="file-check-2" /><span id="pdf-status">No compiled PDF</span></div><div id="pdf-document" className="pdf-document flex min-w-min flex-col items-center gap-4 p-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /></div>
+            <div id="pdf-view" className="pdf-view relative min-h-0 min-w-0 overflow-auto bg-zinc-700 [scrollbar-gutter:stable]"><div id="empty-output" className="empty-output absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-zinc-300"><Icon name="file-check-2" /><span id="pdf-status">No compiled PDF</span></div><div id="pdf-document" className="pdf-document flex min-w-min flex-col items-center gap-4 p-4 [&_canvas]:block [&_canvas]:shrink-0 [&_canvas]:bg-white [&_canvas]:shadow-lg" hidden /></div>
             <div id="build-log" className="min-h-0 min-w-0 overflow-auto bg-background" hidden>
               <div id="build-errors" className="border-b p-3" hidden />
               <details className="p-3" open><summary className="cursor-pointer text-xs font-medium text-muted-foreground">Full compiler log</summary><pre id="build-output" className="m-0 whitespace-pre-wrap break-words py-3 font-mono text-xs leading-relaxed">No compilation yet.</pre></details>

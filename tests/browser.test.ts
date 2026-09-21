@@ -748,14 +748,12 @@ test(`${platform} real SyncTeX PDF modifier-click opens included source and reje
     assert.equal(sourceRequests, 0);
     const sourceResponse = page.waitForResponse(response => response.url().includes("/v1/build/source"));
     const clickSource = async () => {
-      // On a macOS test host, physical Ctrl-click opens the native context menu.
-      if (platform !== "MacIntel") {
-        await page.locator("#pdf-document canvas").dispatchEvent("click", { clientX: point.x, clientY: point.y, ctrlKey: true, button: 0 });
-      } else {
-        await page.keyboard.down(modifier);
-        await page.mouse.click(point.x, point.y);
-        await page.keyboard.up(modifier);
-      }
+      // Dispatch the browser event directly: physical modifier-click behavior is
+      // host-OS dependent, while the application contract is metaKey vs ctrlKey.
+      await page.locator("#pdf-document canvas").dispatchEvent("click", {
+        clientX: point.x, clientY: point.y, button: 0,
+        metaKey: platform === "MacIntel", ctrlKey: platform !== "MacIntel",
+      });
     };
     await clickSource();
     const response = await sourceResponse;
@@ -813,11 +811,14 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
       await page.mouse.up();
     };
     const files = await width("#files-pane");
+    assert.equal(await width("#output-resize"), 12);
+    assert.ok(await page.locator("#output-resize span").evaluate(element => getComputedStyle(element).width === "4px"));
     await drag("#files-resize", 60);
     assert.ok(await width("#files-pane") > files + 50);
     const output = await width("#output-pane");
     await drag("#output-resize", -60);
     assert.ok(await width("#output-pane") > output + 50);
+    const resizedOutput = await width("#output-pane");
     await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#file-list").isVisible(), false);
     assert.equal(await page.locator("#files-pane").isVisible(), false);
@@ -826,6 +827,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     const collapsedEditor = await page.locator(".editor-pane").boundingBox();
     const workspaceBox = await page.locator("#workspace").boundingBox();
     assert.ok(collapsedOutput.width >= 320);
+    assert.ok(Math.abs(collapsedOutput.width - resizedOutput) < 1, "hiding Files must preserve the chosen PDF width");
     assert.ok(Math.abs(collapsedOutput.x + collapsedOutput.width - workspaceBox.x - workspaceBox.width) < 1);
     assert.ok(collapsedOutput.x >= collapsedEditor.x + collapsedEditor.width);
     assert.ok(collapsedOutput.height > 500);
@@ -834,6 +836,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     await page.waitForFunction(() => globalThis.__paperTest);
     assert.equal(await page.locator("#files-pane").isVisible(), false);
     const restoredOutput = await page.locator("#output-pane").boundingBox();
+    assert.ok(Math.abs(restoredOutput.width - resizedOutput) < 1, "reload must restore the chosen PDF width");
     assert.ok(Math.abs(restoredOutput.x + restoredOutput.width - workspaceBox.x - workspaceBox.width) < 1);
     await page.locator("#toggle-files").click();
     assert.equal(await page.locator("#files-pane").isVisible(), true);

@@ -1673,16 +1673,20 @@ document.addEventListener("keydown", event => { if (event.key === "Escape") clos
 elements.pdf_view.addEventListener("scroll", closePdfContextMenu);
 window.addEventListener("resize", closePdfContextMenu);
 let pdfResizeFrame = 0;
-let pdfViewSize = `${elements.pdf_view.clientWidth}x${elements.pdf_view.clientHeight}`;
+let pdfPriorityPage: number | undefined;
+const pdfViewBounds = elements.pdf_view.getBoundingClientRect();
+let pdfViewSize = `${pdfViewBounds.width}x${pdfViewBounds.height}`;
 new ResizeObserver(() => {
-  const nextSize = `${elements.pdf_view.clientWidth}x${elements.pdf_view.clientHeight}`;
+  const bounds = elements.pdf_view.getBoundingClientRect();
+  const nextSize = `${bounds.width}x${bounds.height}`;
   if (nextSize === pdfViewSize) return;
   pdfViewSize = nextSize;
   cancelAnimationFrame(pdfResizeFrame);
-  pdfResizeFrame = requestAnimationFrame(() => { if (state.pdfDocument) void renderPdf(); });
+  pdfResizeFrame = requestAnimationFrame(() => { if (state.pdfDocument) void renderPdf(pdfPriorityPage); });
 }).observe(elements.pdf_view);
 
 async function renderPdf(priorityPage?: number) {
+  if (priorityPage) pdfPriorityPage = priorityPage;
   const pdf = state.pdfDocument;
   if (!pdf) return;
   const version = ++state.pdfRenderVersion;
@@ -1777,6 +1781,7 @@ async function renderPdf(priorityPage?: number) {
 
 async function showPdf(force = false, priorityPage?: number) {
   closePdfContextMenu();
+  if (force) pdfPriorityPage = priorityPage;
   const requestVersion = ++state.pdfRequestVersion;
   const downloadUrl = projectApiUrl("v1/build/pdf");
   downloadUrl.searchParams.set("v", String(Date.now()));
@@ -2799,13 +2804,13 @@ const workspaceColumns: Array<[HTMLElement, number]> = [
   [outputResize, 4], [elements.output_pane, 5],
 ];
 let filesWidth = 208;
-let outputFraction = 0.46;
+let outputWidth: number | null = null;
 let filesHidden = false;
 try {
   const saved = JSON.parse(localStorage.getItem("workspace-layout") || "null");
   if (saved) {
     if (Number.isFinite(saved.filesWidth)) filesWidth = saved.filesWidth;
-    if (Number.isFinite(saved.outputFraction)) outputFraction = saved.outputFraction;
+    if (Number.isFinite(saved.outputWidth)) outputWidth = saved.outputWidth;
     filesHidden = saved.filesHidden === true;
   }
 } catch { /* Ignore unavailable storage or invalid preferences. */ }
@@ -2821,19 +2826,19 @@ function updateWorkspaceLayout() {
   filesResize.hidden = !mobile && filesHidden;
   const width = workspace.clientWidth;
   if (width && !mobile) {
-    filesWidth = Math.max(180, Math.min(filesWidth, width - 576));
-    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
-    const output = Math.max(320, Math.min(remaining - 240, remaining * outputFraction));
+    filesWidth = Math.max(180, Math.min(filesWidth, width - 580));
+    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 12;
+    const output = Math.max(320, Math.min(remaining - 240, outputWidth ?? remaining * 0.46));
     workspace.style.gridTemplateColumns = filesHidden
-      ? `0px 0px minmax(0,1fr) 8px ${output}px`
-      : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
+      ? `0px 0px minmax(0,1fr) 12px ${output}px`
+      : `${filesWidth}px 8px minmax(0,1fr) 12px ${output}px`;
   }
   elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
   elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
 }
 
 function saveWorkspaceLayout() {
-  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputFraction, filesHidden })); } catch { /* Storage is optional. */ }
+  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, filesHidden })); } catch { /* Storage is optional. */ }
 }
 
 for (const handle of [filesResize, outputResize]) {
@@ -2841,8 +2846,8 @@ for (const handle of [filesResize, outputResize]) {
     if (narrowWorkspace.matches) return;
     if (handle === filesResize) filesWidth += delta;
     else {
-      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
-      outputFraction = Math.max(320 / remaining, Math.min(1 - 240 / remaining, outputFraction - delta / remaining));
+      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 12;
+      outputWidth = Math.max(320, Math.min(remaining - 240, elements.output_pane.getBoundingClientRect().width - delta));
     }
     updateWorkspaceLayout();
   };
