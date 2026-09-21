@@ -160,9 +160,12 @@ test("Review opens beside source independently of PDF and closes back to full ed
     });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.waitForFunction(() => document.querySelector("#review-count")?.textContent === "1");
     const width = (await page.locator("#editor").boundingBox()).width;
     assert.equal(await page.locator("#review-actions #toggle-files + #add-comment").count(), 1);
     assert.equal(await page.locator("#output-pane [data-output=review]").count(), 0);
+    assert.equal((await page.locator("#toggle-review").textContent()).trim(), "1");
+    assert.equal(await page.locator("#editor-search").count(), 0);
     await page.locator("#toggle-review").click();
     await page.locator("#review-list .review-item").waitFor();
     assert.equal(await page.locator("#pdf-view").isVisible(), true);
@@ -510,7 +513,7 @@ test("settings and project replace preview apply through the real UI", async () 
     await page.locator("#settings-compiler").selectOption("latexmk");
     await page.locator("#settings-form button[type=submit]").click();
     assert.equal((await (await page.request.get(`${base}/v1/settings?project=${id}`)).json()).settings.main, "other.tex");
-    await page.locator("#editor-search").click();
+    await chooseAppMenu(page, "project", "#project-search-menu");
     await page.locator("#search-query").fill("needle");
     await page.locator("#replace-text").fill("replacement");
     await page.locator("#replace-scope").selectOption("project");
@@ -809,7 +812,7 @@ test("project search opens cross-file matches and respects case", async () => {
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/search.tex`, { data: "First line\nUnique Search Target\nunique search target", headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => globalThis.__paperE2E?.state.view);
-    await page.locator("#editor-search").click();
+    await chooseAppMenu(page, "project", "#project-search-menu");
     await page.locator("#search-query").fill("Unique Search Target");
     await page.locator("#search-form button").click();
     await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "2 matches");

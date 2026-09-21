@@ -3108,7 +3108,6 @@ let replacementProject = "";
 const applyReplacements = document.getElementById("replace-apply") as HTMLButtonElement;
 let searchVersion = 0;
 const openProjectSearch = () => { searchDialog.showModal(); searchQuery.focus(); };
-document.getElementById("editor-search")!.addEventListener("click", openProjectSearch);
 onDynamicClick("project-search-menu", openProjectSearch);
 document.getElementById("search-close")!.addEventListener("click", () => searchDialog.close());
 searchDialog.addEventListener("close", () => { searchVersion++; replacementPlan = []; applyReplacements.hidden = true; });
