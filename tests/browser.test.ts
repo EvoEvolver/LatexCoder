@@ -1422,6 +1422,13 @@ test("project page exposes sharing while destructive actions stay in menus", asy
 
     await page.locator("#back-projects").click();
     const row = page.locator(".project-row", { hasText: "Compact Project" });
+    await row.waitFor();
+    assert.equal(await row.getAttribute("role"), "link");
+    assert.equal(await row.getByRole("button", { name: "Open" }).count(), 0);
+    await row.press("Enter");
+    await page.waitForURL(`${base}/projects/${projectId}`);
+    await page.locator("#back-projects").click();
+    await row.waitFor();
     await row.locator("summary").click();
     await row.getByText("Delete project").click();
     await page.locator("#action-dialog").waitFor();
@@ -1456,7 +1463,7 @@ test("login, invitations, and capability links separate members from guests", as
     assert.match(invitationLink, new RegExp(`^${base}/register/[A-Za-z0-9_-]+$`));
     await page.locator("#invite-close").click();
 
-    await page.locator(".project-row-main button").first().click();
+    await page.locator(".project-row").first().click();
     assert.equal(await page.locator("#guest-name-field").isHidden(), true);
     assert.equal(await page.locator("#editor-account-button").isVisible(), true);
     assert.equal(await page.locator("#editor-account-name").textContent(), "Lead Editor");

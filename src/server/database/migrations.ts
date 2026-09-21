@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 5;
+export const LATEST_SCHEMA_VERSION = 6;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -155,6 +155,17 @@ const migrations: Migration[] = [
           SELECT id, owner_username, 'owner', CAST(strftime('%s', created_at) AS INTEGER) * 1000
           FROM projects WHERE owner_username IS NOT NULL;
       `);
+    },
+  },
+  {
+    version: 6,
+    name: "shared project last opened time",
+    up(database) {
+      if (!hasColumn(database, "projects", "last_opened_at")) {
+        database.exec("ALTER TABLE projects ADD COLUMN last_opened_at TEXT;");
+        database.exec("UPDATE projects SET last_opened_at = created_at WHERE last_opened_at IS NULL;");
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS projects_last_opened_idx ON projects(last_opened_at DESC, name COLLATE NOCASE);");
     },
   },
 ];

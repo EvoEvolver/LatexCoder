@@ -9,6 +9,7 @@ export type ProjectMetadata = {
   ownerUsername: string | null;
   shareToken: string;
   createdAt: string;
+  lastOpenedAt: string;
   membershipRole?: string;
   git?: { conflict?: { branch: string; incoming: string; base: string; createdAt: string }; [key: string]: unknown };
 };
@@ -32,6 +33,7 @@ type ProjectRow = SqlRow & {
   owner_username: string | null;
   share_token: string;
   created_at: string;
+  last_opened_at: string | null;
   git_state_json: string | null;
 };
 
@@ -249,8 +251,8 @@ export class StateDatabase {
 
   listProjects(ownerUsername?: string | null) {
     const rows = ownerUsername
-      ? this.db.prepare("SELECT * FROM projects WHERE owner_username = ? ORDER BY name COLLATE NOCASE").all(ownerUsername)
-      : this.db.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE").all();
+      ? this.db.prepare("SELECT * FROM projects WHERE owner_username = ? ORDER BY last_opened_at DESC, name COLLATE NOCASE").all(ownerUsername)
+      : this.db.prepare("SELECT * FROM projects ORDER BY last_opened_at DESC, name COLLATE NOCASE").all();
     return (rows as ProjectRow[]).map(row => this.projectFromRow(row));
   }
 
@@ -258,7 +260,7 @@ export class StateDatabase {
     const rows = this.db.prepare(`
       SELECT projects.*, project_members.role AS membership_role
       FROM project_members JOIN projects ON projects.id = project_members.project_id
-      WHERE project_members.username = ? ORDER BY projects.name COLLATE NOCASE
+      WHERE project_members.username = ? ORDER BY projects.last_opened_at DESC, projects.name COLLATE NOCASE
     `).all(username) as Array<ProjectRow & { membership_role: string }>;
     return rows.map(row => ({ ...this.projectFromRow(row), membershipRole: row.membership_role as string }));
   }
@@ -271,14 +273,15 @@ export class StateDatabase {
   createProject(metadata: ProjectMetadata) {
     this.transaction(() => {
       this.db.prepare(`
-        INSERT INTO projects (id, name, owner_username, share_token, created_at, git_state_json)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, name, owner_username, share_token, created_at, last_opened_at, git_state_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
         metadata.id,
         metadata.name,
         metadata.ownerUsername,
         metadata.shareToken,
         metadata.createdAt,
+        metadata.lastOpenedAt,
         metadata.git ? JSON.stringify(metadata.git) : null,
       );
       this.saveBuild(metadata.id, EMPTY_BUILD);
@@ -300,6 +303,11 @@ export class StateDatabase {
 
   deleteProject(id: string) {
     this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  }
+
+  markProjectOpened(id: string, lastOpenedAt: string) {
+    const result = this.db.prepare("UPDATE projects SET last_opened_at = ? WHERE id = ?").run(lastOpenedAt, id);
+    return Number(result.changes) === 1;
   }
 
   getBuild(projectId: string): BuildMetadata {
@@ -391,6 +399,7 @@ export class StateDatabase {
       ownerUsername: row.owner_username,
       shareToken: row.share_token,
       createdAt: row.created_at,
+      lastOpenedAt: row.last_opened_at || row.created_at,
       git: row.git_state_json ? JSON.parse(row.git_state_json) : undefined,
     };
   }

@@ -948,7 +948,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         permissions: { manage: (metadata.membershipRole || "owner") === "owner" },
       });
     }
-    return summaries.sort((left, right) => left.name.localeCompare(right.name));
+    return summaries.sort((left, right) =>
+      Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt)
+      || left.name.localeCompare(right.name));
   }
 
   async function createProject(name: unknown, ownerUsername: string | null, importedFiles: ImportedProjectFile[] = []): Promise<ProjectRuntime> {
@@ -956,7 +958,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     let id = randomProjectId();
     while (database.getProject(id) || existsSync(path.join(projectsDir, id))) id = randomProjectId();
     const projectRoot = path.join(projectsDir, id);
-    const metadata: ProjectMetadata = { id, name: projectName, ownerUsername, createdAt: new Date().toISOString(), shareToken: randomToken() };
+    const createdAt = new Date().toISOString();
+    const metadata: ProjectMetadata = { id, name: projectName, ownerUsername, createdAt, lastOpenedAt: createdAt, shareToken: randomToken() };
     await mkdir(projectRoot, { recursive: true });
     try {
       for (const file of importedFiles) {
@@ -1319,6 +1322,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   app.get("/v1/project", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      if (request.query.opened === "1") {
+        const lastOpenedAt = new Date().toISOString();
+        database.markProjectOpened(runtime.id, lastOpenedAt);
+        runtime.metadata = { ...runtime.metadata, lastOpenedAt };
+      }
       response.json({ project: {
         ...publicProjectMetadata(runtime.metadata),
         main: runtime.build.main,

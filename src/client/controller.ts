@@ -1429,12 +1429,12 @@ function randomId() {
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-async function refreshProject(open = false) {
-  const data = await request<{ project: ProjectDetail }>("v1/project");
+async function refreshProject(open = false, recordOpen = false) {
+  const data = await request<{ project: ProjectDetail }>(recordOpen ? "v1/project?opened=1" : "v1/project");
   const known = state.projects.find(project => project.id === data.project.id);
-  if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt });
+  if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt });
   else if (state.user) {
-    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, permissions: data.project.permissions });
+    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, permissions: data.project.permissions });
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
   elements.share_project.hidden = !data.project.permissions?.collaborate;
@@ -1465,24 +1465,30 @@ function renderProjects() {
   elements.project_list.replaceChildren();
   for (const project of state.projects) {
     const row = document.createElement("article");
-    row.className = "project-row grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto_auto] items-center gap-3 border-b px-4 py-2 last:border-b-0 [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
+    row.className = "project-row grid min-h-16 cursor-pointer grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-2 outline-none last:border-b-0 hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
+    row.tabIndex = 0;
+    row.setAttribute("role", "link");
+    row.setAttribute("aria-label", `Open ${project.name}`);
+    const openProject = () => { void openProjectPage(project.id); };
+    row.addEventListener("click", event => {
+      if ((event.target as Element).closest("button, a, details, summary")) return;
+      openProject();
+    });
+    row.addEventListener("keydown", event => {
+      if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      openProject();
+    });
     row.innerHTML = '<i data-lucide="folder-kanban"></i>';
     const main = document.createElement("div");
-    main.className = "project-row-main min-w-0 [&>button]:block [&>button]:max-w-full [&>button]:truncate [&>button]:text-left [&>button]:text-sm [&>button]:font-semibold [&>button:hover]:text-primary [&>span]:mt-1 [&>span]:block [&>span]:text-[10px] [&>span]:text-muted-foreground";
-    const name = document.createElement("button");
-    name.type = "button";
+    main.className = "project-row-main min-w-0 [&>strong]:block [&>strong]:truncate [&>strong]:text-sm [&>strong]:font-semibold [&>span]:mt-1 [&>span]:block [&>span]:text-[10px] [&>span]:text-muted-foreground";
+    const name = document.createElement("strong");
     name.textContent = project.name;
-    name.addEventListener("click", () => openProjectPage(project.id));
     const details = document.createElement("span");
-    details.textContent = project.createdAt
-      ? `Created ${new Date(project.createdAt).toLocaleDateString()}`
+    details.textContent = project.lastOpenedAt
+      ? `Last opened ${new Date(project.lastOpenedAt).toLocaleString()}`
       : "Collaborative LaTeX project";
     main.append(name, details);
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "secondary-button h-8 rounded-md border bg-background px-3 text-xs font-medium shadow-sm hover:bg-accent max-sm:hidden";
-    open.textContent = "Open";
-    open.addEventListener("click", () => openProjectPage(project.id));
     const menu = document.createElement("details");
     menu.className = "context-menu relative";
     menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
@@ -1506,7 +1512,7 @@ function renderProjects() {
       });
       panel.append(button);
     }
-    row.append(main, open, menu);
+    row.append(main, menu);
     elements.project_list.append(row);
   }
   createIcons({ icons: ICONS });
@@ -1615,6 +1621,7 @@ function showProjectsPage(push = true) {
   elements.auth_page.hidden = true;
   if (push && window.location.pathname !== "/projects") window.history.pushState({}, "", "/projects");
   document.title = "Projects · LaTeX Coder";
+  void refreshProjects().catch(error => showToast(error.message));
 }
 
 async function openProjectPage(projectId: string, push = true): Promise<void> {
@@ -1656,7 +1663,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   elements.empty_output.hidden = false;
   elements.pdf_status.textContent = "No compiled PDF";
   elements.build_output.textContent = "";
-  await refreshProject(true);
+  await refreshProject(true, true);
   watchProjectFiles();
 }
 

@@ -451,6 +451,12 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal(joinResponse.status, 303);
     const adminProjectsAfterJoin = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json();
     assert.deepEqual(adminProjectsAfterJoin.projects.map(item => item.id).sort(), [initialProject, project.id].sort());
+    await fetch(`${base}/v1/project?project=${initialProject}&opened=1`, { headers: { Cookie: adminCookie } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await fetch(`${base}/v1/project?project=${project.id}&opened=1`, { headers: { Cookie: memberCookie } });
+    const sharedRecencyOrder = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json();
+    assert.deepEqual(sharedRecencyOrder.projects.map(item => item.id), [project.id, initialProject]);
+    assert.ok(Date.parse(sharedRecencyOrder.projects[0].lastOpenedAt) > Date.parse(sharedRecencyOrder.projects[1].lastOpenedAt));
     const registeredCollaboratorProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
     assert.equal(registeredCollaboratorProject.status, 200);
     assert.deepEqual((await registeredCollaboratorProject.json()).project.permissions, { manage: false, collaborate: true });
