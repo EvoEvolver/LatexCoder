@@ -1498,7 +1498,7 @@ test("sidebar folders expand, collapse, and create nested files", async () => {
   });
 });
 
-test("Structure follows the main document, refreshes manually, navigates, and resizes", async () => {
+test("Tree follows the main document and TreeWriter navigates the outline", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     const main = String.raw`\documentclass{article}
@@ -1530,14 +1530,14 @@ Details \tldr{The method combines two stages.}`;
 
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: `${method}\n\\subsection{Evaluation}\nEvidence. \\tldr{Evaluation confirms the gain.}`, headers: { "Content-Type": "text/plain" } });
     await new Promise(resolve => setTimeout(resolve, 200));
-    assert.equal(await items.count(), 6, "Structure should not update until requested");
+    assert.equal(await items.count(), 6, "Tree should not update until requested");
     await page.locator("#refresh-structure").click();
     await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 8);
     assert.deepEqual(await headings.allTextContents(), ["Overview", "Method", "Evaluation", "Conclusion"]);
     assert.match((await points.allTextContents()).join(" "), /Evaluation confirms the gain/);
 
     await page.locator("#open-structure").click();
-    const structureTab = page.getByRole("tab", { name: "Structure", exact: true });
+    const structureTab = page.getByRole("tab", { name: "TreeWriter", exact: true });
     await structureTab.waitFor();
     assert.equal(await structureTab.getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("#structure-view").isVisible(), true);
@@ -1576,9 +1576,9 @@ Details \tldr{The method combines two stages.}`;
     assert.equal(await page.locator("#files-pane").evaluate(element => element.classList.contains("mobile-open")), false);
     assert.equal(await page.locator("#structure-view").isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
-    await page.getByRole("button", { name: "Close Structure", exact: true }).click();
+    await page.getByRole("button", { name: "Close TreeWriter", exact: true }).click();
     assert.equal(await page.locator("#structure-view").isVisible(), false);
-    assert.equal(await page.getByRole("tab", { name: "Structure", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("tab", { name: "TreeWriter", exact: true }).count(), 0);
     assert.equal(await page.locator("#editor").isVisible(), true);
   });
 });

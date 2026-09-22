@@ -483,7 +483,7 @@ async function refreshStructure(): Promise<void> {
   const version = ++structureVersion;
   const project = state.projectId;
   elements.refresh_structure.disabled = true;
-  elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-muted-foreground">Loading structure…</p>';
+  elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-muted-foreground">Loading tree…</p>';
   try {
     const texFiles = state.files.filter(file => file.text && /\.tex$/i.test(file.path));
     const pairs = await Promise.all(texFiles.map(async file => {
@@ -583,7 +583,7 @@ function renderStructure(): void {
 
 elements.refresh_structure.addEventListener("click", () => { void refreshStructure(); });
 elements.open_structure.addEventListener("click", () => {
-  fileTabs.openAuxiliary({ id: "structure", label: "Structure", controls: "structure-view" });
+  fileTabs.openAuxiliary({ id: "structure", label: "TreeWriter", controls: "structure-view" });
 });
 
 function showExpandedStructure(): void {
