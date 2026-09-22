@@ -79,10 +79,7 @@ import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { yCollab, ySyncAnnotation, yUndoManagerKeymap } from "y-codemirror.next";
 import { WebsocketProvider } from "y-websocket";
-import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
-import * as encoding from "lib0/encoding";
-import * as decoding from "lib0/decoding";
 import { diffLines } from "diff";
 import * as Y from "yjs";
 
@@ -95,8 +92,12 @@ import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
+import { EditorSession } from "./editor-session.ts";
+import { createElementRegistry, optionalElement } from "./dom.ts";
+import { PdfController } from "./pdf-controller.ts";
+import { WorkspaceController } from "./workspace-controller.ts";
 import type {
-  AppElement, AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
+  AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
   SearchMatch, ShareDetails, SourcePosition,
 } from "./types.ts";
@@ -154,7 +155,7 @@ createIcons({ icons: ICONS });
 const testMode = new URLSearchParams(window.location.search).has("test");
 const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
-const elements = Object.fromEntries([
+const elementIds = [
   "access-close", "access-dialog", "access-done", "access-project-name", "access-secret-close", "access-secret-dialog", "access-secret-done", "agent-access-close", "agent-access-dialog", "agent-access-done", "agent-command", "agent-command-label", "agent-direct", "agent-editing-description", "agent-propose", "back-projects",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
@@ -168,7 +169,49 @@ const elements = Object.fromEntries([
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
-].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
+] as const;
+
+const elements = createElementRegistry(elementIds, {
+  access_secret_dialog: HTMLDialogElement,
+  access_dialog: HTMLDialogElement,
+  agent_access_dialog: HTMLDialogElement,
+  account_dialog: HTMLDialogElement,
+  action_dialog: HTMLDialogElement,
+  collaborator_dialog: HTMLDialogElement,
+  git_access_dialog: HTMLDialogElement,
+  git_dialog: HTMLDialogElement,
+  invite_dialog: HTMLDialogElement,
+  review_dialog: HTMLDialogElement,
+  account_display_name: HTMLInputElement,
+  account_username: HTMLInputElement,
+  action_input: HTMLInputElement,
+  agent_command: HTMLInputElement,
+  auth_password: HTMLInputElement,
+  auth_username: HTMLInputElement,
+  clone_command: HTMLInputElement,
+  display_name: HTMLInputElement,
+  git_message: HTMLInputElement,
+  invite_link: HTMLInputElement,
+  project_search: HTMLInputElement,
+  share_link: HTMLInputElement,
+  upload_input: HTMLInputElement,
+  review_text: HTMLTextAreaElement,
+  binary_download: HTMLAnchorElement,
+  binary_fallback_download: HTMLAnchorElement,
+  download_project: HTMLAnchorElement,
+  pdf_download: HTMLAnchorElement,
+  image_preview: HTMLImageElement,
+  account_save: HTMLButtonElement,
+  action_submit: HTMLButtonElement,
+  auth_submit: HTMLButtonElement,
+  compile_button: HTMLButtonElement,
+  file_preview_zoom_in: HTMLButtonElement,
+  file_preview_zoom_out: HTMLButtonElement,
+  git_commit: HTMLButtonElement,
+  git_refresh: HTMLButtonElement,
+  git_resolve: HTMLButtonElement,
+  refresh_structure: HTMLButtonElement,
+});
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
 function onDynamicClick(id: string, listener: (event: Event) => void): void {
@@ -226,13 +269,10 @@ const state: AppState = {
   persistence: null,
   unsaved: false,
   pdfDocument: null,
-  pdfLoadingTask: null,
-  pdfRequestVersion: 0,
-  pdfRenderVersion: 0,
-  pdfZoom: 1,
   pdfFitMode: "width",
+  pdfRenderVersion: 0,
   pdfSourceRevision: null,
-  pdfHighlights: null,
+  pdfZoom: 1,
   filePreviewDocument: null,
   filePreviewLoadingTask: null,
   filePreviewVersion: 0,
@@ -254,6 +294,7 @@ const editorUndoManagers = new WeakMap<EditorView, Y.UndoManager>();
 let autoCompileTimer: ReturnType<typeof setTimeout>;
 let compileRunning = false;
 let compileQueued = false;
+let editorSession: EditorSession | null = null;
 
 function updateSyncStatus() {
   if (!state.provider) return;
@@ -1431,10 +1472,15 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
 
 function disconnectEditor() {
   closeEditorContextMenu();
-  state.provider?.destroy();
-  state.view?.destroy();
-  state.doc?.destroy();
-  state.persistence?.destroy();
+  if (editorSession) editorSession.dispose();
+  else {
+    // Tests can install an in-memory editor without a websocket session.
+    state.provider?.destroy();
+    state.view?.destroy();
+    state.doc?.destroy();
+    state.persistence?.destroy();
+  }
+  editorSession = null;
   state.persistence = null;
   clearTimeout(autoCompileTimer);
   clearTimeout(staticDiagnosticTimer);
@@ -1456,7 +1502,9 @@ function setBlameMode(enabled: boolean): void {
 }
 
 function syncBlameMenuItem(): void {
-  const item = document.getElementById("toggle-blame");
+  // Radix renders menu content in a portal, so this node is intentionally
+  // queried when the menu opens rather than captured in the static registry.
+  const item = optionalElement("toggle-blame", HTMLElement);
   if (!item) return;
   item.setAttribute("aria-pressed", String(blameModeEnabled));
   item.classList.toggle("bg-accent", blameModeEnabled);
@@ -1702,66 +1750,45 @@ async function openFile(relativePath: string): Promise<void> {
   }
 
   elements.sync_state.textContent = "Connecting";
-  const doc = new Y.Doc();
   let guestAuthorId = localStorage.getItem("latexcoder-guest-author-id");
   if (!guestAuthorId) {
     guestAuthorId = `guest-${crypto.randomUUID()}`;
     localStorage.setItem("latexcoder-guest-author-id", guestAuthorId);
   }
-  const provider = new WebsocketProvider(socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`), encodeRoom(relativePath), doc, {
-    connect: true,
-    params: {
-      saved: "1",
-      authorId: state.user?.username || guestAuthorId,
-      authorName: displayName(),
+  const session = new EditorSession({
+    socketUrl: socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`),
+    room: encodeRoom(relativePath),
+    authorId: state.user?.username || guestAuthorId,
+    authorName: displayName(),
+    editable: state.projectCanEdit,
+    persistenceKey: `project:${state.projectId}:${relativePath}`,
+    parent: elements.editor,
+    extensions: editorExtensions,
+    callbacks: {
+      onAwarenessChange: updatePresence,
+      onSaved: () => {
+        if (editorSession !== session) return;
+        updateSyncStatus();
+        scheduleBlameRefresh(0);
+      },
+      onStatusChange: () => { if (editorSession === session) updateSyncStatus(); },
+      onUnsavedChange: unsaved => { state.unsaved = unsaved; },
+      onSynced: () => {
+        if (editorSession !== session) return;
+        renderReviews();
+        scheduleStaticDiagnostics();
+        applyEditorDiagnostics();
+        scheduleAutoCompile();
+        scheduleBlameRefresh(0);
+      },
     },
   });
-  const ytext = doc.getText("content");
-  state.doc = doc;
-  state.provider = provider;
-  state.persistence = state.projectCanEdit ? new IndexeddbPersistence(`project:${state.projectId}:${relativePath}`, doc) : null;
-  state.unsaved = state.projectCanEdit;
-  let nonce = 0;
-  const requestSave = () => {
-    if (!state.projectCanEdit) return;
-    state.unsaved = true;
-    if (provider.wsconnected && provider.synced) {
-      const message = encoding.createEncoder();
-      encoding.writeVarUint(message, 3);
-      encoding.writeVarString(message, String(nonce));
-      provider.ws.send(encoding.toUint8Array(message));
-    }
-    updateSyncStatus();
-  };
-  provider.messageHandlers[3] = (_encoder, decoder) => {
-    const savedNonce = decoding.readVarString(decoder);
-    if (state.provider === provider && savedNonce === String(nonce)) { state.unsaved = false; updateSyncStatus(); scheduleBlameRefresh(0); }
-  };
-  doc.on("update", (_update, origin) => {
-    if (state.provider !== provider) return;
-    if (state.projectCanEdit && origin !== provider) { nonce++; requestSave(); }
-  });
-  state.view = new EditorView({
-    state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider, state.projectCanEdit) }),
-    parent: elements.editor,
-  });
+  editorSession = session;
+  state.doc = session.doc;
+  state.provider = session.provider;
+  state.persistence = session.persistence;
+  state.view = session.view;
   applyEditorDiagnostics();
-  provider.on("status", () => {
-    if (state.provider === provider) updateSyncStatus();
-  });
-  provider.on("sync", synced => {
-    if (synced) {
-      if (state.provider !== provider) return;
-      if (state.projectCanEdit) requestSave();
-      else updateSyncStatus();
-      renderReviews();
-      scheduleStaticDiagnostics();
-      applyEditorDiagnostics();
-      scheduleAutoCompile();
-      scheduleBlameRefresh(0);
-    }
-  });
-  provider.awareness.on("change", updatePresence);
   setAwareness();
 }
 
@@ -2374,180 +2401,52 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   document.title = `${project.name} · LaTeX Coder`;
   if (!changed && state.view) return;
   state.activeFile = "";
-  state.pdfRequestVersion += 1;
-  state.pdfRenderVersion += 1;
-  if (state.pdfLoadingTask) await state.pdfLoadingTask.destroy().catch(() => {});
-  state.pdfLoadingTask = null;
-  state.pdfDocument = null;
-  state.pdfHighlights = null;
-  document.getElementById("pdf-freshness")!.hidden = true;
-  elements.pdf_document.replaceChildren();
-  elements.pdf_document.hidden = true;
-  elements.empty_output.hidden = false;
-  elements.pdf_status.textContent = "No compiled PDF";
+  await pdfController.reset();
   elements.build_output.textContent = "";
   await refreshProject(true, true);
   watchProjectFiles();
 }
 
-const pdfContextMenu = document.getElementById("pdf-context-menu")!;
-let pdfContextAction: (() => Promise<void>) | null = null;
-function closePdfContextMenu() { pdfContextMenu.hidden = true; pdfContextAction = null; }
-document.getElementById("pdf-go-to-source")!.addEventListener("click", () => {
-  const action = pdfContextAction;
-  closePdfContextMenu();
-  void action?.();
-});
-document.addEventListener("pointerdown", event => { if (!pdfContextMenu.contains(event.target as Node)) closePdfContextMenu(); }, true);
-document.addEventListener("keydown", event => { if (event.key === "Escape") closePdfContextMenu(); });
-elements.pdf_view.addEventListener("scroll", closePdfContextMenu);
-window.addEventListener("resize", closePdfContextMenu);
-let pdfResizeFrame = 0;
-let pdfPriorityPage: number | undefined;
-const pdfViewBounds = elements.pdf_view.getBoundingClientRect();
-let pdfViewSize = `${pdfViewBounds.width}x${pdfViewBounds.height}`;
-new ResizeObserver(() => {
-  const bounds = elements.pdf_view.getBoundingClientRect();
-  const nextSize = `${bounds.width}x${bounds.height}`;
-  if (nextSize === pdfViewSize) return;
-  pdfViewSize = nextSize;
-  cancelAnimationFrame(pdfResizeFrame);
-  pdfResizeFrame = requestAnimationFrame(() => { if (state.pdfDocument) void renderPdf(pdfPriorityPage); });
-}).observe(elements.pdf_view);
-
-async function renderPdf(priorityPage?: number) {
-  if (priorityPage) pdfPriorityPage = priorityPage;
-  const pdf = state.pdfDocument;
-  if (!pdf) return;
-  const version = ++state.pdfRenderVersion;
-  const firstPage = await pdf.getPage(1);
-  const base = firstPage.getViewport({ scale: 1 });
-  const widthFit = (elements.pdf_view.clientWidth - 32) / base.width;
-  const heightFit = (elements.pdf_view.clientHeight - 32) / base.height;
-  const fit = Math.min(4, Math.max(0.2, state.pdfFitMode === "page" ? Math.min(widthFit, heightFit) : widthFit));
-  const scale = fit * state.pdfZoom;
-  const fragment = document.createDocumentFragment();
-  const renders: Array<() => Promise<void>> = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    if (version !== state.pdfRenderVersion) return;
-    const page = pageNumber === 1 ? firstPage : await pdf.getPage(pageNumber);
-    const viewport = page.getViewport({ scale });
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width * pixelRatio);
-    canvas.height = Math.floor(viewport.height * pixelRatio);
-    canvas.style.width = `${Math.floor(viewport.width)}px`;
-    canvas.style.height = `${Math.floor(viewport.height)}px`;
-    canvas.setAttribute("aria-label", `PDF page ${pageNumber}`);
-    canvas.dataset.page = String(pageNumber);
-    canvas.dataset.pdfScale = String(scale);
-    canvas.title = `${macReferences ? "Command" : "Ctrl"}+click to open source`;
-    const revision = state.pdfSourceRevision;
+const pdfController = new PdfController({
+  beforeOpenContextMenu: closeEditorContextMenu,
+  elements: {
+    contextMenu: document.getElementById("pdf-context-menu")!,
+    document: elements.pdf_document,
+    download: elements.pdf_download,
+    empty: elements.empty_output,
+    freshness: document.getElementById("pdf-freshness")!,
+    goToSource: document.getElementById("pdf-go-to-source") as HTMLButtonElement,
+    status: elements.pdf_status,
+    view: elements.pdf_view,
+  },
+  modifierLabel: macReferences ? "Command" : "Ctrl",
+  modifierPressed: referenceModifierPressed,
+  pdfUrl: () => projectApiUrl("v1/build/pdf"),
+  sourceAt: async (page, x, y, revision) => {
     const projectId = state.projectId;
-    const navigateSource = async (x: number, y: number) => {
-      if (state.projectId !== projectId) return;
-      try {
-        const destination = await request<SourcePosition>("v1/build/source", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page: pageNumber, x, y, revision }),
-        });
-        if (state.projectId === projectId) await revealSource(destination);
-      } catch (error) { showToast(error.message); }
-    };
-    const sourcePoint = (event: MouseEvent) => {
-      const bounds = canvas.getBoundingClientRect();
-      return { x: (event.clientX - bounds.left) * viewport.width / bounds.width / scale, y: (event.clientY - bounds.top) * viewport.height / bounds.height / scale };
-    };
-    canvas.addEventListener("click", event => {
-      if (!referenceModifierPressed(event) || event.button !== 0) return;
-      event.preventDefault();
-      closePdfContextMenu();
-      const { x, y } = sourcePoint(event);
-      void navigateSource(x, y);
+    const destination = await request<SourcePosition>("v1/build/source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page, x, y, revision }),
     });
-    canvas.addEventListener("contextmenu", event => {
-      event.preventDefault();
-      closeEditorContextMenu();
-      const { x, y } = sourcePoint(event);
-      pdfContextAction = () => navigateSource(x, y);
-      pdfContextMenu.hidden = false;
-      pdfContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - pdfContextMenu.offsetWidth - 8))}px`;
-      pdfContextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - pdfContextMenu.offsetHeight - 8))}px`;
-      document.getElementById("pdf-go-to-source")!.focus({ preventScroll: true });
-    });
-    fragment.append(canvas);
-    renders.push(async () => {
-      if (version !== state.pdfRenderVersion) return;
-      await page.render({
-        canvas,
-        canvasContext: canvas.getContext("2d"),
-        viewport,
-        transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-      }).promise;
-    });
-  }
-  if (version !== state.pdfRenderVersion) return;
-  elements.pdf_document.replaceChildren(fragment);
-  elements.pdf_document.hidden = false;
-  elements.empty_output.hidden = true;
-  if (priorityPage && renders[priorityPage - 1]) {
-    await renders[priorityPage - 1]();
-    // Reserve every page's layout, but do not make navigation wait for other pages.
-    void (async () => {
-      for (let index = 0; index < renders.length; index++) {
-        if (version !== state.pdfRenderVersion) return;
-        if (index !== priorityPage - 1) await renders[index]();
-      }
-    })().catch(error => { if (version === state.pdfRenderVersion) console.error("PDF background render failed", error); });
-  } else {
-    for (const render of renders) await render();
-  }
-  if (version !== state.pdfRenderVersion) return;
-  elements.pdf_status.textContent = "PDF ready";
-  renderPdfHighlights();
-  refreshPdfStatus();
-}
+    if (state.projectId !== projectId) throw new Error("The project changed. Try again.");
+    return destination;
+  },
+  revealSource,
+  showError: showToast,
+});
+// Preserve the read-only E2E/debug surface while PdfController owns the data.
+Object.defineProperties(state, {
+  pdfDocument: { get: () => pdfController.document },
+  pdfFitMode: { get: () => pdfController.mode },
+  pdfRenderVersion: { get: () => pdfController.currentRenderVersion },
+  pdfSourceRevision: { get: () => pdfController.sourceRevision },
+  pdfZoom: { get: () => pdfController.currentZoom },
+});
 
 async function showPdf(force = false, priorityPage?: number) {
-  closePdfContextMenu();
-  if (force) pdfPriorityPage = priorityPage;
-  const requestVersion = ++state.pdfRequestVersion;
-  const downloadUrl = projectApiUrl("v1/build/pdf");
-  downloadUrl.searchParams.set("v", String(Date.now()));
-  downloadUrl.searchParams.set("cached", "1");
-  elements.pdf_download.href = downloadUrl.toString();
-  elements.pdf_status.textContent = "Loading PDF";
-  elements.empty_output.hidden = false;
-  try {
-    if (force && state.pdfLoadingTask) {
-      state.pdfRenderVersion += 1;
-      await state.pdfLoadingTask.destroy();
-      if (requestVersion !== state.pdfRequestVersion) return;
-      state.pdfLoadingTask = null;
-      state.pdfDocument = null;
-    }
-    if (!state.pdfDocument) {
-      const response = await fetch(elements.pdf_download.href);
-      if (requestVersion !== state.pdfRequestVersion) return;
-      if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
-      state.pdfSourceRevision = response.headers.get("X-LaTeX-Coder-Source-Revision");
-      const loadingTask = getDocument({ data: await response.arrayBuffer() });
-      state.pdfLoadingTask = loadingTask;
-      const pdf = await loadingTask.promise;
-      if (requestVersion !== state.pdfRequestVersion) {
-        await loadingTask.destroy();
-        return;
-      }
-      state.pdfDocument = pdf;
-    }
-    await renderPdf(priorityPage);
-  } catch (error) {
-    if (requestVersion !== state.pdfRequestVersion) return;
-    console.error("paper PDF preview failed", error);
-    elements.pdf_document.hidden = true;
-    elements.pdf_status.textContent = "Preview failed. Download the PDF instead.";
-  }
+  await pdfController.show(force, priorityPage);
+  await refreshPdfStatus();
 }
 
 async function compile() {
@@ -2591,22 +2490,16 @@ async function compile() {
 }
 
 function markPdfStale() {
-  const freshness = document.getElementById("pdf-freshness")!;
-  if (!state.pdfDocument) return;
-  freshness.hidden = false;
-  freshness.textContent = "PDF outdated";
+  pdfController.markStale();
 }
 
 async function refreshPdfStatus() {
   const project = state.projectId;
-  if (!project || !state.pdfDocument) return;
+  if (!project || !pdfController.hasDocument) return;
   try {
     const { build } = await request<{ build: BuildInfo }>("v1/build");
     if (project !== state.projectId) return;
-    const freshness = document.getElementById("pdf-freshness")!;
-    const stale = build.stale || state.pdfSourceRevision !== build.sourceRevision;
-    freshness.hidden = !stale;
-    freshness.textContent = stale ? "PDF outdated" : "";
+    pdfController.setStale(Boolean(build.stale || pdfController.sourceRevision !== build.sourceRevision));
   } catch { markPdfStale(); }
 }
 
@@ -2695,11 +2588,7 @@ function selectOutput(name: "pdf" | "review" | "log"): void {
 }
 
 function setOutputViewOpen(open: boolean): void {
-  const mobile = window.matchMedia("(max-width: 760px)").matches;
-  if (mobile) elements.output_pane.classList.toggle("mobile-open", open);
-  else if (outputHidden) desktopOutputOpen = open;
-  updateWorkspaceLayout();
-  elements.open_pdf.setAttribute("aria-expanded", String(open));
+  workspaceController.setOutputViewOpen(open);
 }
 
 setInterval(() => {
@@ -3161,27 +3050,23 @@ elements.open_pdf.addEventListener("click", () => {
 elements.close_output.addEventListener("click", () => setOutputViewOpen(false));
 function updatePdfFitButtons(): void {
   for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
-    const active = state.pdfFitMode === mode;
+    const active = pdfController.mode === mode;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   }
 }
 function setPdfFitMode(mode: "width" | "page"): void {
-  state.pdfFitMode = mode;
-  state.pdfZoom = 1;
+  pdfController.setFitMode(mode);
   updatePdfFitButtons();
-  void renderPdf();
 }
 elements.pdf_fit_width.addEventListener("click", () => setPdfFitMode("width"));
 elements.pdf_fit_page.addEventListener("click", () => setPdfFitMode("page"));
 updatePdfFitButtons();
 elements.pdf_zoom_out.addEventListener("click", () => {
-  state.pdfZoom = Math.max(0.5, state.pdfZoom - 0.15);
-  void renderPdf();
+  pdfController.zoomBy(-0.15);
 });
 elements.pdf_zoom_in.addEventListener("click", () => {
-  state.pdfZoom = Math.min(2, state.pdfZoom + 0.15);
-  void renderPdf();
+  pdfController.zoomBy(0.15);
 });
 elements.file_preview_zoom_out.addEventListener("click", () => {
   state.filePreviewZoom = Math.max(0.5, state.filePreviewZoom - 0.2);
@@ -3428,56 +3313,18 @@ async function goToPdf(view: EditorView) {
     });
   } finally {
     if (state.projectId === project && elements.pdf_status.textContent === "Locating source; updating PDF if needed...") {
-      elements.pdf_status.textContent = state.pdfDocument ? "PDF ready" : "No compiled PDF";
+      elements.pdf_status.textContent = pdfController.hasDocument ? "PDF ready" : "No compiled PDF";
     }
   }
   if (state.projectId !== project || state.view !== view) return;
   selectOutput("pdf");
-  const revealedOutput = narrowWorkspace.matches || outputHidden;
+  const revealedOutput = workspaceController.isNarrow || workspaceController.isOutputHidden;
   if (revealedOutput) {
     setOutputViewOpen(true);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    cancelAnimationFrame(pdfResizeFrame);
   }
-  if (!state.pdfDocument || state.pdfSourceRevision !== position.revision) {
-    await showPdf(true, position.page);
-  } else if (revealedOutput || !elements.pdf_document.querySelector(`canvas[data-page="${position.page}"]`)) {
-    await renderPdf(position.page);
-  }
-  if (state.projectId !== project || state.pdfSourceRevision !== position.revision) throw new Error("The PDF changed. Try navigating again.");
-  const canvas = (elements.pdf_document as HTMLElement).querySelector<HTMLCanvasElement>(`canvas[data-page="${position.page}"]`);
-  if (!canvas) throw new Error("PDF page not found");
-  const page = await state.pdfDocument.getPage(position.page);
-  const viewport = page.getViewport({ scale: 1 });
-  const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
-  const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
-  elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "auto" });
-  const expires = Date.now() + 3000;
-  state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
-  renderPdfHighlights();
-  setTimeout(() => { if (state.pdfHighlights?.expires === expires) { state.pdfHighlights = null; renderPdfHighlights(); } }, 3000);
-}
-
-function renderPdfHighlights() {
-  elements.pdf_document.querySelectorAll("[data-pdf-highlight]").forEach((marker: Element) => marker.remove());
-  if (!state.pdfHighlights || state.pdfHighlights.expires < Date.now()) return;
-  const canvases = [...elements.pdf_document.querySelectorAll("canvas")];
-  let index = 0;
-  for (const box of state.pdfHighlights.boxes) {
-    const canvas = canvases.find(canvas => canvas.dataset.page === String(box.page));
-    if (!canvas) continue;
-    // Canvas render scale is independent of device pixel ratio.
-    const scale = Number(canvas.dataset.pdfScale || 1);
-    const marker = document.createElement("div");
-    if (index++ === 0) marker.id = "pdf-source-marker";
-    marker.dataset.pdfHighlight = "true";
-    marker.className = "pointer-events-none absolute z-10 border-2 border-amber-500 bg-amber-200/30";
-    marker.style.top = `${canvas.offsetTop + Math.max(0, box.top) * scale}px`;
-    marker.style.left = `${canvas.offsetLeft + Math.max(0, box.left) * scale}px`;
-    marker.style.width = `${Math.max(4, Math.min(box.width * scale, canvas.clientWidth))}px`;
-    marker.style.height = `${Math.max(4, box.height * scale)}px`;
-    elements.pdf_document.append(marker);
-  }
+  await pdfController.revealPosition(position, revealedOutput);
+  if (state.projectId !== project) throw new Error("The project changed. Try again.");
+  await refreshPdfStatus();
 }
 
 editorContextMenu.addEventListener("click", async event => {
@@ -3651,171 +3498,31 @@ document.getElementById("search-form")!.addEventListener("submit", async event =
   } catch (error) { if (version === searchVersion) searchStatus.textContent = error.message; }
 });
 
-const workspace = document.getElementById("workspace")!;
-const filesResize = document.getElementById("files-resize")!;
-const outputResize = document.getElementById("output-resize")!;
-const narrowWorkspace = window.matchMedia("(max-width: 760px)");
-const workspaceColumns: Array<[HTMLElement, number]> = [
-  [elements.files_pane, 1], [filesResize, 2],
-  [document.querySelector<HTMLElement>(".editor-pane")!, 3],
-  [outputResize, 4], [elements.output_pane, 5],
-];
-let filesWidth = 208;
-let outputWidth: number | null = null;
-let structureHeight = 220;
-let filesHidden = false;
-let outputHidden = false;
-let desktopOutputOpen = false;
-try {
-  const saved = JSON.parse(localStorage.getItem("workspace-layout") || "null");
-  if (saved) {
-    if (Number.isFinite(saved.filesWidth)) filesWidth = saved.filesWidth;
-    if (Number.isFinite(saved.outputWidth)) outputWidth = saved.outputWidth;
-    if (Number.isFinite(saved.structureHeight)) structureHeight = saved.structureHeight;
-    filesHidden = saved.filesHidden === true;
-    outputHidden = saved.outputHidden === true;
-  }
-} catch { /* Ignore unavailable storage or invalid preferences. */ }
-
-function updateWorkspaceLayout() {
-  const mobile = narrowWorkspace.matches;
-  const mobileOutputOpen = elements.output_pane.classList.contains("mobile-open");
-  const singlePaneOutput = !mobile && outputHidden && desktopOutputOpen;
-  elements.files_pane.style.transform = mobile && elements.files_pane.classList.contains("mobile-open") ? "translateX(0)" : "";
-  elements.editor_pane.hidden = (mobile && mobileOutputOpen) || singlePaneOutput;
-  elements.output_pane.hidden = !mobile && outputHidden && !desktopOutputOpen;
-  // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
-  for (const [pane, column] of workspaceColumns) {
-    pane.style.gridColumn = mobile ? "" : String(column);
-    pane.style.gridRow = mobile ? "" : "1";
-  }
-  if (singlePaneOutput) elements.output_pane.style.gridColumn = "3";
-  elements.files_pane.hidden = !mobile && filesHidden;
-  elements.file_list.hidden = !mobile && filesHidden;
-  const width = workspace.clientWidth;
-  const filesHeight = elements.files_pane.clientHeight;
-  if (filesHeight) {
-    structureHeight = Math.max(112, Math.min(structureHeight, filesHeight - 104));
-    elements.files_pane.style.gridTemplateRows = `44px minmax(96px,1fr) 8px ${structureHeight}px`;
-  }
-  if (width && !mobile) {
-    filesWidth = Math.max(180, Math.min(filesWidth, width - 580));
-    const remaining = width - (filesHidden ? 0 : filesWidth) - 16;
-    const output = Math.max(320, Math.min(remaining - 240, outputWidth ?? remaining * 0.46));
-    workspace.style.gridTemplateColumns = `${filesHidden ? 0 : filesWidth}px 8px minmax(0,1fr) 8px ${outputHidden ? 0 : output}px`;
-  }
-  elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
-  elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
-  elements.workspace_view_switch.hidden = !mobile && !outputHidden;
-  elements.close_output.hidden = !mobile && !singlePaneOutput;
-
-  const syncColumnToggle = (button: HTMLElement, hidden: boolean, labels: [string, string]): void => {
-    button.title = hidden ? labels[1] : labels[0];
-    button.setAttribute("aria-label", button.title);
-    button.setAttribute("aria-expanded", String(!hidden));
-    button.querySelector("[data-collapse-icon]")!.toggleAttribute("hidden", hidden);
-    button.querySelector("[data-expand-icon]")!.toggleAttribute("hidden", !hidden);
-  };
-  syncColumnToggle(elements.toggle_files_column, filesHidden, ["Hide files", "Show files"]);
-  syncColumnToggle(elements.toggle_output_column, outputHidden, ["Hide PDF", "Show PDF"]);
-}
-
-function saveWorkspaceLayout() {
-  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, structureHeight, filesHidden, outputHidden })); } catch { /* Storage is optional. */ }
-}
-
-function adjustStructureHeight(delta: number): void {
-  structureHeight -= delta;
-  updateWorkspaceLayout();
-}
-
-elements.structure_resize.addEventListener("pointerdown", event => {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  elements.structure_resize.setPointerCapture(event.pointerId);
-  let previous = event.clientY;
-  const move = (next: PointerEvent) => { adjustStructureHeight(next.clientY - previous); previous = next.clientY; };
-  const stop = () => {
-    elements.structure_resize.removeEventListener("pointermove", move);
-    elements.structure_resize.removeEventListener("pointerup", stop);
-    elements.structure_resize.removeEventListener("lostpointercapture", stop);
-    saveWorkspaceLayout();
-  };
-  elements.structure_resize.addEventListener("pointermove", move);
-  elements.structure_resize.addEventListener("pointerup", stop);
-  elements.structure_resize.addEventListener("lostpointercapture", stop);
-});
-elements.structure_resize.addEventListener("keydown", event => {
-  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-  event.preventDefault();
-  adjustStructureHeight((event.key === "ArrowUp" ? -1 : 1) * (event.shiftKey ? 40 : 10));
-  saveWorkspaceLayout();
+const workspaceController = new WorkspaceController({
+  closeFiles: elements.close_files,
+  closeOutput: elements.close_output,
+  editorPane: elements.editor_pane,
+  fileList: elements.file_list,
+  filesPane: elements.files_pane,
+  filesResize: document.getElementById("files-resize")!,
+  openPdf: elements.open_pdf,
+  outputPane: elements.output_pane,
+  outputResize: document.getElementById("output-resize")!,
+  structureResize: elements.structure_resize,
+  toggleFiles: elements.toggle_files,
+  toggleFilesColumn: elements.toggle_files_column,
+  toggleOutputColumn: elements.toggle_output_column,
+  viewSwitch: elements.workspace_view_switch,
+  workspace: document.getElementById("workspace")!,
 });
 
-for (const handle of [filesResize, outputResize]) {
-  const adjust = (delta: number) => {
-    if (narrowWorkspace.matches) return;
-    if (handle === filesResize) {
-      if (filesHidden) return;
-      filesWidth += delta;
-    }
-    else {
-      if (outputHidden) return;
-      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth) - 16;
-      outputWidth = Math.max(320, Math.min(remaining - 240, elements.output_pane.getBoundingClientRect().width - delta));
-    }
-    updateWorkspaceLayout();
-  };
-  handle.addEventListener("pointerdown", event => {
-    if (event.button !== 0 || (event.target as Element).closest("button")) return;
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    let previous = event.clientX;
-    const move = (next: PointerEvent) => { adjust(next.clientX - previous); previous = next.clientX; };
-    const stop = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", stop);
-      handle.removeEventListener("lostpointercapture", stop);
-      saveWorkspaceLayout();
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", stop);
-    handle.addEventListener("lostpointercapture", stop);
-  });
-  handle.addEventListener("keydown", event => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    adjust((event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 40 : 10));
-    saveWorkspaceLayout();
-  });
-}
 function setMobileFilesOpen(open: boolean): void {
-  elements.files_pane.classList.toggle("mobile-open", open);
-  updateWorkspaceLayout();
+  workspaceController.setMobileFilesOpen(open);
 }
-
-elements.toggle_files.addEventListener("click", () => {
-  setMobileFilesOpen(!elements.files_pane.classList.contains("mobile-open"));
-});
-elements.toggle_files_column.addEventListener("click", () => {
-  filesHidden = !filesHidden;
-  saveWorkspaceLayout();
-  updateWorkspaceLayout();
-});
-elements.toggle_output_column.addEventListener("click", () => {
-  outputHidden = !outputHidden;
-  desktopOutputOpen = false;
-  saveWorkspaceLayout();
-  updateWorkspaceLayout();
-});
-elements.close_files.addEventListener("click", () => setMobileFilesOpen(false));
 onDynamicClick("toggle-blame", () => setBlameMode(!blameModeEnabled));
 document.getElementById("history-menu")!.addEventListener("click", () => requestAnimationFrame(syncBlameMenuItem));
 document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
 document.getElementById("close-review")!.addEventListener("click", () => setReviewOpen(false));
-new ResizeObserver(updateWorkspaceLayout).observe(workspace);
-narrowWorkspace.addEventListener("change", updateWorkspaceLayout);
-updateWorkspaceLayout();
 document.querySelectorAll<HTMLElement>("[data-output]:not([data-output=review])").forEach(button => button.addEventListener("click", () => {
   if (button.dataset.output === "pdf" || button.dataset.output === "review" || button.dataset.output === "log") selectOutput(button.dataset.output);
 }));

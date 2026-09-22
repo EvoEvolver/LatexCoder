@@ -11,7 +11,7 @@
     "dev": "concurrently -k -n server,vite \"tsx watch src/server/main.ts\" \"vite\"",
     "prestart": "pnpm build",
     "start": "tsx src/server/main.ts",
-    "test": "pnpm build && tsx --test tests/*.test.ts",
+    "test": "pnpm build && tsx --test --test-concurrency=1 tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json && tsc -p tsconfig.tools.json && tsc -p tsconfig.tests.json"
   },
   "dependencies": {
