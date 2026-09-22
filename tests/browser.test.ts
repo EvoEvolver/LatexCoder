@@ -402,7 +402,7 @@ test("mobile editor can open, compile, view, and close the PDF preview", async (
     assert.equal(await page.locator("#open-pdf").getAttribute("aria-expanded"), "true");
     assert.equal(await page.locator("#compile-button").isVisible(), true);
     assert.equal(await page.locator("#close-output").isVisible(), true);
-    assert.equal((await page.locator("#close-output").textContent())?.trim(), "Code");
+    assert.equal((await page.locator("#close-output").textContent())?.trim(), "Source");
 
     await page.locator("#compile-button").click();
     await page.locator("#pdf-document canvas").waitFor();
@@ -971,15 +971,16 @@ test(`${platform} real SyncTeX PDF modifier-click opens included source and reje
 });
 }
 
-test("workspace panels resize and Files can be hidden and restored", async () => {
+test("workspace panels resize, collapse from arrow handles, and switch the single workspace view", async () => {
   await withEditor(async ({ page }) => {
     await createEditor(page, LIPSUM);
     const width = async selector => (await page.locator(selector).boundingBox()).width;
     const drag = async (selector, delta) => {
       const box = await page.locator(selector).boundingBox();
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      const y = box.y + 24;
+      await page.mouse.move(box.x + box.width / 2, y);
       await page.mouse.down();
-      await page.mouse.move(box.x + box.width / 2 + delta, box.y + box.height / 2, { steps: 8 });
+      await page.mouse.move(box.x + box.width / 2 + delta, y, { steps: 8 });
       await page.mouse.up();
     };
     const files = await width("#files-pane");
@@ -990,7 +991,7 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     assert.equal(new Set(toolbarStyles.map(style => style.border)).size, 1);
     assert.equal(await width("#output-resize"), 8);
     const resizeStyles = await page.locator("#files-resize, #output-resize").evaluateAll(elements => elements.map(element => {
-      const handle = element.querySelector("span");
+      const handle = element.querySelector("button");
       return {
         background: getComputedStyle(element).backgroundColor,
         width: element.getBoundingClientRect().width,
@@ -1005,10 +1006,12 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     await drag("#output-resize", -60);
     assert.ok(await width("#output-pane") > output + 50);
     const resizedOutput = await width("#output-pane");
-    await page.locator("#toggle-files").click();
+    assert.equal(await page.locator("#workspace-view-switch").isVisible(), false);
+    await page.locator("#toggle-files-column").click();
     assert.equal(await page.locator("#file-list").isVisible(), false);
     assert.equal(await page.locator("#files-pane").isVisible(), false);
-    assert.equal(await page.locator("#files-resize").isVisible(), false);
+    assert.equal(await page.locator("#files-resize").isVisible(), true);
+    assert.equal(await page.locator("#toggle-files-column").getAttribute("title"), "Show files");
     const collapsedOutput = await page.locator("#output-pane").boundingBox();
     const collapsedEditor = await page.locator(".editor-pane").boundingBox();
     const workspaceBox = await page.locator("#workspace").boundingBox();
@@ -1021,11 +1024,38 @@ test("workspace panels resize and Files can be hidden and restored", async () =>
     await page.reload();
     await page.waitForFunction(() => globalThis.__paperTest);
     assert.equal(await page.locator("#files-pane").isVisible(), false);
+    assert.equal(await page.locator("#files-resize").isVisible(), true);
     const restoredOutput = await page.locator("#output-pane").boundingBox();
     assert.ok(Math.abs(restoredOutput.width - resizedOutput) < 1, "reload must restore the chosen PDF width");
     assert.ok(Math.abs(restoredOutput.x + restoredOutput.width - workspaceBox.x - workspaceBox.width) < 1);
-    await page.locator("#toggle-files").click();
+    await page.locator("#toggle-files-column").click();
     assert.equal(await page.locator("#files-pane").isVisible(), true);
+
+    await page.locator("#toggle-output-column").click();
+    assert.equal(await page.locator("#output-pane").isVisible(), false);
+    assert.equal(await page.locator("#output-resize").isVisible(), true);
+    assert.equal(await page.locator("#toggle-output-column").getAttribute("title"), "Show PDF");
+    assert.equal(await page.locator("#workspace-view-switch").isVisible(), true);
+    assert.equal(await page.locator("#editor-pane").isVisible(), true);
+    await page.screenshot({ path: "/tmp/latexcoder-single-source.png" });
+    await page.locator("#open-pdf").click();
+    assert.equal(await page.locator("#editor-pane").isVisible(), false);
+    assert.equal(await page.locator("#output-pane").isVisible(), true);
+    assert.equal(await page.locator("#close-output").isVisible(), true);
+    const singlePdf = await page.locator("#output-pane").boundingBox();
+    const singleWorkspace = await page.locator("#workspace").boundingBox();
+    const singleLayout = await page.locator("#output-pane").evaluate(element => ({ style: element.getAttribute("style"), computedRow: getComputedStyle(element).gridRow, workspaceRows: getComputedStyle(element.parentElement!).gridTemplateRows }));
+    assert.ok(singlePdf.width > resizedOutput + 200, "single-view PDF should fill the source column");
+    assert.ok(singlePdf.x > singleWorkspace.x);
+    assert.ok(Math.abs(singlePdf.y - singleWorkspace.y) < 1, `single-view PDF must stay in the workspace's first row: ${JSON.stringify({ singlePdf, singleWorkspace, singleLayout })}`);
+    assert.ok(Math.abs(singlePdf.height - singleWorkspace.height) < 1, `single-view PDF must fill the workspace height: ${JSON.stringify({ singlePdf, singleWorkspace })}`);
+    await page.screenshot({ path: "/tmp/latexcoder-single-pdf.png" });
+    await page.locator("#close-output").click();
+    assert.equal(await page.locator("#editor-pane").isVisible(), true);
+    assert.equal(await page.locator("#output-pane").isVisible(), false);
+    await page.locator("#toggle-output-column").click();
+    assert.equal(await page.locator("#output-pane").isVisible(), true);
+    assert.equal(await page.locator("#workspace-view-switch").isVisible(), false);
     await page.screenshot({ path: "/tmp/latexcoder-resizable-desktop.png" });
     await page.reload();
     await page.waitForFunction(() => globalThis.__paperTest);
@@ -1290,7 +1320,7 @@ test("real collaborative page creates and accepts an insertion suggestion", asyn
   });
 });
 
-test("awareness shows other collaborators but not the local user", async () => {
+test("awareness hides the local user, shows collaborator details, and jumps to remote cursors", async () => {
   await withEditor(async ({ page, base, browser }) => {
     await page.goto(`${base}/?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
@@ -1304,6 +1334,38 @@ test("awareness shows other collaborators but not the local user", async () => {
       await other.waitForFunction(() => document.querySelector("#git-summary")?.textContent?.startsWith("main"));
       await page.waitForFunction(() => document.querySelectorAll("#presence .presence-avatar").length === 1);
       await other.waitForFunction(() => document.querySelectorAll("#presence .presence-avatar").length === 1);
+
+      const target = await other.evaluate(() => {
+        const { provider, view } = globalThis.__paperE2E.state;
+        provider.awareness.setLocalStateField("user", { name: "Collaborator Full Name", username: "collab.user", color: "#2563eb", colorLight: "#2563eb33" });
+        const anchor = Math.max(1, view.state.doc.length - 4);
+        view.focus();
+        view.dispatch({ selection: { anchor } });
+        return anchor;
+      });
+      await page.waitForFunction(() => [...globalThis.__paperE2E.state.provider.awareness.getStates().values()].some(value => value.user?.username === "collab.user" && value.cursor?.head));
+
+      const avatar = page.locator("#presence .presence-avatar");
+      await avatar.hover();
+      const tooltip = avatar.locator(".presence-tooltip");
+      await tooltip.waitFor();
+      assert.match((await tooltip.textContent()) || "", /Collaborator Full Name@collab\.userEditing this file/);
+      await page.screenshot({ path: "/tmp/latexcoder-awareness-details.png" });
+      await page.evaluate(() => {
+        const view = globalThis.__paperE2E.state.view;
+        view.dispatch({ selection: { anchor: 0 } });
+      });
+      await avatar.click();
+      await page.waitForFunction(anchor => globalThis.__paperE2E.state.view.state.selection.main.head === anchor, target);
+
+      await other.evaluate(() => {
+        const { provider, view } = globalThis.__paperE2E.state;
+        view.contentDOM.blur();
+        provider.awareness.setLocalStateField("cursor", null);
+      });
+      await page.waitForFunction(() => [...globalThis.__paperE2E.state.provider.awareness.getStates().values()].some(value => value.user?.username === "collab.user" && !value.cursor));
+      await avatar.click();
+      await page.locator("#toast").filter({ hasText: "Collaborator Full Name is not currently editing." }).waitFor();
     } finally {
       await other.close();
     }

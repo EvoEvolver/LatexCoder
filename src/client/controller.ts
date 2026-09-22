@@ -167,7 +167,7 @@ const elements = Object.fromEntries([
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-blame", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
+  "toast", "toggle-blame", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -594,7 +594,7 @@ elements.open_structure.addEventListener("click", () => {
 
 function showExpandedStructure(): void {
   setReviewOpen(false);
-  setMobileOutputOpen(false);
+  setOutputViewOpen(false);
   setMobileFilesOpen(false);
   elements.structure_view.hidden = false;
   elements.editor.hidden = true;
@@ -944,7 +944,7 @@ async function followReference(link: ReferenceLink) {
     const source = view.state.doc.toString();
     const current = link.kind === "file" ? { from: 0, to: 0 } : referenceDefinition(source, link.key, link.kind);
     if (!current) { showToast(`Definition not found: ${link.key}`); return; }
-    setMobileOutputOpen(false);
+    setOutputViewOpen(false);
     view.dispatch({ selection: { anchor: current.from, head: current.to }, effects: EditorView.scrollIntoView(current.from, { y: "center" }) });
     view.focus();
   } catch (error) { showToast(error.message); }
@@ -1583,20 +1583,80 @@ async function showFilePreview(file: ProjectFile): Promise<void> {
   showFilePreviewFallback(relativePath);
 }
 
-function updatePresence() {
+type PresenceUser = { name: string; username: string | null; color: string };
+type PresenceEntry = { clientId: number; user: PresenceUser; hasCursor: boolean };
+
+function presenceEntry(clientId: number, value: Record<string, unknown>): PresenceEntry | null {
+  const candidate = value.user as Record<string, unknown> | undefined;
+  if (!candidate || typeof candidate.name !== "string" || !candidate.name.trim()) return null;
+  const cursor = value.cursor as { anchor?: unknown; head?: unknown } | null | undefined;
+  return {
+    clientId,
+    user: {
+      name: candidate.name,
+      username: typeof candidate.username === "string" && candidate.username ? candidate.username : null,
+      color: typeof candidate.color === "string" ? candidate.color : colorFor(candidate.name),
+    },
+    hasCursor: Boolean(cursor?.anchor && cursor?.head),
+  };
+}
+
+function jumpToCollaborator(clientId: number, name: string): void {
+  const awarenessState = state.provider?.awareness.getStates().get(clientId);
+  const cursor = awarenessState?.cursor as { head?: Y.RelativePosition } | null | undefined;
+  const ytext = state.doc?.getText("content");
+  if (!state.view || !state.doc || !ytext || !cursor?.head) {
+    showToast(`${name} is not currently editing.`);
+    return;
+  }
+  try {
+    const position = Y.createAbsolutePositionFromRelativePosition(cursor.head, state.doc);
+    if (!position || position.type !== ytext) {
+      showToast(`${name} is not currently editing.`);
+      return;
+    }
+    const anchor = Math.max(0, Math.min(position.index, state.view.state.doc.length));
+    state.view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: "center" }) });
+    state.view.focus();
+  } catch {
+    showToast(`${name} is not currently editing.`);
+  }
+}
+
+function updatePresence(): void {
   elements.presence.replaceChildren();
   if (!state.provider) return;
   const users = [...state.provider.awareness.getStates().entries()]
     .filter(([clientId]) => clientId !== state.provider.awareness.clientID)
-    .map(([, value]) => value.user)
-    .filter(Boolean)
+    .map(([clientId, value]) => presenceEntry(clientId, value))
+    .filter((entry): entry is PresenceEntry => entry !== null)
     .slice(0, 10);
-  for (const user of users) {
-    const avatar = document.createElement("span");
-    avatar.className = "presence-avatar -ml-1.5 grid size-7 place-items-center rounded-full border-2 border-background text-[9px] font-bold text-white";
-    avatar.title = user.name;
+  for (const { clientId, user, hasCursor } of users) {
+    const avatar = document.createElement("button");
+    avatar.type = "button";
+    avatar.className = "presence-avatar group relative -ml-1.5 grid size-7 place-items-center rounded-full border-2 border-background text-[9px] font-bold text-white shadow-sm outline-none transition-transform hover:z-20 hover:-translate-y-0.5 focus-visible:z-20 focus-visible:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1";
     avatar.style.backgroundColor = user.color;
-    avatar.textContent = user.name.slice(0, 2).toUpperCase();
+    avatar.setAttribute("aria-label", `Go to ${user.name}${user.username ? ` (@${user.username})` : ""}`);
+    avatar.addEventListener("click", () => jumpToCollaborator(clientId, user.name));
+
+    const initials = document.createElement("span");
+    initials.textContent = Array.from(user.name.trim()).slice(0, 2).join("").toUpperCase();
+    const tooltip = document.createElement("span");
+    tooltip.id = `presence-details-${clientId}`;
+    tooltip.className = "presence-tooltip pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-max min-w-44 max-w-64 gap-0.5 rounded-md border bg-card px-3 py-2 text-left font-normal text-card-foreground shadow-xl group-hover:grid group-focus-visible:grid";
+    tooltip.setAttribute("role", "tooltip");
+    avatar.setAttribute("aria-describedby", tooltip.id);
+    const fullName = document.createElement("strong");
+    fullName.className = "break-words text-xs font-semibold";
+    fullName.textContent = user.name;
+    const username = document.createElement("span");
+    username.className = "break-all text-[10px] text-muted-foreground";
+    username.textContent = user.username ? `@${user.username}` : "Guest collaborator";
+    const status = document.createElement("span");
+    status.className = `mt-1 text-[10px] ${hasCursor ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`;
+    status.textContent = hasCursor ? "Editing this file" : "No active cursor";
+    tooltip.append(fullName, username, status);
+    avatar.append(initials, tooltip);
     elements.presence.append(avatar);
   }
 }
@@ -1605,7 +1665,7 @@ function setAwareness() {
   if (!state.provider) return;
   const name = displayName();
   const color = colorFor(name);
-  state.provider.awareness.setLocalStateField("user", { name, color, colorLight: `${color}33` });
+  state.provider.awareness.setLocalStateField("user", { name, username: state.user?.username || null, color, colorLight: `${color}33` });
 }
 
 async function openFile(relativePath: string): Promise<void> {
@@ -2503,7 +2563,7 @@ async function compile() {
     renderBuildErrors(result.build.log, result.build.errors);
     await showPdf(true);
     selectOutput("pdf");
-    setMobileOutputOpen(true);
+    setOutputViewOpen(true);
     showToast("PDF compiled.");
   } catch (error) {
     const build = await request<{ build: BuildInfo }>("v1/build").catch((): null => null);
@@ -2511,7 +2571,7 @@ async function compile() {
     elements.build_output.textContent = build?.build?.log || error.message;
     renderBuildErrors(build?.build?.log || error.message, build?.build?.errors, true);
     selectOutput("log");
-    setMobileOutputOpen(true);
+    setOutputViewOpen(true);
     showToast("Compilation failed. See Log for details.");
   } finally {
     elements.compile_button.disabled = false;
@@ -2628,10 +2688,11 @@ function selectOutput(name: "pdf" | "review" | "log"): void {
   if (name === "log") elements.build_log.scrollTop = 0;
 }
 
-function setMobileOutputOpen(open: boolean): void {
+function setOutputViewOpen(open: boolean): void {
   const mobile = window.matchMedia("(max-width: 760px)").matches;
-  elements.output_pane.classList.toggle("mobile-open", open);
-  elements.editor_pane.hidden = mobile && open;
+  if (mobile) elements.output_pane.classList.toggle("mobile-open", open);
+  else if (outputHidden) desktopOutputOpen = open;
+  updateWorkspaceLayout();
   elements.open_pdf.setAttribute("aria-expanded", String(open));
   elements.open_pdf.setAttribute("aria-pressed", String(open));
   elements.open_pdf.classList.toggle("active", open);
@@ -3094,10 +3155,10 @@ elements.suggest_edit.addEventListener("click", () => {
 });
 elements.open_pdf.addEventListener("click", () => {
   selectOutput("pdf");
-  setMobileOutputOpen(true);
+  setOutputViewOpen(true);
 });
-elements.mobile_code.addEventListener("click", () => setMobileOutputOpen(false));
-elements.close_output.addEventListener("click", () => setMobileOutputOpen(false));
+elements.mobile_code.addEventListener("click", () => setOutputViewOpen(false));
+elements.close_output.addEventListener("click", () => setOutputViewOpen(false));
 function updatePdfFitButtons(): void {
   for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
     const active = state.pdfFitMode === mode;
@@ -3384,7 +3445,7 @@ async function goToPdf(view: EditorView) {
   const viewport = page.getViewport({ scale: 1 });
   const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
   const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
-  if (narrowWorkspace.matches) setMobileOutputOpen(true);
+  if (narrowWorkspace.matches) setOutputViewOpen(true);
   elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
   const expires = Date.now() + 3000;
   state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
@@ -3488,7 +3549,7 @@ async function revealSource(destination: { path: string; line: number; from?: nu
   while (!provider.synced && state.view === view && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   if (state.projectId !== project || state.view !== view || !provider.synced) return;
   const line = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, destination.line)));
-  setMobileOutputOpen(false);
+  setOutputViewOpen(false);
   const selection = { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) };
   view.dispatch({ selection, effects: EditorView.scrollIntoView(selection.anchor, { y: "center" }) });
   view.focus();
@@ -3598,6 +3659,8 @@ let filesWidth = 208;
 let outputWidth: number | null = null;
 let structureHeight = 220;
 let filesHidden = false;
+let outputHidden = false;
+let desktopOutputOpen = false;
 try {
   const saved = JSON.parse(localStorage.getItem("workspace-layout") || "null");
   if (saved) {
@@ -3605,18 +3668,25 @@ try {
     if (Number.isFinite(saved.outputWidth)) outputWidth = saved.outputWidth;
     if (Number.isFinite(saved.structureHeight)) structureHeight = saved.structureHeight;
     filesHidden = saved.filesHidden === true;
+    outputHidden = saved.outputHidden === true;
   }
 } catch { /* Ignore unavailable storage or invalid preferences. */ }
 
 function updateWorkspaceLayout() {
   const mobile = narrowWorkspace.matches;
+  const mobileOutputOpen = elements.output_pane.classList.contains("mobile-open");
+  const singlePaneOutput = !mobile && outputHidden && desktopOutputOpen;
   elements.files_pane.style.transform = mobile && elements.files_pane.classList.contains("mobile-open") ? "translateX(0)" : "";
-  elements.editor_pane.hidden = mobile && elements.output_pane.classList.contains("mobile-open");
+  elements.editor_pane.hidden = (mobile && mobileOutputOpen) || singlePaneOutput;
+  elements.output_pane.hidden = !mobile && outputHidden && !desktopOutputOpen;
   // Hidden separators leave empty tracks; prevent auto-placement shifting panes.
-  for (const [pane, column] of workspaceColumns) pane.style.gridColumn = mobile ? "" : String(column);
+  for (const [pane, column] of workspaceColumns) {
+    pane.style.gridColumn = mobile ? "" : String(column);
+    pane.style.gridRow = mobile ? "" : "1";
+  }
+  if (singlePaneOutput) elements.output_pane.style.gridColumn = "3";
   elements.files_pane.hidden = !mobile && filesHidden;
   elements.file_list.hidden = !mobile && filesHidden;
-  filesResize.hidden = !mobile && filesHidden;
   const width = workspace.clientWidth;
   const filesHeight = elements.files_pane.clientHeight;
   if (filesHeight) {
@@ -3625,18 +3695,33 @@ function updateWorkspaceLayout() {
   }
   if (width && !mobile) {
     filesWidth = Math.max(180, Math.min(filesWidth, width - 580));
-    const remaining = width - (filesHidden ? 0 : filesWidth + 8) - 8;
+    const remaining = width - (filesHidden ? 0 : filesWidth) - 16;
     const output = Math.max(320, Math.min(remaining - 240, outputWidth ?? remaining * 0.46));
-    workspace.style.gridTemplateColumns = filesHidden
-      ? `0px 0px minmax(0,1fr) 8px ${output}px`
-      : `${filesWidth}px 8px minmax(0,1fr) 8px ${output}px`;
+    workspace.style.gridTemplateColumns = `${filesHidden ? 0 : filesWidth}px 8px minmax(0,1fr) 8px ${outputHidden ? 0 : output}px`;
   }
   elements.toggle_files.title = mobile ? "Files" : filesHidden ? "Show files" : "Hide files";
   elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
+  elements.workspace_view_switch.hidden = !mobile && !outputHidden;
+  elements.close_output.hidden = !mobile && !singlePaneOutput;
+  const outputTabs = document.getElementById("output-view-tabs")!;
+  outputTabs.classList.toggle("w-44", mobile || singlePaneOutput);
+  outputTabs.classList.toggle("grid-cols-3", mobile || singlePaneOutput);
+  outputTabs.classList.toggle("w-32", !mobile && !singlePaneOutput);
+  outputTabs.classList.toggle("grid-cols-2", !mobile && !singlePaneOutput);
+
+  const syncColumnToggle = (button: HTMLElement, hidden: boolean, labels: [string, string]): void => {
+    button.title = hidden ? labels[1] : labels[0];
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-expanded", String(!hidden));
+    button.querySelector("[data-collapse-icon]")!.toggleAttribute("hidden", hidden);
+    button.querySelector("[data-expand-icon]")!.toggleAttribute("hidden", !hidden);
+  };
+  syncColumnToggle(elements.toggle_files_column, filesHidden, ["Hide files", "Show files"]);
+  syncColumnToggle(elements.toggle_output_column, outputHidden, ["Hide PDF", "Show PDF"]);
 }
 
 function saveWorkspaceLayout() {
-  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, structureHeight, filesHidden })); } catch { /* Storage is optional. */ }
+  try { localStorage.setItem("workspace-layout", JSON.stringify({ filesWidth, outputWidth, structureHeight, filesHidden, outputHidden })); } catch { /* Storage is optional. */ }
 }
 
 function adjustStructureHeight(delta: number): void {
@@ -3670,15 +3755,19 @@ elements.structure_resize.addEventListener("keydown", event => {
 for (const handle of [filesResize, outputResize]) {
   const adjust = (delta: number) => {
     if (narrowWorkspace.matches) return;
-    if (handle === filesResize) filesWidth += delta;
+    if (handle === filesResize) {
+      if (filesHidden) return;
+      filesWidth += delta;
+    }
     else {
-      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth + 8) - 8;
+      if (outputHidden) return;
+      const remaining = workspace.clientWidth - (filesHidden ? 0 : filesWidth) - 16;
       outputWidth = Math.max(320, Math.min(remaining - 240, elements.output_pane.getBoundingClientRect().width - delta));
     }
     updateWorkspaceLayout();
   };
   handle.addEventListener("pointerdown", event => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || (event.target as Element).closest("button")) return;
     event.preventDefault();
     handle.setPointerCapture(event.pointerId);
     let previous = event.clientX;
@@ -3706,9 +3795,18 @@ function setMobileFilesOpen(open: boolean): void {
 }
 
 elements.toggle_files.addEventListener("click", () => {
-  if (narrowWorkspace.matches) setMobileFilesOpen(!elements.files_pane.classList.contains("mobile-open"));
-  else { filesHidden = !filesHidden; saveWorkspaceLayout(); }
-  if (!narrowWorkspace.matches) updateWorkspaceLayout();
+  setMobileFilesOpen(!elements.files_pane.classList.contains("mobile-open"));
+});
+elements.toggle_files_column.addEventListener("click", () => {
+  filesHidden = !filesHidden;
+  saveWorkspaceLayout();
+  updateWorkspaceLayout();
+});
+elements.toggle_output_column.addEventListener("click", () => {
+  outputHidden = !outputHidden;
+  desktopOutputOpen = false;
+  saveWorkspaceLayout();
+  updateWorkspaceLayout();
 });
 elements.close_files.addEventListener("click", () => setMobileFilesOpen(false));
 elements.toggle_blame.addEventListener("click", () => setBlameMode(!blameModeEnabled));
