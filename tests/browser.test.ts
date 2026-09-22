@@ -436,7 +436,7 @@ test("source navigation loads a new PDF revision once and then reuses it", async
     let downloads = 0;
     await page.route("**/v1/build/pdf*", route => {
       downloads++;
-      return route.fulfill({ contentType: "application/pdf", headers: { "X-LaTeX-Coder-Source-Revision": "navigation-revision" }, body: previewPdf(2) });
+      return route.fulfill({ contentType: "application/pdf", headers: { "X-LaTeX-Coder-Source-Revision": "navigation-revision" }, body: previewPdf(2, 300, 600) });
     });
     await page.locator("#toggle-output-column").click();
     assert.equal(await page.locator("#output-pane").isVisible(), false);
@@ -444,6 +444,11 @@ test("source navigation loads a new PDF revision once and then reuses it", async
       await selectionContextMenu(page, "TARGET", false);
       await page.locator('[data-editor-action="pdf"]').click();
       await page.locator("#pdf-source-marker").waitFor();
+      await page.waitForFunction(() => {
+        const marker = document.querySelector("#pdf-source-marker")?.getBoundingClientRect();
+        const viewport = document.querySelector("#pdf-view")?.getBoundingClientRect();
+        return marker && viewport && Math.abs(marker.top + marker.height / 2 - viewport.top - viewport.height / 2) < 3;
+      });
       assert.equal(await page.locator("#output-pane").isVisible(), true);
       assert.equal(await page.locator("#editor-pane").isVisible(), false);
       assert.equal(downloads, 1);

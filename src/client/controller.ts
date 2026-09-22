@@ -3433,13 +3433,15 @@ async function goToPdf(view: EditorView) {
   }
   if (state.projectId !== project || state.view !== view) return;
   selectOutput("pdf");
-  if (narrowWorkspace.matches || outputHidden) {
+  const revealedOutput = narrowWorkspace.matches || outputHidden;
+  if (revealedOutput) {
     setOutputViewOpen(true);
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    cancelAnimationFrame(pdfResizeFrame);
   }
   if (!state.pdfDocument || state.pdfSourceRevision !== position.revision) {
     await showPdf(true, position.page);
-  } else if (!elements.pdf_document.querySelector(`canvas[data-page="${position.page}"]`)) {
+  } else if (revealedOutput || !elements.pdf_document.querySelector(`canvas[data-page="${position.page}"]`)) {
     await renderPdf(position.page);
   }
   if (state.projectId !== project || state.pdfSourceRevision !== position.revision) throw new Error("The PDF changed. Try navigating again.");
@@ -3449,7 +3451,7 @@ async function goToPdf(view: EditorView) {
   const viewport = page.getViewport({ scale: 1 });
   const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
   const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
-  elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
+  elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "auto" });
   const expires = Date.now() + 3000;
   state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
   renderPdfHighlights();
