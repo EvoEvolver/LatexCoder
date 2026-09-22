@@ -92,7 +92,7 @@ import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
 import type {
-  AppElement, AppState, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
+  AppElement, AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
   SearchMatch, ShareDetails, SourcePosition,
 } from "./types.ts";
@@ -1042,6 +1042,81 @@ const editorDiagnosticTooltip = hoverTooltip((view, position) => {
   };
 });
 
+const setEditorBlame = StateEffect.define<BlameRun[]>();
+
+class BlameGutterMarker extends GutterMarker {
+  readonly elementClass = "cm-blame-marker";
+  constructor(readonly blame: BlameRun) { super(); }
+  toDOM(): Node {
+    const marker = document.createElement("span");
+    marker.textContent = this.blame.authorName.slice(0, 2).toUpperCase();
+    marker.style.backgroundColor = colorFor(this.blame.authorId || this.blame.authorName);
+    marker.title = `${this.blame.authorName} · ${this.blame.commit ? this.blame.commit.slice(0, 7) : "Uncommitted"}`;
+    marker.setAttribute("aria-label", marker.title);
+    return marker;
+  }
+}
+
+const editorBlameField = StateField.define<BlameRun[]>({
+  create: () => [],
+  update(runs, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setEditorBlame)) return effect.value;
+    if (!transaction.docChanged) return runs;
+    return runs.map(run => ({
+      ...run,
+      from: transaction.changes.mapPos(run.from, 1),
+      to: transaction.changes.mapPos(run.to, -1),
+    })).filter(run => run.to > run.from);
+  },
+});
+
+const editorBlameGutter = gutter({
+  class: "cm-blame-gutter",
+  markers(view) {
+    const scores = new Map<number, Map<BlameRun, number>>();
+    for (const run of view.state.field(editorBlameField)) {
+      if (run.authorId === "legacy") continue;
+      const start = view.state.doc.lineAt(Math.min(run.from, view.state.doc.length));
+      const finish = view.state.doc.lineAt(Math.min(run.to, view.state.doc.length));
+      for (let number = start.number; number <= finish.number; number++) {
+        const line = view.state.doc.line(number);
+        const overlap = Math.max(0, Math.min(run.to, line.to + 1) - Math.max(run.from, line.from));
+        if (!overlap) continue;
+        const lineScores = scores.get(line.from) || new Map<BlameRun, number>();
+        lineScores.set(run, (lineScores.get(run) || 0) + overlap);
+        scores.set(line.from, lineScores);
+      }
+    }
+    return RangeSet.of([...scores].sort((left, right) => left[0] - right[0]).map(([line, lineScores]) => {
+      const primary = [...lineScores].sort((left, right) => right[1] - left[1])[0][0];
+      return new BlameGutterMarker(primary).range(line);
+    }), true);
+  },
+});
+
+let blameRequestVersion = 0;
+let blameRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function refreshEditorBlame(): Promise<void> {
+  const view = state.view;
+  const projectId = state.projectId;
+  const relativePath = state.activeFile;
+  if (!view || !projectId || !relativePath) return;
+  const version = ++blameRequestVersion;
+  try {
+    const result = await request<{ path: string; revision: string; runs: BlameRun[] }>(`v1/blame?path=${encodeURIComponent(relativePath)}`);
+    if (version !== blameRequestVersion || state.view !== view || state.projectId !== projectId || state.activeFile !== relativePath) return;
+    view.dispatch({ effects: setEditorBlame.of(result.runs) });
+  } catch (error) {
+    console.error("blame refresh failed", error);
+  }
+}
+
+function scheduleBlameRefresh(delay = 350): void {
+  clearTimeout(blameRefreshTimer);
+  blameRefreshTimer = setTimeout(() => { void refreshEditorBlame(); }, delay);
+}
+
 function navigableDiagnostics(): BuildDiagnostic[] {
   const seen = new Set<string>();
   return [...state.compileDiagnostics, ...state.staticDiagnostics]
@@ -1124,6 +1199,8 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       },
     }),
     editorDiagnosticGutter,
+    editorBlameGutter,
+    editorBlameField,
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     ViewPlugin.define(view => {
@@ -1206,6 +1283,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
         scheduleStaticDiagnostics();
         queueMicrotask(applyEditorDiagnostics);
         scheduleAutoCompile();
+        scheduleBlameRefresh();
       }
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
         queueMicrotask(renderSelectionActions);
@@ -1221,6 +1299,8 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "var(--primary)", cursor: "pointer" },
       ".cm-diagnostic-gutter": { width: "15px" },
       ".cm-diagnostic-marker": { display: "grid", width: "12px", height: "12px", marginTop: "4px", placeItems: "center", borderRadius: "50%", backgroundColor: "#b42318", color: "white", fontSize: "8px", fontWeight: "800", cursor: "help" },
+      ".cm-blame-gutter": { width: "25px" },
+      ".cm-blame-marker": { display: "grid", width: "20px", height: "16px", marginTop: "2px", placeItems: "center", borderRadius: "3px", color: "white", fontSize: "7px", fontWeight: "750", cursor: "help", opacity: "0.78" },
       ".cm-diagnostic-marker.warning": { backgroundColor: "#b7791f" },
       ".cm-diagnostic-range.error": { textDecoration: "underline wavy #d92d20", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
       ".cm-diagnostic-range.warning": { textDecoration: "underline wavy #d28a16", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
@@ -1262,6 +1342,8 @@ function disconnectEditor() {
   state.persistence = null;
   clearTimeout(autoCompileTimer);
   clearTimeout(staticDiagnosticTimer);
+  clearTimeout(blameRefreshTimer);
+  blameRequestVersion += 1;
   staticDiagnosticVersion += 1;
   state.provider = null;
   state.view = null;
@@ -1449,7 +1531,19 @@ async function openFile(relativePath: string): Promise<void> {
 
   elements.sync_state.textContent = "Connecting";
   const doc = new Y.Doc();
-  const provider = new WebsocketProvider(socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`), encodeRoom(relativePath), doc, { connect: true, params: { saved: "1" } });
+  let guestAuthorId = localStorage.getItem("latexcoder-guest-author-id");
+  if (!guestAuthorId) {
+    guestAuthorId = `guest-${crypto.randomUUID()}`;
+    localStorage.setItem("latexcoder-guest-author-id", guestAuthorId);
+  }
+  const provider = new WebsocketProvider(socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`), encodeRoom(relativePath), doc, {
+    connect: true,
+    params: {
+      saved: "1",
+      authorId: state.user?.username || guestAuthorId,
+      authorName: displayName(),
+    },
+  });
   const ytext = doc.getText("content");
   state.doc = doc;
   state.provider = provider;
@@ -1469,7 +1563,7 @@ async function openFile(relativePath: string): Promise<void> {
   };
   provider.messageHandlers[3] = (_encoder, decoder) => {
     const savedNonce = decoding.readVarString(decoder);
-    if (state.provider === provider && savedNonce === String(nonce)) { state.unsaved = false; updateSyncStatus(); }
+    if (state.provider === provider && savedNonce === String(nonce)) { state.unsaved = false; updateSyncStatus(); scheduleBlameRefresh(0); }
   };
   doc.on("update", (_update, origin) => {
     if (state.provider !== provider) return;
@@ -1492,6 +1586,7 @@ async function openFile(relativePath: string): Promise<void> {
       scheduleStaticDiagnostics();
       applyEditorDiagnostics();
       scheduleAutoCompile();
+      scheduleBlameRefresh(0);
     }
   });
   provider.awareness.on("change", updatePresence);
@@ -2405,6 +2500,7 @@ async function runGitAction(endpoint: string, body: Record<string, unknown>, suc
     });
     if (["fast_forward", "merged"].includes(result.git.status)) await refreshProject(true);
     await refreshGit();
+    await refreshEditorBlame();
     await versionHistory.refresh();
     showToast(result.git.status === "conflict" ? `Conflict saved to ${result.git.conflict.branch}.` : successMessage);
     return result;

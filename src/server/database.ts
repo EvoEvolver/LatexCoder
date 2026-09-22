@@ -25,6 +25,15 @@ export type BuildMetadata = {
   errors?: Array<{ path: string; line: number; message: string }>;
 };
 
+export type BlameChange = {
+  id: string;
+  projectId: string;
+  authorId: string;
+  authorName: string;
+  createdAt: number;
+  commit: string | null;
+};
+
 type SqlValue = string | number | bigint | Uint8Array | null;
 type SqlRow = Record<string, SqlValue>;
 type ProjectRow = SqlRow & {
@@ -436,6 +445,78 @@ export class StateDatabase {
 
   deleteYjsSnapshot(projectId: string, relativePath: string) {
     this.db.prepare("DELETE FROM yjs_snapshots WHERE project_id = ? AND relative_path = ?").run(projectId, relativePath);
+  }
+
+  moveYjsSnapshots(projectId: string, from: string, to: string) {
+    const rows = this.db.prepare(`
+      SELECT relative_path FROM yjs_snapshots
+      WHERE project_id = ? AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)
+      ORDER BY length(relative_path)
+    `).all(projectId, from, from.length + 1, `${from}/`) as Array<{ relative_path: string }>;
+    this.transaction(() => {
+      for (const row of rows) {
+        const destination = to + row.relative_path.slice(from.length);
+        this.db.prepare("UPDATE yjs_snapshots SET relative_path = ? WHERE project_id = ? AND relative_path = ?")
+          .run(destination, projectId, row.relative_path);
+      }
+    });
+  }
+
+  createBlameChange(change: Omit<BlameChange, "projectId"> & { projectId: string }) {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO blame_changes
+        (change_id, project_id, author_id, author_name, created_at, commit_hash)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(change.id, change.projectId, change.authorId, change.authorName, change.createdAt, change.commit);
+  }
+
+  getBlameChanges(projectId: string, changeIds: string[]): Map<string, BlameChange> {
+    const result = new Map<string, BlameChange>();
+    for (let offset = 0; offset < changeIds.length; offset += 500) {
+      const ids = changeIds.slice(offset, offset + 500);
+      if (!ids.length) continue;
+      const placeholders = ids.map(() => "?").join(", ");
+      const rows = this.db.prepare(`
+        SELECT change_id, project_id, author_id, author_name, created_at, commit_hash
+        FROM blame_changes WHERE project_id = ? AND change_id IN (${placeholders})
+      `).all(projectId, ...ids) as Array<{
+        change_id: string; project_id: string; author_id: string; author_name: string;
+        created_at: number; commit_hash: string | null;
+      }>;
+      for (const row of rows) result.set(row.change_id, {
+        id: row.change_id,
+        projectId: row.project_id,
+        authorId: row.author_id,
+        authorName: row.author_name,
+        createdAt: Number(row.created_at),
+        commit: row.commit_hash,
+      });
+    }
+    return result;
+  }
+
+  pendingBlameChangeIds(projectId: string): string[] {
+    return (this.db.prepare(`
+      SELECT change_id FROM blame_changes
+      WHERE project_id = ? AND commit_hash IS NULL ORDER BY created_at, change_id
+    `).all(projectId) as Array<{ change_id: string }>).map(row => row.change_id);
+  }
+
+  assignBlameChanges(projectId: string, changeIds: string[], commit: string): number {
+    let assigned = 0;
+    this.transaction(() => {
+      for (let offset = 0; offset < changeIds.length; offset += 500) {
+        const ids = changeIds.slice(offset, offset + 500);
+        if (!ids.length) continue;
+        const placeholders = ids.map(() => "?").join(", ");
+        const result = this.db.prepare(`
+          UPDATE blame_changes SET commit_hash = ?
+          WHERE project_id = ? AND commit_hash IS NULL AND change_id IN (${placeholders})
+        `).run(commit, projectId, ...ids);
+        assigned += Number(result.changes);
+      }
+    });
+    return assigned;
   }
 
   private projectFromRow(row: ProjectRow): ProjectMetadata {

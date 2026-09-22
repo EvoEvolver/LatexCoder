@@ -4,10 +4,10 @@ import type { IndexeddbPersistence } from "y-indexeddb";
 import type { WebsocketProvider } from "y-websocket";
 import type * as Y from "yjs";
 import type { ReviewItem } from "../shared/review.ts";
-import type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary } from "../shared/api-schema.ts";
+import type { BlameRun, CurrentUser, EditorSettings, ProjectFile, ProjectSummary } from "../shared/api-schema.ts";
 import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 
-export type { CurrentUser, EditorSettings, ProjectFile, ProjectSummary };
+export type { BlameRun, CurrentUser, EditorSettings, ProjectFile, ProjectSummary };
 export type GitFile = { index: string; worktree: string; path: string };
 export type GitCommit = { shortId: string; author: string; date: string; subject: string };
 export type GitState = { branch: string; dirty: boolean; files: GitFile[]; history: GitCommit[]; status?: string; conflict?: { branch: string } | null };

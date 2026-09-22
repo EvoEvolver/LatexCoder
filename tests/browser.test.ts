@@ -1302,6 +1302,22 @@ test("awareness shows other collaborators but not the local user", async () => {
   });
 });
 
+test("collaborative edits show compact line blame in the editor gutter", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      view.dispatch({ changes: { from: 0, insert: "% blame marker\n" } });
+    });
+    const marker = page.locator(".cm-blame-marker [title]").first();
+    await marker.waitFor();
+    assert.match(await marker.getAttribute("title"), /^Test User · Uncommitted$/);
+    const blame = await (await fetch(`${base}/v1/blame?path=main.tex`)).json();
+    assert.ok(blame.runs.some(run => run.authorId === "test-user" && run.authorName === "Test User"));
+  });
+});
+
 test("real collaborative page replaces a selection and exposes review actions", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);

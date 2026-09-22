@@ -9,6 +9,8 @@ import type { BuildMetadata, ProjectMetadata, StateDatabase } from "./database.t
 export type ApiError = Error & { code: string; status: number; details?: Record<string, unknown> };
 export type PasswordRecord = { salt: string; hash: string };
 export type AgentIdentity = { id: string; name: string };
+export type BlameActor = { id: string; name: string; commit?: string | null };
+export type BlameRun = { from: number; to: number; authorId: string; authorName: string; changeId: string; createdAt: number | null; commit: string | null };
 export type ProjectFile = { path: string; size: number; text: boolean };
 export type ImportedProjectFile = { relativePath: string; content: Uint8Array };
 export type ContentEntry = { path: string; directory: boolean };
@@ -27,16 +29,18 @@ export type EditOptions = { mode?: EditMode; agent?: AgentIdentity };
 export type EditResult = { source: string; sha256: string; mode: EditMode; suggestionIds: string[]; changeCount?: number };
 
 export interface CollaborationStore {
-  attach(connection: WebSocket, relativePath: string, shareId?: string | null, savedAcknowledgments?: boolean, readOnly?: boolean): void;
+  attach(connection: WebSocket, relativePath: string, shareId?: string | null, savedAcknowledgments?: boolean, readOnly?: boolean, actor?: BlameActor): void;
+  blame(relativePath: string): { revision: string; runs: BlameRun[] };
   disconnectShare(shareId: string, reason: string): void;
   editFile(relativePath: string, baseSha256: string, updated: string, options?: EditOptions): EditResult;
   flush(): void;
-  importText(relativePath: string, source: string): void;
+  importText(relativePath: string, source: string, actor?: BlameActor): void;
   load(relativePath: string): SharedDocument;
+  move(from: string, to: string): void;
   patchText(relativePath: string, baseSha256: string, changes: PatchChange[], options?: EditOptions): EditResult;
   readText(relativePath: string): string;
   remove(relativePath: string): Promise<void>;
-  replaceText(relativePath: string, source: string): boolean;
+  replaceText(relativePath: string, source: string, actor?: BlameActor): boolean;
   resume(): void;
   roomNameForPath(relativePath: string): string;
   shutdown(): void;

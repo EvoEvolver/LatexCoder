@@ -28,6 +28,11 @@ export const projectSummarySchema = z.object({
   permissions: z.object({ manage: z.boolean().optional(), edit: z.boolean().optional(), collaborate: z.boolean().optional() }).optional(),
 });
 export const apiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }) });
+export const blameRunSchema = z.object({
+  from: z.number(), to: z.number(), authorId: z.string(), authorName: z.string(), changeId: z.string(),
+  createdAt: z.number().nullable(), commit: z.string().nullable(),
+});
+export const blameResponseSchema = z.object({ path: z.string(), revision: z.string(), runs: z.array(blameRunSchema) });
 
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
@@ -36,3 +41,4 @@ export type CurrentUser = z.infer<typeof currentUserSchema>;
 export type ProjectFile = z.infer<typeof projectFileSchema>;
 export type EditorSettings = z.infer<typeof editorSettingsSchema>;
 export type ProjectSummary = z.infer<typeof projectSummarySchema>;
+export type BlameRun = z.infer<typeof blameRunSchema>;

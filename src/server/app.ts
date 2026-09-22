@@ -30,7 +30,7 @@ import { compileRequestSchema, createProjectRequestSchema, loginRequestSchema, r
 import type { ZodType } from "zod";
 import type { NextFunction, Request, Response } from "express";
 import type { ProjectMetadata } from "./database.ts";
-import type { ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
+import type { BlameActor, ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
 type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };
 type AuthenticatedUser = { username: string; displayName: string };
@@ -113,6 +113,9 @@ async function gitHead(projectDir: string, ref = "HEAD"): Promise<string> {
 
 async function gitCheckpoint(runtime: ProjectRuntime, message: unknown, metadata?: Parameters<typeof versionMessage>[1]): Promise<{ commit: string; created: boolean }> {
   runtime.collaboration.flush();
+  // Capture the attribution boundary synchronously with the flush. Edits that
+  // arrive while Git is running belong to the next checkpoint.
+  const blameChanges = runtime.database.pendingBlameChangeIds(runtime.id);
   await git(runtime.projectDir, ["add", "-A"]);
   const changed = await git(runtime.projectDir, ["diff", "--cached", "--quiet"], { allowedCodes: [0, 1] });
   const head = await gitHead(runtime.projectDir);
@@ -127,7 +130,9 @@ async function gitCheckpoint(runtime: ProjectRuntime, message: unknown, metadata
   const foldersChanged = JSON.stringify(inheritedEmptyFolders) !== JSON.stringify(emptyFolders);
   const created = changed.code === 1 || mainChanged || foldersChanged;
   if (created) await git(runtime.projectDir, ["commit", "--allow-empty", "-m", versionMessage(cleanCommitMessage(message), { ...(metadata ?? { kind: "checkpoint", main: runtime.build.main }), folders })]);
-  return { commit: await gitHead(runtime.projectDir), created };
+  const commit = await gitHead(runtime.projectDir);
+  if (created) runtime.database.assignBlameChanges(runtime.id, blameChanges, commit);
+  return { commit, created };
 }
 
 function parseGitStatus(output: string): Array<{ index: string; worktree: string; path: string }> {
@@ -205,7 +210,7 @@ async function trackedPaths(projectDir: string): Promise<string[]> {
   return output ? output.split("\0").filter(Boolean) : [];
 }
 
-async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, main = runtime.build.main, validateReviews = true): Promise<void> {
+async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, main = runtime.build.main, validateReviews = true, blameCommit: string | null = null): Promise<void> {
   const before = new Set(await trackedPaths(runtime.projectDir));
   const after = new Set(await trackedPaths(sourceDir));
   if (!after.has(main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
@@ -239,7 +244,7 @@ async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, mai
     await mkdir(path.dirname(target), { recursive: true });
     if (isTextFile(relativePath)) {
       const content = await readFile(source, "utf8");
-      runtime.collaboration.importText(relativePath, content);
+      runtime.collaboration.importText(relativePath, content, { id: "git", name: "Git import", commit: blameCommit });
     } else {
       await cp(source, target);
     }
@@ -354,7 +359,7 @@ async function gitSyncLocked(runtime: ProjectRuntime, requestedRef: string) {
         mergedCommit = await gitHead(worktree);
       }
       try {
-        await importGitWorktree(runtime, worktree);
+        await importGitWorktree(runtime, worktree, runtime.build.main, true, mergedCommit);
       } catch (error) {
         semanticConflict = error instanceof Error ? error : new Error(String(error));
       }
@@ -525,6 +530,10 @@ a ZIP, including uncommitted files.
 
 \`GET /v1/files?path=main.tex\` reads a file as bytes.
 The response includes the current \`X-Content-SHA256\` revision.
+
+\`GET /v1/blame?path=main.tex\` returns the current character ranges with their
+collaborator, change ID, and first Git checkpoint. Attribution is collaborative
+metadata for trusted teams rather than a tamper-resistant audit log.
 
 \`POST /v1/search\` runs ripgrep inside the project. Send
 \`{"pattern":"citation","args":["--line-number","--glob","*.tex"],"paths":["."]}\`.
@@ -807,6 +816,17 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     if (!session) return null;
     const user = database.getUser(session.record.username);
     return user ? { username: user.username, displayName: user.displayName } : null;
+  }
+
+  function requestBlameActor(request: CookieRequest & { query?: Record<string, unknown> }): BlameActor {
+    const requestedId = typeof request.query?.authorId === "string" ? request.query.authorId.trim().slice(0, 100) : "";
+    const requestedName = typeof request.query?.authorName === "string" ? request.query.authorName.trim().slice(0, 100) : "";
+    if (requestedId || requestedName) return { id: requestedId || requestedName, name: requestedName || requestedId };
+    const agentId = typeof request.query?.agentId === "string" ? request.query.agentId.trim().slice(0, 100) : "";
+    const agentName = typeof request.query?.agentName === "string" ? request.query.agentName.trim().slice(0, 100) : "";
+    if (agentId || agentName) return { id: agentId || "agent", name: agentName || "Coding agent" };
+    const user = currentUser(request);
+    return user ? { id: user.username, name: user.displayName } : { id: "guest", name: "Guest" };
   }
 
   function requireUser(request: CookieRequest): AuthenticatedUser {
@@ -1755,6 +1775,15 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       });
     } catch (error) { next(error); }
   });
+  app.get("/v1/blame", async (request, response, next) => {
+    try {
+      const runtime = await resolveProject(request);
+      const relativePath = safeRelativePath(request.query.path);
+      if (!isTextFile(relativePath)) throw apiError("not_text", "only text files have collaborative blame", 415);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ path: relativePath, ...runtime.collaboration.blame(relativePath) });
+    } catch (error) { next(error); }
+  });
   app.put("/v1/files", express.raw({ type: () => true, limit: MAX_FILE_BYTES }), async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
@@ -1766,7 +1795,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       if (isTextFile(relativePath) && body.length > MAX_TEXT_BYTES) throw apiError("file_too_large", "text file is too large", 413);
       await withAgentHistory(request, runtime, `Agent upload: ${relativePath}`, async () => {
         await mkdir(path.dirname(target), { recursive: true });
-        if (isTextFile(relativePath) && collaboration.replaceText(relativePath, body.toString("utf8"))) {
+        if (isTextFile(relativePath) && collaboration.replaceText(relativePath, body.toString("utf8"), requestBlameActor(request))) {
           collaboration.flush();
         } else {
           await writeFile(target, body);
@@ -1930,10 +1959,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       if (existsSync(path.join(projectDir, to))) throw apiError("path_exists", "Destination already exists", 409);
       await withAgentHistory(request, runtime, `Agent move: ${from} → ${to}`, () => {
         collaboration.flush();
-        const entries = contentEntries(projectDir, from);
         mkdirSync(path.dirname(path.join(projectDir, to)), { recursive: true });
         renameSync(path.join(projectDir, from), path.join(projectDir, to));
-        for (const file of entries) if (!file.directory) void collaboration.remove(file.path);
+        collaboration.move(from, to);
         if (runtime.build.main === from || runtime.build.main.startsWith(`${from}/`)) runtime.build.main = to + runtime.build.main.slice(from.length);
         database.saveBuild(runtime.id, runtime.build);
       });
@@ -2078,7 +2106,13 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const accessMode = projectAccessMode(request, runtime)!;
       const shareId = projectAccessShareId(request, runtime);
       const relativePath = pathFromRoomName(scoped ? parts[1] : parts[0]);
-      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId, url.searchParams.get("saved") === "1", accessMode === "view"));
+      const requestedId = url.searchParams.get("authorId")?.trim().slice(0, 100) || "";
+      const requestedName = url.searchParams.get("authorName")?.trim().slice(0, 100) || "";
+      const user = currentUser(request);
+      const actor: BlameActor = requestedId || requestedName
+        ? { id: requestedId || requestedName, name: requestedName || requestedId }
+        : user ? { id: user.username, name: user.displayName } : { id: "guest", name: "Guest" };
+      sockets.handleUpgrade(request, socket, head, connection => runtime.collaboration.attach(connection, relativePath, shareId, url.searchParams.get("saved") === "1", accessMode === "view", actor));
     })().catch(() => {
       socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       socket.destroy();

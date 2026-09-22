@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 8;
+export const LATEST_SCHEMA_VERSION = 9;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -198,6 +198,24 @@ const migrations: Migration[] = [
         DROP TABLE project_members;
         ALTER TABLE project_members_v8 RENAME TO project_members;
         CREATE INDEX project_members_user_idx ON project_members(username, joined_at);
+      `);
+    },
+  },
+  {
+    version: 9,
+    name: "collaborative text blame",
+    up(database) {
+      database.exec(`
+        CREATE TABLE blame_changes (
+          change_id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          author_id TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          commit_hash TEXT
+        ) STRICT;
+        CREATE INDEX blame_changes_project_commit_idx
+          ON blame_changes(project_id, commit_hash, created_at);
       `);
     },
   },

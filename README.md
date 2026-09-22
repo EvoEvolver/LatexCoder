@@ -33,6 +33,9 @@ Licensed under the [MIT License](LICENSE).
 - System-aware Light and Dark themes with a persistent per-browser preference,
   including the source editor, reviews, logs, dialogs, and project dashboard.
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
+- Character-level blame stored with the shared Yjs text. New text records its
+  collaborator and the first Git checkpoint containing it, with compact
+  per-line attribution in the editor and a machine-readable blame API.
 - Threaded inline comments, replies, and tracked suggestions encoded as explicit
   LaTeX macros. Humans and agents see and edit the same review state through
   ordinary source reads and hash-checked full-file uploads, including replying, accepting,

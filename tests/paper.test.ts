@@ -868,6 +868,54 @@ test("automatic Git checkpoints capture live Yjs edits without closing collabora
   }, { gitCheckpointIdleMs: 100, gitCheckpointMaxWaitMs: 500 });
 });
 
+test("collaborative blame follows Yjs text, checkpoints, and file moves", async () => {
+  await withServer(async ({ base, ws }) => {
+    const doc = new Y.Doc();
+    const room = Buffer.from("main.tex").toString("base64url");
+    const provider = new WebsocketProvider(`${ws}/v1/collab`, room, doc, {
+      WebSocketPolyfill: WebSocket as any,
+      params: { authorId: "alice", authorName: "Alice" },
+    });
+    try {
+      await waitFor(() => provider.synced);
+      doc.getText("content").insert(0, "% attributed edit\n");
+      let blame: any;
+      const deadline = Date.now() + 3_000;
+      do {
+        blame = await (await fetch(`${base}/v1/blame?path=main.tex`)).json();
+        if (blame.runs.some(run => run.authorId === "alice" && run.commit === null)) break;
+        assert.ok(Date.now() < deadline, "blame attribution did not arrive");
+        await new Promise(resolve => setTimeout(resolve, 20));
+      } while (true);
+      const alice = blame.runs.find(run => run.authorId === "alice");
+      assert.equal(alice.from, 0);
+      assert.equal(alice.to, "% attributed edit\n".length);
+
+      const checkpoint = await fetch(`${base}/v1/git/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Attribute Alice's edit" }),
+      });
+      assert.equal(checkpoint.status, 200);
+      const commit = (await checkpoint.json()).git.commit;
+      blame = await (await fetch(`${base}/v1/blame?path=main.tex`)).json();
+      assert.equal(blame.runs.find(run => run.authorId === "alice").commit, commit);
+
+      const moved = await fetch(`${base}/v1/files/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: "main.tex", to: "paper.tex" }),
+      });
+      assert.equal(moved.status, 200, await moved.clone().text());
+      blame = await (await fetch(`${base}/v1/blame?path=paper.tex`)).json();
+      assert.equal(blame.runs.find(run => run.authorId === "alice").commit, commit);
+    } finally {
+      provider.destroy();
+      doc.destroy();
+    }
+  }, { gitCheckpointIdleMs: 3_600_000, gitCheckpointMaxWaitMs: 3_600_000 });
+});
+
 test("Git clone, fetch, and pull checkpoint current content without a browser commit", async () => {
   await withServer(async ({ base, projectDir, collaboration }) => {
     const { project } = await (await fetch(`${base}/v1/project`)).json();
