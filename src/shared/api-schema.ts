@@ -9,6 +9,10 @@ export const registerRequestSchema = z.strictObject({ token: z.string().min(1), 
 export const updateProfileRequestSchema = z.strictObject({ displayName: z.string().trim().min(1).max(80) });
 export const createProjectRequestSchema = z.strictObject({ name: projectNameSchema });
 export const updateProjectRequestSchema = createProjectRequestSchema;
+export const projectTagsRequestSchema = z.strictObject({
+  tags: z.array(z.string().trim().min(1).max(32).regex(/^[^,\r\n]+$/)).max(12),
+});
+export const projectArchiveRequestSchema = z.strictObject({ archived: z.boolean() });
 export const settingsRequestSchema = z.strictObject({
   main: z.string().min(1),
   compiler: z.enum(["auto", "tectonic", "latexmk"]),
@@ -25,6 +29,8 @@ export const projectSummarySchema = z.object({
   createdAt: z.string().optional(),
   lastOpenedAt: z.string().optional(),
   membership: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  archived: z.boolean().default(false),
   permissions: z.object({ manage: z.boolean().optional(), edit: z.boolean().optional(), collaborate: z.boolean().optional() }).optional(),
 });
 export const apiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }) });

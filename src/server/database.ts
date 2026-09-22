@@ -11,6 +11,8 @@ export type ProjectMetadata = {
   createdAt: string;
   lastOpenedAt: string;
   membershipRole?: string;
+  membershipArchived?: boolean;
+  tags?: string[];
   git?: { conflict?: { branch: string; incoming: string; base: string; createdAt: string }; [key: string]: unknown };
 };
 
@@ -282,9 +284,9 @@ export class StateDatabase {
 
   getProjectMember(projectId: string, username: string) {
     const row = this.db.prepare(`
-      SELECT project_id, username, role, joined_at FROM project_members WHERE project_id = ? AND username = ?
+      SELECT project_id, username, role, joined_at, archived FROM project_members WHERE project_id = ? AND username = ?
     `).get(projectId, username) as SqlRow | undefined;
-    return row ? { projectId: row.project_id as string, username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) } : null;
+    return row ? { projectId: row.project_id as string, username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at), archived: Boolean(row.archived) } : null;
   }
 
   addProjectMember(projectId: string, username: string, role: "owner" | "collaborator" | "viewer" = "collaborator", joinedAt = Date.now()) {
@@ -313,11 +315,36 @@ export class StateDatabase {
 
   listProjectsForUser(username: string) {
     const rows = this.db.prepare(`
-      SELECT projects.*, project_members.role AS membership_role
+      SELECT projects.*, project_members.role AS membership_role, project_members.archived AS membership_archived
       FROM project_members JOIN projects ON projects.id = project_members.project_id
       WHERE project_members.username = ? ORDER BY projects.last_opened_at DESC, projects.name COLLATE NOCASE
-    `).all(username) as Array<ProjectRow & { membership_role: string }>;
-    return rows.map(row => ({ ...this.projectFromRow(row), membershipRole: row.membership_role as string }));
+    `).all(username) as Array<ProjectRow & { membership_role: string; membership_archived: number }>;
+    return rows.map(row => ({
+      ...this.projectFromRow(row),
+      membershipRole: row.membership_role as string,
+      membershipArchived: Boolean(row.membership_archived),
+      tags: this.listProjectTags(row.id),
+    }));
+  }
+
+  listProjectTags(projectId: string): string[] {
+    return (this.db.prepare("SELECT tag FROM project_tags WHERE project_id = ? ORDER BY tag COLLATE NOCASE").all(projectId) as Array<{ tag: string }>)
+      .map(row => row.tag);
+  }
+
+  replaceProjectTags(projectId: string, tags: string[]): void {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM project_tags WHERE project_id = ?").run(projectId);
+      const insert = this.db.prepare("INSERT INTO project_tags (project_id, tag, created_at) VALUES (?, ?, ?)");
+      const createdAt = Date.now();
+      for (const tag of tags) insert.run(projectId, tag, createdAt);
+    });
+  }
+
+  setProjectArchived(projectId: string, username: string, archived: boolean): boolean {
+    const result = this.db.prepare("UPDATE project_members SET archived = ? WHERE project_id = ? AND username = ?")
+      .run(archived ? 1 : 0, projectId, username);
+    return Number(result.changes) === 1;
   }
 
   getProject(id: string) {

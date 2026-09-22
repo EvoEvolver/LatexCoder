@@ -24,7 +24,7 @@ export type AppState = {
   selectionSuggestionIds: string[]; suggesting: boolean; toastTimer: ReturnType<typeof setTimeout> | null;
   compileDiagnostics: BuildDiagnostic[]; staticDiagnostics: BuildDiagnostic[];
 };
-export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean };
+export type DialogOptions = { title: string; label?: string; value?: string; maxLength?: number; message?: string; submitLabel: string; danger?: boolean; zip?: boolean; allowEmpty?: boolean };
 export type ReviewDecision = "accept" | "reject" | "resolve";
 export type ReviewGroup = { id: string; path: string; kind: "comment" | "revision"; items: ReviewItem[] };
 export type ShareDetails = { id: string; viewPath: string; editPath: string; agentPath: string; proposalAgentPath: string; clonePath: string };

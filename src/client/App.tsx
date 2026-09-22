@@ -141,6 +141,11 @@ export function AppShell() {
         </header>
         <main className="projects-main mx-auto w-[min(calc(100%-2rem),65rem)] py-10">
           <div className="mb-5"><h1 className="font-serif text-3xl font-semibold">Projects</h1><p className="mt-1 text-sm text-muted-foreground">Open a paper or start a new one.</p></div>
+          <div className="mb-3 flex items-center gap-2 max-sm:items-stretch">
+            <label className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="project-search" className="pl-8" type="search" placeholder="Search titles and tags" aria-label="Search projects" /></label>
+            <div className="segmented grid shrink-0 grid-cols-2 rounded-md border bg-muted p-0.5" role="group" aria-label="Project archive view"><Button id="projects-active" className="active h-8 px-3 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" aria-pressed="true">Active</Button><Button id="projects-archived" className="h-8 px-3 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" type="button" aria-pressed="false">Archived</Button></div>
+          </div>
+          <div id="project-tag-filters" className="mb-3 flex flex-wrap items-center gap-1.5" aria-label="Filter projects by tag" hidden />
           <div id="project-list" className="project-list overflow-visible rounded-lg border bg-card" />
         </main>
       </div>

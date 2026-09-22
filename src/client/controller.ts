@@ -36,6 +36,7 @@ import {
   ViewPlugin,
 } from "@codemirror/view";
 import {
+  ArchiveRestore,
   Archive,
   ArrowLeft,
   createIcons,
@@ -65,6 +66,7 @@ import {
   Play,
   RefreshCw,
   TerminalSquare,
+  Tag,
   Trash2,
   Upload,
   UserPlus,
@@ -107,6 +109,7 @@ declare global {
 }
 
 const ICONS = {
+    ArchiveRestore,
     ChevronRight,
     Folder,
     Archive,
@@ -135,6 +138,7 @@ const ICONS = {
     Play,
     RefreshCw,
     TerminalSquare,
+    Tag,
     Trash2,
     Upload,
     UserPlus,
@@ -160,7 +164,7 @@ const elements = Object.fromEntries([
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
-  "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
+  "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-blame", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
@@ -340,7 +344,7 @@ function showToast(message: string): void {
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
 }
 
-function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false }: DialogOptions): Promise<string | boolean | null> {
+function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false, allowEmpty = false }: DialogOptions): Promise<string | boolean | null> {
   document.querySelector("#project-zip-field")?.remove();
   if (zip) {
     const field = document.createElement("label");
@@ -361,7 +365,7 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
   elements.action_label.hidden = !hasInput;
   elements.action_input.hidden = !hasInput;
   elements.action_input.disabled = !hasInput;
-  elements.action_input.required = hasInput;
+  elements.action_input.required = hasInput && !allowEmpty;
   elements.action_input.value = value;
   elements.action_input.maxLength = maxLength;
   elements.action_message.textContent = message;
@@ -385,7 +389,7 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
     const submit = (event: Event): void => {
       event.preventDefault();
       const result = hasInput ? elements.action_input.value.trim() : true;
-      if (hasInput && !result) { elements.action_input.reportValidity(); return; }
+      if (hasInput && !result && !allowEmpty) { elements.action_input.reportValidity(); return; }
       finish(result);
     };
     const cancel = (event: Event): void => {
@@ -1988,9 +1992,9 @@ function randomId() {
 async function refreshProject(open = false, recordOpen = false) {
   const data = await request<{ project: ProjectDetail }>(recordOpen ? "v1/project?opened=1" : "v1/project");
   const known = state.projects.find(project => project.id === data.project.id);
-  if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt });
+  if (known) Object.assign(known, { name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, tags: data.project.tags, archived: data.project.archived });
   else if (state.user) {
-    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, permissions: data.project.permissions });
+    state.projects.push({ id: data.project.id, name: data.project.name, createdAt: data.project.createdAt, lastOpenedAt: data.project.lastOpenedAt, tags: data.project.tags, archived: data.project.archived, permissions: data.project.permissions });
   }
   state.projectCanManage = Boolean(data.project.permissions?.manage);
   state.projectCanEdit = Boolean(data.project.permissions?.edit);
@@ -2023,11 +2027,56 @@ async function refreshProject(open = false, recordOpen = false) {
   await refreshGit(false);
 }
 
+let projectSearchQuery = "";
+let selectedProjectTag = "";
+let projectArchiveView: "active" | "archived" = "active";
+
+function projectTagButton(tag: string, selected: boolean): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"}`;
+  button.textContent = tag;
+  button.setAttribute("aria-pressed", String(selected));
+  button.addEventListener("click", () => {
+    selectedProjectTag = selectedProjectTag.toLocaleLowerCase() === tag.toLocaleLowerCase() ? "" : tag;
+    renderProjects();
+  });
+  return button;
+}
+
+function renderProjectTagFilters(): void {
+  const archived = projectArchiveView === "archived";
+  const uniqueTags = new Map<string, string>();
+  for (const tag of state.projects.filter(project => project.archived === archived).flatMap(project => project.tags)) {
+    if (!uniqueTags.has(tag.toLocaleLowerCase())) uniqueTags.set(tag.toLocaleLowerCase(), tag);
+  }
+  const tags = [...uniqueTags.values()].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  if (selectedProjectTag && !tags.some(tag => tag.toLocaleLowerCase() === selectedProjectTag.toLocaleLowerCase())) selectedProjectTag = "";
+  elements.project_tag_filters.replaceChildren(...tags.map(tag => projectTagButton(tag, selectedProjectTag.toLocaleLowerCase() === tag.toLocaleLowerCase())));
+  elements.project_tag_filters.hidden = tags.length === 0;
+}
+
 function renderProjects() {
+  renderProjectTagFilters();
   elements.project_list.replaceChildren();
-  for (const project of state.projects) {
+  const query = projectSearchQuery.trim().toLocaleLowerCase();
+  const selectedTag = selectedProjectTag.toLocaleLowerCase();
+  const archived = projectArchiveView === "archived";
+  const projects = state.projects.filter(project => {
+    if (project.archived !== archived) return false;
+    if (selectedTag && !project.tags.some(tag => tag.toLocaleLowerCase() === selectedTag)) return false;
+    return !query || project.name.toLocaleLowerCase().includes(query) || project.tags.some(tag => tag.toLocaleLowerCase().includes(query));
+  });
+  if (!projects.length) {
+    const empty = document.createElement("p");
+    empty.className = "px-5 py-12 text-center text-sm text-muted-foreground";
+    empty.textContent = query || selectedTag ? "No projects match these filters." : archived ? "No archived projects." : "No active projects yet.";
+    elements.project_list.append(empty);
+    return;
+  }
+  for (const project of projects) {
     const row = document.createElement("article");
-    row.className = "project-row grid min-h-16 cursor-pointer grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-2 outline-none last:border-b-0 hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
+    row.className = "project-row grid min-h-20 cursor-pointer grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-3 outline-none last:border-b-0 hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
     row.tabIndex = 0;
     row.setAttribute("role", "link");
     row.setAttribute("aria-label", `Open ${project.name}`);
@@ -2043,24 +2092,34 @@ function renderProjects() {
     });
     row.innerHTML = '<i data-lucide="folder-kanban"></i>';
     const main = document.createElement("div");
-    main.className = "project-row-main min-w-0 [&>strong]:block [&>strong]:truncate [&>strong]:text-sm [&>strong]:font-semibold [&>span]:mt-1 [&>span]:block [&>span]:text-[10px] [&>span]:text-muted-foreground";
+    main.className = "project-row-main min-w-0";
     const name = document.createElement("strong");
+    name.className = "block truncate text-sm font-semibold";
     name.textContent = project.name;
     const details = document.createElement("span");
+    details.className = "mt-1 block text-[10px] text-muted-foreground";
     details.textContent = project.lastOpenedAt
       ? `Last opened ${new Date(project.lastOpenedAt).toLocaleString()}`
       : "Collaborative LaTeX project";
     main.append(name, details);
+    if (project.tags.length) {
+      const tags = document.createElement("div");
+      tags.className = "mt-1.5 flex flex-wrap gap-1";
+      tags.append(...project.tags.map(tag => projectTagButton(tag, selectedTag === tag.toLocaleLowerCase())));
+      main.append(tags);
+    }
     const menu = document.createElement("details");
     menu.className = "context-menu relative";
-    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-40 rounded-md border bg-card p-1 shadow-xl"></div>';
+    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-44 rounded-md border bg-card p-1 shadow-xl"></div>';
     const panel = menu.querySelector("div");
     const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
+      ...(project.permissions?.edit ? [["tag", "Edit tags", () => editProjectTags(project)]] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
+      [project.archived ? "archive-restore" : "archive", project.archived ? "Unarchive" : "Archive", () => setProjectArchived(project, !project.archived)],
+      ["download", "Download ZIP", () => downloadProject(project.id)],
       ...(project.permissions?.manage ? [
         ["pencil", "Rename", () => renameProject(project)],
         ["trash-2", "Delete project", () => deleteProject(project), true],
       ] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
-      ["archive", "Download ZIP", () => downloadProject(project.id)],
     ];
     for (const [icon, label, action, danger] of actions) {
       const button = document.createElement("button");
@@ -2078,6 +2137,41 @@ function renderProjects() {
     elements.project_list.append(row);
   }
   createIcons({ icons: ICONS });
+}
+
+async function editProjectTags(project: ProjectSummary): Promise<void> {
+  const value = await openActionDialog({
+    title: "Edit project tags",
+    label: "Tags",
+    value: project.tags.join(", "),
+    maxLength: 512,
+    message: "Separate tags with commas. Use up to 12 tags.",
+    submitLabel: "Save tags",
+    allowEmpty: true,
+  });
+  if (typeof value !== "string") return;
+  const tags = value.split(",").map(tag => tag.trim()).filter(Boolean);
+  try {
+    await request(`v1/projects/${encodeURIComponent(project.id)}/tags`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+    });
+    await refreshProjects(project.id);
+    showToast("Project tags updated.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function setProjectArchived(project: ProjectSummary, archived: boolean): Promise<void> {
+  try {
+    await request(`v1/projects/${encodeURIComponent(project.id)}/archive`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    });
+    await refreshProjects();
+    showToast(archived ? "Project archived for your account." : "Project restored to active projects.");
+  } catch (error) { showToast(error.message); }
 }
 
 async function refreshProjects(preferredId = "") {
@@ -2945,6 +3039,21 @@ elements.git_resolve.addEventListener("click", async () => {
   const result = await runGitAction("v1/git/resolve", { message: elements.git_message.value }, "Conflict marked resolved.");
   if (result) elements.git_message.value = "";
 });
+elements.project_search.addEventListener("input", () => {
+  projectSearchQuery = elements.project_search.value;
+  renderProjects();
+});
+for (const [button, view] of [[elements.projects_active, "active"], [elements.projects_archived, "archived"]] as const) {
+  button.addEventListener("click", () => {
+    projectArchiveView = view;
+    selectedProjectTag = "";
+    elements.projects_active.classList.toggle("active", view === "active");
+    elements.projects_archived.classList.toggle("active", view === "archived");
+    elements.projects_active.setAttribute("aria-pressed", String(view === "active"));
+    elements.projects_archived.setAttribute("aria-pressed", String(view === "archived"));
+    renderProjects();
+  });
+}
 elements.new_project.addEventListener("click", async () => {
   const name = await openActionDialog({
     title: "New project",

@@ -512,6 +512,30 @@ test("invite-only users and project capability sessions enforce access boundarie
     const members = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: adminCookie } })).json();
     assert.deepEqual(members.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "collaborator"]]);
 
+    const tagsResponse = await fetch(`${base}/v1/projects/${project.id}/tags`, {
+      method: "PATCH",
+      headers: { Cookie: memberCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: ["Quantum", "Draft", "quantum"] }),
+    });
+    assert.equal(tagsResponse.status, 200);
+    assert.deepEqual((await tagsResponse.json()).project.tags, ["Draft", "Quantum"]);
+    const adminTaggedProject = (await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json()).projects
+      .find(item => item.id === project.id);
+    assert.deepEqual(adminTaggedProject.tags, ["Draft", "Quantum"]);
+
+    const archiveResponse = await fetch(`${base}/v1/projects/${project.id}/archive`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    assert.equal(archiveResponse.status, 200);
+    const adminArchivedProject = (await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json()).projects
+      .find(item => item.id === project.id);
+    const ownerActiveProject = (await (await fetch(`${base}/v1/projects`, { headers: { Cookie: memberCookie } })).json()).projects
+      .find(item => item.id === project.id);
+    assert.equal(adminArchivedProject.archived, true);
+    assert.equal(ownerActiveProject.archived, false);
+
     const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-private-clone-"));
     try {
       assert.notEqual((await fetch(`${base}/git/${project.id}/info/refs?service=git-upload-pack`)).status, 200);

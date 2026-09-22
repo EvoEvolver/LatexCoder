@@ -26,7 +26,7 @@ import { CompileQueue } from "./compile-queue.ts";
 import { createCompileService } from "./compile-service.ts";
 import { checkDependencies } from "./dependencies.ts";
 import { createLogger, requestLogger } from "./logger.ts";
-import { compileRequestSchema, createProjectRequestSchema, loginRequestSchema, registerRequestSchema, settingsRequestSchema, updateProfileRequestSchema, updateProjectRequestSchema } from "../shared/api-schema.ts";
+import { compileRequestSchema, createProjectRequestSchema, loginRequestSchema, projectArchiveRequestSchema, projectTagsRequestSchema, registerRequestSchema, settingsRequestSchema, updateProfileRequestSchema, updateProjectRequestSchema } from "../shared/api-schema.ts";
 import type { ZodType } from "zod";
 import type { NextFunction, Request, Response } from "express";
 import type { ProjectMetadata } from "./database.ts";
@@ -512,7 +512,11 @@ Member authentication is required for \`GET /v1/projects\` and project creation.
 The list contains projects owned by or shared with the current member.
 \`POST /v1/projects\` with \`{"name":"My paper"}\` creates an owned project.
 Only its owner can rename or delete it. Rename or delete one with
-\`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`.
+\`PATCH /v1/projects/:id\` and \`DELETE /v1/projects/:id\`. Project summaries
+include shared \`tags\` and the current member's personal \`archived\` state.
+\`PATCH /v1/projects/:id/tags\` with \`{"tags":["Draft","Quantum"]}\`
+replaces the shared tags. \`PATCH /v1/projects/:id/archive\` with
+\`{"archived":true}\` archives the project only for the signed-in member.
 
 Every project-specific request below accepts \`?project=<id>\`. If omitted,
 the first accessible project is used.
@@ -781,6 +785,16 @@ function cleanProjectName(value: unknown): string {
   return name;
 }
 
+function cleanProjectTags(tags: string[]): string[] {
+  const unique = new Map<string, string>();
+  for (const value of tags) {
+    const tag = value.replace(/\s+/g, " ").trim();
+    const key = tag.toLocaleLowerCase();
+    if (!unique.has(key)) unique.set(key, tag);
+  }
+  return [...unique.values()].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+}
+
 export async function createPaperServer(options: ServerOptions = {}): Promise<PaperServer> {
   const projectSearch = createProjectSearch(options);
   const stateDir = path.resolve(options.stateDir || process.env.LATEXCODER_STATE_DIR || path.join(process.cwd(), ".latexcoder"));
@@ -1028,15 +1042,18 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   }
 
   async function projectSummaries(username: string | null = null) {
-    const summaries: Array<ReturnType<typeof publicProjectMetadata> & { build: { status: string; pdf: boolean }; membership: string; permissions: { manage: boolean } }> = [];
+    const summaries: Array<ReturnType<typeof publicProjectMetadata> & { build: { status: string; pdf: boolean }; membership: string; tags: string[]; archived: boolean; permissions: { manage: boolean; edit: boolean; collaborate: boolean } }> = [];
     const records = username ? database.listProjectsForUser(username) : database.listProjects();
     for (const metadata of records) {
       const runtime = await loadProject(metadata.id);
+      const membership = metadata.membershipRole || "owner";
       summaries.push({
         ...publicProjectMetadata(runtime.metadata),
         build: { status: runtime.build.status, pdf: runtime.build.pdf },
-        membership: metadata.membershipRole || "owner",
-        permissions: { manage: (metadata.membershipRole || "owner") === "owner" },
+        membership,
+        tags: metadata.tags || database.listProjectTags(metadata.id),
+        archived: metadata.membershipArchived || false,
+        permissions: { manage: membership === "owner", edit: membership !== "viewer", collaborate: membership !== "viewer" },
       });
     }
     return summaries.sort((left, right) =>
@@ -1390,7 +1407,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     try {
       const user = requireUser(request);
       const accessible = await projectSummaries(user.username);
-      response.json({ projects: accessible, defaultProjectId: accessible[0]?.id || null });
+      response.json({ projects: accessible, defaultProjectId: accessible.find(project => !project.archived)?.id || null });
     }
     catch (error) { next(error); }
   });
@@ -1400,7 +1417,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const importedFiles = request.is("application/zip") ? readProjectZip(request.body) : [];
       const name = request.is("application/zip") ? request.query.name : parseBody(createProjectRequestSchema, request.body).name;
       const runtime = await createProject(name, user.username, importedFiles);
-      response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build } });
+      response.status(201).json({ project: { ...publicProjectMetadata(runtime.metadata), build: runtime.build, tags: [], archived: false } });
     } catch (error) { next(error); }
   });
   app.patch("/v1/projects/:projectId", express.json({ limit: "16kb" }), async (request, response, next) => {
@@ -1410,6 +1427,28 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       runtime.metadata = { ...runtime.metadata, name: cleanProjectName(parseBody(updateProjectRequestSchema, request.body).name) };
       database.saveProject(runtime.metadata);
       response.json({ project: publicProjectMetadata(runtime.metadata) });
+    } catch (error) { next(error); }
+  });
+  app.patch("/v1/projects/:projectId/tags", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await loadProject(request.params.projectId);
+      const membership = requireProjectMember(request, runtime);
+      if (membership.role === "viewer") throw apiError("project_edit_required", "view-only members cannot change project tags", 403);
+      const tags = cleanProjectTags(parseBody(projectTagsRequestSchema, request.body).tags);
+      database.replaceProjectTags(runtime.id, tags);
+      response.json({ project: { id: runtime.id, tags } });
+    } catch (error) { next(error); }
+  });
+  app.patch("/v1/projects/:projectId/archive", express.json({ limit: "16kb" }), async (request, response, next) => {
+    try {
+      const runtime = await loadProject(request.params.projectId);
+      const user = requireUser(request);
+      requireProjectMember(request, runtime);
+      const { archived } = parseBody(projectArchiveRequestSchema, request.body);
+      if (!database.setProjectArchived(runtime.id, user.username, archived)) {
+        throw apiError("project_member_required", "sign in as a project member to continue", 403);
+      }
+      response.json({ project: { id: runtime.id, archived } });
     } catch (error) { next(error); }
   });
   app.delete("/v1/projects/:projectId", async (request, response, next) => {
@@ -1439,6 +1478,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   app.get("/v1/project", async (request, response, next) => {
     try {
       const runtime = await resolveProject(request);
+      const membership = projectMembership(request, runtime);
       if (request.query.opened === "1") {
         const lastOpenedAt = new Date().toISOString();
         database.markProjectOpened(runtime.id, lastOpenedAt);
@@ -1446,6 +1486,8 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       }
       response.json({ project: {
         ...publicProjectMetadata(runtime.metadata),
+        tags: database.listProjectTags(runtime.id),
+        archived: membership?.archived || false,
         main: runtime.build.main,
         files: await listFiles(runtime.projectDir),
         folders: await listFolders(runtime.projectDir),

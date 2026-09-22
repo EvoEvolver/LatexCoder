@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 9;
+export const LATEST_SCHEMA_VERSION = 10;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -216,6 +216,25 @@ const migrations: Migration[] = [
         ) STRICT;
         CREATE INDEX blame_changes_project_commit_idx
           ON blame_changes(project_id, commit_hash, created_at);
+      `);
+    },
+  },
+  {
+    version: 10,
+    name: "project tags and personal archives",
+    up(database) {
+      if (!hasColumn(database, "project_members", "archived")) {
+        database.exec("ALTER TABLE project_members ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1));");
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS project_tags (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          tag TEXT NOT NULL COLLATE NOCASE,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, tag)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS project_tags_tag_idx ON project_tags(tag COLLATE NOCASE, project_id);
+        CREATE INDEX IF NOT EXISTS project_members_archive_idx ON project_members(username, archived, joined_at);
       `);
     },
   },

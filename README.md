@@ -23,7 +23,9 @@ Licensed under the [MIT License](LICENSE).
 
 ## Features
 
-- A user-scoped project dashboard with stable, shareable editor URLs.
+- A user-scoped project dashboard with stable, shareable editor URLs, shared
+  multi-tag organization, title-and-tag search, tag filters, and personal
+  archiving that never hides a project from its other collaborators.
 - Invite-only core-team accounts for project creation and management, plus
   personal, password-bearing share links with exactly two permission levels:
   View and Edit. View links stay live but cannot change project content; Edit

@@ -352,14 +352,14 @@ test("PDF preview fits page width or a whole page", async () => {
     await page.locator("#pdf-fit-width").click();
     await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "width" && globalThis.__paperE2E.state.pdfZoom === 1);
     await page.waitForFunction(() => {
-      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const view = document.querySelector<HTMLElement>("#pdf-view");
       const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
-      return Math.abs(page.width - (view.width - 32)) < 2;
+      return Math.abs(page.width - (view.clientWidth - 32)) < 2;
     });
     const widthFit = await page.evaluate(() => {
-      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const view = document.querySelector<HTMLElement>("#pdf-view");
       const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
-      return { view: { width: view.width, height: view.height }, page: { width: page.width, height: page.height } };
+      return { view: { width: view.clientWidth, height: view.clientHeight }, page: { width: page.width, height: page.height } };
     });
     assert.ok(Math.abs(widthFit.page.width - (widthFit.view.width - 32)) < 2);
     assert.equal(await page.locator("#pdf-fit-width").getAttribute("aria-pressed"), "true");
@@ -367,14 +367,14 @@ test("PDF preview fits page width or a whole page", async () => {
     await page.locator("#pdf-fit-page").click();
     await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "page");
     await page.waitForFunction(() => {
-      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const view = document.querySelector<HTMLElement>("#pdf-view");
       const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
-      return page.height <= view.height - 31 && page.height > view.height - 34;
+      return page.height <= view.clientHeight - 31 && page.height > view.clientHeight - 34;
     });
     const pageFit = await page.evaluate(() => {
-      const view = document.querySelector("#pdf-view").getBoundingClientRect();
+      const view = document.querySelector<HTMLElement>("#pdf-view");
       const page = document.querySelector<HTMLCanvasElement>("#pdf-document canvas").getBoundingClientRect();
-      return { view: { width: view.width, height: view.height }, page: { width: page.width, height: page.height } };
+      return { view: { width: view.clientWidth, height: view.clientHeight }, page: { width: page.width, height: page.height } };
     });
     assert.ok(pageFit.page.width <= pageFit.view.width - 31);
     assert.ok(pageFit.page.height <= pageFit.view.height - 31);
@@ -1649,9 +1649,64 @@ test("new project and file upload accept ZIP archives", async () => {
   });
 });
 
+test("project dashboard searches titles and tags and archives per user", async () => {
+  await withEditor(async ({ page, base }) => {
+    const create = async (name: string) => {
+      const response = await fetch(`${base}/v1/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).project;
+    };
+    const tagged = await create("Quantum Notes");
+    await create("Biology Draft");
+    await page.goto(`${base}/projects`);
+    await page.locator("#projects-page").waitFor();
+
+    const taggedRow = page.locator(".project-row", { hasText: "Quantum Notes" });
+    await taggedRow.locator("summary").click();
+    await taggedRow.getByRole("button", { name: "Edit tags" }).click();
+    await page.locator("#action-input").fill("Research, Quantum, research");
+    await page.locator("#action-submit").click();
+    await page.locator(".project-row", { hasText: "Quantum Notes" }).getByRole("button", { name: "Quantum" }).waitFor();
+
+    await page.locator("#project-search").fill("biology");
+    assert.equal(await page.locator(".project-row", { hasText: "Biology Draft" }).count(), 1);
+    assert.equal(await page.locator(".project-row", { hasText: "Quantum Notes" }).count(), 0);
+    await page.locator("#project-search").fill("quantum");
+    assert.equal(await page.locator(".project-row", { hasText: "Quantum Notes" }).count(), 1);
+    await page.locator("#project-search").fill("");
+
+    await page.locator("#project-tag-filters").getByRole("button", { name: "Research" }).click();
+    assert.equal(await page.locator(".project-row", { hasText: "Quantum Notes" }).count(), 1);
+    assert.equal(await page.locator(".project-row", { hasText: "Biology Draft" }).count(), 0);
+    await page.locator("#project-tag-filters").getByRole("button", { name: "Research" }).click();
+
+    const activeRow = page.locator(".project-row", { hasText: "Quantum Notes" });
+    await activeRow.locator("summary").click();
+    await activeRow.getByRole("button", { name: "Archive", exact: true }).click();
+    await page.waitForFunction(name => ![...document.querySelectorAll(".project-row")].some(row => row.textContent?.includes(name)), "Quantum Notes");
+    await page.locator("#projects-archived").click();
+    await page.locator(".project-row", { hasText: "Quantum Notes" }).waitFor();
+    assert.equal(await page.locator(".project-row", { hasText: "Biology Draft" }).count(), 0);
+
+    const archivedRow = page.locator(".project-row", { hasText: "Quantum Notes" });
+    await archivedRow.locator("summary").click();
+    await archivedRow.getByRole("button", { name: "Unarchive" }).click();
+    await page.waitForFunction(name => ![...document.querySelectorAll(".project-row")].some(row => row.textContent?.includes(name)), "Quantum Notes");
+    await page.locator("#projects-active").click();
+    await page.locator(".project-row", { hasText: "Quantum Notes" }).waitFor();
+
+    const projects = await (await fetch(`${base}/v1/projects`)).json();
+    assert.equal(projects.projects.find(project => project.id === tagged.id).archived, false);
+  });
+});
+
 test("project page exposes sharing while destructive actions stay in menus", async () => {
   await withEditor(async ({ page, base }) => {
-    await page.setViewportSize({ width: 800, height: 700 });
+    await page.setViewportSize({ width: 900, height: 700 });
     await page.goto(`${base}/projects`);
     await page.locator("#projects-page").waitFor();
     assert.equal(await page.locator("#new-project").isVisible(), true);
@@ -1674,7 +1729,7 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal((await page.locator("#project-title").textContent())?.trim(), "Compact Project");
     const projectTitleStyle = await page.locator("#project-name").evaluate(element => ({ fontSize: getComputedStyle(element).fontSize, fontWeight: getComputedStyle(element).fontWeight }));
     assert.deepEqual(projectTitleStyle, { fontSize: "13px", fontWeight: "600" });
-    assert.ok(centeredTitle && Math.abs(centeredTitle.x + centeredTitle.width / 2 - 400) < 1, "project title must be centered on the viewport");
+    assert.ok(centeredTitle && Math.abs(centeredTitle.x + centeredTitle.width / 2 - 450) < 1, "project title must be centered on the viewport");
     assert.equal(await page.locator("#project-title #active-file-label").count(), 0);
     await page.locator("#topbar-status").evaluate(element => { element.style.width = "400px"; });
     await page.waitForFunction(() => (document.querySelector("#project-title") as HTMLElement).hidden);
