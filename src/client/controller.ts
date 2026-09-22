@@ -167,7 +167,7 @@ const elements = Object.fromEntries([
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-blame", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
+  "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -1450,11 +1450,18 @@ function disconnectEditor() {
 
 function setBlameMode(enabled: boolean): void {
   blameModeEnabled = enabled;
-  elements.toggle_blame.classList.toggle("active", enabled);
-  elements.toggle_blame.setAttribute("aria-pressed", String(enabled));
-  elements.toggle_blame.title = enabled ? "Hide authorship" : "Show who wrote each part";
+  syncBlameMenuItem();
   if (state.view) state.view.dispatch({ effects: setEditorBlameMode.of(enabled) });
   if (enabled) void refreshEditorBlame();
+}
+
+function syncBlameMenuItem(): void {
+  const item = document.getElementById("toggle-blame");
+  if (!item) return;
+  item.setAttribute("aria-pressed", String(blameModeEnabled));
+  item.classList.toggle("bg-accent", blameModeEnabled);
+  const stateLabel = item.querySelector<HTMLElement>("#blame-menu-state");
+  if (stateLabel) stateLabel.textContent = blameModeEnabled ? "On" : "Off";
 }
 
 function resetFilePreview() {
@@ -1684,7 +1691,6 @@ async function openFile(relativePath: string): Promise<void> {
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
-  elements.toggle_blame.hidden = !file.text;
   elements.add_comment.hidden = !state.projectCanEdit || !file.text;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file.text;
   renderFiles();
@@ -3801,7 +3807,8 @@ elements.toggle_output_column.addEventListener("click", () => {
   updateWorkspaceLayout();
 });
 elements.close_files.addEventListener("click", () => setMobileFilesOpen(false));
-elements.toggle_blame.addEventListener("click", () => setBlameMode(!blameModeEnabled));
+onDynamicClick("toggle-blame", () => setBlameMode(!blameModeEnabled));
+document.getElementById("history-menu")!.addEventListener("click", () => requestAnimationFrame(syncBlameMenuItem));
 document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
 document.getElementById("close-review")!.addEventListener("click", () => setReviewOpen(false));
 new ResizeObserver(updateWorkspaceLayout).observe(workspace);

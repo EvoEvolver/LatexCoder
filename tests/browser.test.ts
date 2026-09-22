@@ -49,6 +49,11 @@ async function chooseAppMenu(page: any, menu: "project" | "history" | "account" 
   await page.locator(item).click();
 }
 
+async function toggleBlame(page: any): Promise<void> {
+  await page.locator("#history-menu").click();
+  await page.locator("#toggle-blame").click();
+}
+
 async function openRootFileMenu(page: any): Promise<void> {
   await page.locator(".tree-context-menu").waitFor({ state: "attached" });
   await page.locator("#file-list").evaluate(element => {
@@ -88,11 +93,11 @@ test("Git pushes update the open browser file tree without reloading the editor"
       assert.equal(await page.evaluate(() => globalThis.__gitTestView === globalThis.__paperE2E.state.view), true);
       await page.locator("#file-list").getByText("pushed.tex", { exact: true }).click();
       await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "pushed.tex");
-      await page.locator("#toggle-blame").click();
+      await toggleBlame(page);
       const pushedAuthor = page.locator(".cm-blame-author", { hasText: "Test User" }).first();
       await pushedAuthor.waitFor();
       assert.match(await pushedAuthor.getAttribute("title"), /Git author: Test <test@example\.com>.*Commit [0-9a-f]{7}/);
-      await page.locator("#toggle-blame").click();
+      await toggleBlame(page);
       await page.locator("#file-list").getByText("main.tex", { exact: true }).click();
       await git(["rm", "pushed.tex"]);
       await git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Remove pushed file"]);
@@ -1403,13 +1408,16 @@ test("collaborative edits show compact line blame in the editor gutter", async (
     const blame = await (await fetch(`${base}/v1/blame?path=main.tex`)).json();
     assert.ok(blame.runs.some(run => run.authorId === "test-user" && run.authorName === "Test User"));
 
-    await page.locator("#toggle-blame").click();
-    assert.equal(await page.locator("#toggle-blame").getAttribute("aria-pressed"), "true");
+    await toggleBlame(page);
     const author = page.locator(".cm-blame-author", { hasText: "Test User" }).first();
     await author.waitFor();
     assert.match(await author.getAttribute("title"), /^Test User · .*Uncommitted$/);
     assert.ok(await page.locator(".cm-blame-range").count() > 0);
 
+    await page.locator("#history-menu").click();
+    await page.waitForFunction(() => document.getElementById("toggle-blame")?.getAttribute("aria-pressed") === "true");
+    assert.equal(await page.locator("#toggle-blame").getAttribute("aria-pressed"), "true");
+    assert.equal((await page.locator("#blame-menu-state").textContent())?.trim(), "On");
     await page.locator("#toggle-blame").click();
     assert.equal(await page.locator(".cm-blame-author").count(), 0);
   });
@@ -1835,6 +1843,9 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     await page.screenshot({ path: "/tmp/latexcoder-application-menu.png" });
     await page.locator("#history-menu").click();
     assert.equal(await page.locator("#git-button").isVisible(), true);
+    assert.equal(await page.locator("#toggle-blame").isVisible(), true);
+    assert.equal(await page.locator(".editor-toolbar #toggle-blame").count(), 0);
+    await page.screenshot({ path: "/tmp/latexcoder-history-menu.png" });
     assert.equal(await page.locator("#menu-download-project").isVisible(), false);
     await page.locator("#project-menu").click();
     assert.equal(await page.locator("#menu-download-project").isVisible(), true);
