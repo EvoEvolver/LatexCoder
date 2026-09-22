@@ -46,6 +46,17 @@ export async function versionInfo(directory: string, id: string) {
   }
   return { id, shortId: id.slice(0, 7), date, subject, metadata };
 }
+export async function latestVersionWithMetadata(directory: string, ref = "HEAD"): Promise<{ id: string; metadata: VersionMetadata } | undefined> {
+  const ids = (await readGit(directory, ["log", "--first-parent", "--fixed-strings", "--grep=Latexcoder-Version: ", "--format=%H", ref, "--"])).trim().split("\n").filter(Boolean);
+  for (const id of ids) {
+    const metadata = (await versionInfo(directory, id)).metadata;
+    if (metadata) return { id, metadata };
+  }
+  return undefined;
+}
+export async function versionFolders(directory: string, commit: string): Promise<string[]> {
+  return (await readGit(directory, ["ls-tree", "-r", "-d", "--name-only", "-z", commit])).split("\0").filter(Boolean);
+}
 export async function listVersions(directory: string, before?: unknown, agentOnly = false) {
   const ref = before ? `${await historyCommit(directory, before)}^` : "main";
   // A root commit has no parent; the previous page will never emit it as a cursor.
@@ -69,7 +80,7 @@ export async function versionStructure(directory: string, id: string) {
   const before = parents[1] ? await versionInfo(directory, parents[1]) : null;
   async function folders(commit: string | undefined, metadata?: VersionMetadata) {
     if (!commit) return [];
-    return metadata?.folders ?? (await readGit(directory, ["ls-tree", "-r", "-d", "--name-only", "-z", commit])).split("\0").filter(Boolean);
+    return metadata?.folders ?? versionFolders(directory, commit);
   }
   const previous = await folders(parents[1], before?.metadata), current = await folders(id, info.metadata);
   return { foldersAdded: current.filter(folder => !previous.includes(folder)), foldersRemoved: previous.filter(folder => !current.includes(folder)),

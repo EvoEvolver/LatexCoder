@@ -18,7 +18,7 @@ import { apiError, cleanDisplayName, cleanUsername, contentPath, isTextFile, isW
 import { checkedContentTarget, compilationSourceRevision, contentEntries, listFiles, listFolders } from "./project-files.ts";
 import { run, runBinary, runRipgrep, validatedSearchOptions, validatedSearchPaths } from "./process.ts";
 import { createCollaborationStore } from "./collaboration.ts";
-import { historyCommit, historyRevision, listVersions, versionDiff, versionFiles, versionInfo, versionMessage, versionStructure } from "./version-history.ts";
+import { historyCommit, historyRevision, latestVersionWithMetadata, listVersions, versionDiff, versionFiles, versionFolders, versionInfo, versionMessage, versionStructure } from "./version-history.ts";
 import { createAutoCheckpoint } from "./auto-checkpoint.ts";
 import type { AutoCheckpoint } from "./auto-checkpoint.ts";
 import { createProjectSearch } from "./search.ts";
@@ -115,10 +115,16 @@ async function gitCheckpoint(runtime: ProjectRuntime, message: unknown, metadata
   runtime.collaboration.flush();
   await git(runtime.projectDir, ["add", "-A"]);
   const changed = await git(runtime.projectDir, ["diff", "--cached", "--quiet"], { allowedCodes: [0, 1] });
+  const head = await gitHead(runtime.projectDir);
   const folders = await listFolders(runtime.projectDir);
-  const previous = await versionInfo(runtime.projectDir, await gitHead(runtime.projectDir));
-  const mainChanged = previous.metadata ? previous.metadata.main !== runtime.build.main : runtime.build.main !== "main.tex";
-  const foldersChanged = JSON.stringify(previous.metadata?.folders || []) !== JSON.stringify(folders);
+  const previous = await versionInfo(runtime.projectDir, head);
+  const inherited = previous.metadata ? { id: head, metadata: previous.metadata } : await latestVersionWithMetadata(runtime.projectDir, head);
+  const trackedFolders = new Set(await versionFolders(runtime.projectDir, head));
+  const emptyFolders = folders.filter(folder => !trackedFolders.has(folder));
+  const inheritedTrackedFolders = new Set(inherited ? await versionFolders(runtime.projectDir, inherited.id) : []);
+  const inheritedEmptyFolders = (inherited?.metadata.folders || []).filter(folder => !inheritedTrackedFolders.has(folder));
+  const mainChanged = inherited ? inherited.metadata.main !== runtime.build.main : runtime.build.main !== "main.tex";
+  const foldersChanged = JSON.stringify(inheritedEmptyFolders) !== JSON.stringify(emptyFolders);
   const created = changed.code === 1 || mainChanged || foldersChanged;
   if (created) await git(runtime.projectDir, ["commit", "--allow-empty", "-m", versionMessage(cleanCommitMessage(message), { ...(metadata ?? { kind: "checkpoint", main: runtime.build.main }), folders })]);
   return { commit: await gitHead(runtime.projectDir), created };

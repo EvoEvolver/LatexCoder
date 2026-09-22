@@ -899,6 +899,44 @@ test("Git clone, fetch, and pull checkpoint current content without a browser co
   });
 });
 
+test("Git pull without project changes does not create an empty checkpoint", async () => {
+  await withServer(async ({ base, projectDir }) => {
+    const { project } = await (await fetch(`${base}/v1/project`)).json();
+    const { share } = await (await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST" })).json();
+    assert.equal((await fetch(`${base}/v1/files?path=chapters/notes.tex`, {
+      method: "PUT", headers: { "Content-Type": "text/plain" }, body: "nested source\n",
+    })).status, 201);
+    assert.equal((await fetch(`${base}/v1/git/commit`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: "Nested source" }),
+    })).status, 200);
+
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-no-empty-pull-"));
+    const clone = path.join(temporary, "clone");
+    try {
+      await execFileAsync("git", ["clone", `${base}${share.clonePath}`, clone]);
+      await testGit(projectDir, ["commit", "--allow-empty", "-m", "External metadata-free commit"]);
+      const expectedHead = await testGit(projectDir, ["rev-parse", "HEAD"]);
+      const expectedCount = await testGit(projectDir, ["rev-list", "--count", "HEAD"]);
+
+      await testGit(clone, ["pull", "--ff-only", "origin", "main"]);
+      assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), expectedHead);
+      assert.equal(await testGit(projectDir, ["rev-list", "--count", "HEAD"]), expectedCount);
+
+      await testGit(clone, ["pull", "--ff-only", "origin", "main"]);
+      assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), expectedHead);
+      assert.equal(await testGit(projectDir, ["rev-list", "--count", "HEAD"]), expectedCount);
+
+      await testGit(projectDir, ["rm", "chapters/notes.tex"]);
+      await testGit(projectDir, ["commit", "-m", "External directory removal"]);
+      const removalHead = await testGit(projectDir, ["rev-parse", "HEAD"]);
+      const removalCount = await testGit(projectDir, ["rev-list", "--count", "HEAD"]);
+      await testGit(clone, ["pull", "--ff-only", "origin", "main"]);
+      assert.equal(await testGit(projectDir, ["rev-parse", "HEAD"]), removalHead);
+      assert.equal(await testGit(projectDir, ["rev-list", "--count", "HEAD"]), removalCount);
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+});
+
 test("Git checkpoints and fast-forward sync keep collaboration on main", async () => {
   await withServer(async ({ base, projectDir }) => {
     await fetch(`${base}/v1/files?path=notes.tex`, {
