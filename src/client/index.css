@@ -130,6 +130,21 @@ html[data-auth-state="registered"] [data-guest-only] { display: none !important;
 .drop-target { background: var(--accent) !important; outline: 1px solid var(--ring); outline-offset: -1px; }
 .tree-empty { padding: 12px; color: var(--muted-foreground); font-size: 12px; }
 
+.tree-writer-tree { display: grid; gap: 2px; }
+.tree-writer-node { min-width: 0; }
+.tree-writer-node-button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 8px 5px calc(8px + var(--tree-depth) * 12px); border-radius: 4px; text-align: left; }
+.tree-writer-node-button:hover, .tree-writer-node-button[aria-expanded="true"] { background: var(--accent); }
+.tree-writer-node-button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tree-writer-chevron { width: 12px; flex: 0 0 12px; color: var(--muted-foreground); font-size: 18px; line-height: 1; text-align: center; transition: transform 120ms; }
+.tree-writer-node-button[aria-expanded="true"] > .tree-writer-chevron { transform: rotate(90deg); }
+.tree-writer-label { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
+.tree-writer-summary { margin: -2px 12px 5px calc(28px + var(--tree-depth) * 12px); color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
+.tree-writer-children { margin-left: calc(10px + var(--tree-depth) * 2px); border-left: 1px solid var(--border); }
+.tree-writer-editor-panel { margin: 3px 8px 10px calc(28px + var(--tree-depth) * 12px); overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--editor-background); box-shadow: 0 2px 8px oklch(.2 .01 145 / .06); }
+.tree-writer-editor-status { padding: 10px 12px; color: var(--muted-foreground); font-size: 12px; }
+.tree-writer-editor .cm-editor { min-height: 7rem; }
+@media (prefers-reduced-motion: reduce) { .tree-writer-chevron { transition: none; } }
+
 .file-tabs { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--muted); scrollbar-width: thin; }
 .file-tab { display: flex; flex-shrink: 0; align-items: center; gap: 5px; border-right: 1px solid var(--border); color: var(--muted-foreground); }
 .file-tab.active { background: var(--background); color: var(--foreground); box-shadow: inset 0 2px var(--primary); }

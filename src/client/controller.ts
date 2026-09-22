@@ -87,7 +87,7 @@ import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/rev
 import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
-import { projectStructure, type StructureEntry } from "../shared/structure.ts";
+import { flattenStructure, projectStructure, type StructureEntry, type StructureHeading, type StructureSummary } from "../shared/structure.ts";
 import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
@@ -96,6 +96,7 @@ import { EditorSession } from "./editor-session.ts";
 import { createElementRegistry, optionalElement } from "./dom.ts";
 import { PdfController } from "./pdf-controller.ts";
 import { WorkspaceController } from "./workspace-controller.ts";
+import { TreeWriterEditor } from "./tree-writer-editor.ts";
 import type {
   AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -526,9 +527,24 @@ function syncProjectPermissionUi(): void {
 
 let structureVersion = 0;
 let structureEntries: StructureEntry[] = [];
+let structureSources = new Map<string, string>();
+let treeWriterEditor: TreeWriterEditor | null = null;
+let treeWriterNodeId = "";
+let treeWriterOpenVersion = 0;
+
+function closeTreeWriterEditor(): void {
+  treeWriterOpenVersion += 1;
+  treeWriterEditor?.destroy();
+  treeWriterEditor = null;
+  treeWriterNodeId = "";
+  elements.structure_document.querySelectorAll<HTMLElement>("[data-tree-editor-panel]").forEach(panel => { panel.hidden = true; });
+  elements.structure_document.querySelectorAll<HTMLElement>('[data-tree-leaf="true"]').forEach(button => button.setAttribute("aria-expanded", "false"));
+}
+
 async function refreshStructure(): Promise<void> {
   const version = ++structureVersion;
   const project = state.projectId;
+  closeTreeWriterEditor();
   elements.refresh_structure.disabled = true;
   elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-muted-foreground">Loading tree…</p>';
   try {
@@ -540,7 +556,8 @@ async function refreshStructure(): Promise<void> {
       return [file.path, await response.text()] as const;
     }));
     if (version !== structureVersion || project !== state.projectId) return;
-    structureEntries = projectStructure(state.main, new Map(pairs));
+    structureSources = new Map(pairs);
+    structureEntries = projectStructure(state.main, structureSources);
     renderStructure();
   } catch (error) {
     if (version === structureVersion && project === state.projectId) {
@@ -552,22 +569,150 @@ async function refreshStructure(): Promise<void> {
   }
 }
 
-function structureSourceButton(entry: StructureEntry, expanded: boolean): HTMLButtonElement {
+function structureSourceButton(entry: StructureEntry, level: number): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = expanded
-    ? "structure-document-item block w-full rounded px-3 py-1.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-    : "structure-item block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+  button.className = "structure-item block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
   button.title = `${entry.path}:${entry.line} - ${entry.title}`;
   button.dataset.path = entry.path;
   button.dataset.line = String(entry.line);
   button.dataset.structureType = entry.type;
   button.dataset.structureKind = entry.kind;
+  button.style.paddingLeft = `${8 + Math.min(4, level) * 6}px`;
   button.addEventListener("click", () => { void revealSource(entry).catch(error => showToast(error.message)); });
   return button;
 }
 
+function structureSummaryButton(heading: StructureHeading, summary: StructureSummary, level: number): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "structure-item flex w-full items-start gap-2 rounded px-2 py-1 text-left text-xs leading-4 text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+  button.style.paddingLeft = `${8 + Math.min(4, level) * 6}px`;
+  button.dataset.structureType = "point";
+  button.dataset.structureKind = "section";
+  button.title = `${heading.path}:${summary.line} - ${summary.title}`;
+  const bullet = document.createElement("span");
+  bullet.className = "mt-[7px] size-1.5 shrink-0 rounded-full bg-primary";
+  const text = document.createElement("span");
+  text.className = "line-clamp-2";
+  text.textContent = summary.title;
+  button.append(bullet, text);
+  button.addEventListener("click", () => { void revealSource({ path: heading.path, line: summary.line }).catch(error => showToast(error.message)); });
+  return button;
+}
+
+function treeWriterNode(entry: StructureEntry, depth: number): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "tree-writer-node";
+  section.dataset.treeNode = entry.id;
+  section.style.setProperty("--tree-depth", String(Math.min(depth, 6)));
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "tree-writer-node-button";
+  button.dataset.structureType = entry.type;
+  button.dataset.structureKind = entry.kind;
+  button.dataset.treeLeaf = String(entry.children.length === 0);
+  const chevron = document.createElement("span");
+  chevron.className = "tree-writer-chevron";
+  chevron.textContent = "›";
+  chevron.hidden = entry.children.length === 0;
+  const label = document.createElement("span");
+  label.className = "tree-writer-label";
+  label.textContent = entry.title;
+  button.append(chevron, label);
+  section.append(button);
+
+  if (entry.type === "heading" && entry.summary) {
+    const summary = document.createElement("p");
+    summary.className = "tree-writer-summary";
+    summary.textContent = entry.summary.title;
+    section.append(summary);
+  }
+
+  if (entry.children.length) {
+    const children = document.createElement("div");
+    children.className = "tree-writer-children";
+    children.hidden = true;
+    for (const child of entry.children) children.append(treeWriterNode(child, depth + 1));
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const expanded = button.getAttribute("aria-expanded") === "true";
+      button.setAttribute("aria-expanded", String(!expanded));
+      children.hidden = expanded;
+    });
+    section.append(children);
+    return section;
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "tree-writer-editor-panel";
+  panel.dataset.treeEditorPanel = entry.id;
+  panel.hidden = true;
+  const status = document.createElement("div");
+  status.className = "tree-writer-editor-status";
+  const host = document.createElement("div");
+  host.className = "tree-writer-editor";
+  panel.append(status, host);
+  section.append(panel);
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", () => {
+    if (treeWriterNodeId === entry.id) {
+      closeTreeWriterEditor();
+      return;
+    }
+    void openTreeWriterLeaf(entry, button, panel, status, host).catch(error => {
+      status.hidden = false;
+      status.textContent = error instanceof Error ? error.message : String(error);
+      showToast(status.textContent);
+    });
+  });
+  return section;
+}
+
+async function openTreeWriterLeaf(entry: StructureEntry, button: HTMLButtonElement, panel: HTMLElement, status: HTMLElement, host: HTMLElement): Promise<void> {
+  closeTreeWriterEditor();
+  if (state.activeFile !== entry.path || !editorSession) await openFile(entry.path, { keepAuxiliary: true });
+  showExpandedStructure();
+  const version = ++treeWriterOpenVersion;
+  treeWriterNodeId = entry.id;
+  button.setAttribute("aria-expanded", "true");
+  panel.hidden = false;
+  status.hidden = false;
+  status.textContent = "Opening source...";
+  const session = editorSession;
+  if (!session) throw new Error("Could not open the source document");
+  const deadline = Date.now() + 5000;
+  while (!session.synced && editorSession === session && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+  if (version !== treeWriterOpenVersion || editorSession !== session || !document.contains(host)) return;
+  const snapshot = structureSources.get(entry.path);
+  if (snapshot !== undefined && snapshot !== session.text.toString()) {
+    status.textContent = "The source changed. Refreshing the tree...";
+    await refreshStructure();
+    showToast("The Tree was refreshed because the source changed. Open the leaf again.");
+    return;
+  }
+  if (entry.sourceRange.to > session.text.length) {
+    status.textContent = "This source range no longer exists.";
+    return;
+  }
+  status.hidden = true;
+  treeWriterEditor = new TreeWriterEditor({
+    editable: state.projectCanEdit,
+    host,
+    range: entry.sourceRange,
+    text: session.text,
+    undoManager: state.view ? editorUndoManagers.get(state.view) : undefined,
+    onInvalidated: () => {
+      status.hidden = false;
+      status.textContent = "This source range was removed. Refresh the Tree to continue.";
+    },
+  });
+  treeWriterEditor.focus();
+}
+
 function renderStructure(): void {
+  closeTreeWriterEditor();
   elements.structure_list.replaceChildren();
   elements.structure_document.replaceChildren();
   if (!structureEntries.length) {
@@ -580,7 +725,8 @@ function renderStructure(): void {
     elements.structure_document.append(expandedEmpty);
     return;
   }
-  const baseLevel = Math.min(...structureEntries.map(entry => entry.level));
+  const flatEntries = flattenStructure(structureEntries);
+  const baseLevel = Math.min(...flatEntries.map(entry => entry.level));
   const overview = document.createElement("header");
   overview.className = "mb-8 border-b pb-5";
   const title = document.createElement("h1");
@@ -592,40 +738,29 @@ function renderStructure(): void {
   overview.append(title, source);
   elements.structure_document.append(overview);
 
-  for (const entry of structureEntries) {
-    const button = structureSourceButton(entry, false);
-    button.style.paddingLeft = `${8 + Math.min(4, entry.level - baseLevel) * 6}px`;
+  for (const entry of flatEntries) {
+    const button = structureSourceButton(entry, entry.level - baseLevel);
     if (entry.type === "heading") {
       button.classList.add("truncate", "font-medium");
       button.textContent = entry.title;
     } else {
-      button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-4", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
+      button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-4", "text-muted-foreground");
       const bullet = document.createElement("span");
-      bullet.className = `mt-[7px] size-1.5 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
+      bullet.className = "mt-[7px] size-1.5 shrink-0 rounded-full bg-muted-foreground/70";
       const text = document.createElement("span");
       text.className = "line-clamp-2";
       text.textContent = entry.title;
       button.append(bullet, text);
     }
     elements.structure_list.append(button);
-
-    const expanded = structureSourceButton(entry, true);
-    expanded.style.marginLeft = `${Math.min(5, entry.level - baseLevel) * 10}px`;
-    if (entry.type === "heading") {
-      const depth = entry.level - baseLevel;
-      expanded.classList.add(depth === 0 ? "mt-4" : "mt-2", depth <= 1 ? "text-base" : "text-sm", "font-semibold", "text-foreground");
-      expanded.textContent = entry.title;
-    } else {
-      expanded.classList.add("my-0.5", "flex", "items-start", "gap-3", "border-l-2", entry.kind === "section" ? "border-primary" : "border-border", entry.kind === "section" ? "text-foreground" : "text-muted-foreground");
-      const bullet = document.createElement("span");
-      bullet.className = `mt-2 size-2 shrink-0 rounded-full ${entry.kind === "section" ? "bg-primary" : "bg-muted-foreground/70"}`;
-      const text = document.createElement("span");
-      text.className = "text-[13px] leading-5";
-      text.textContent = entry.title;
-      expanded.append(bullet, text);
+    if (entry.type === "heading" && entry.summary) {
+      elements.structure_list.append(structureSummaryButton(entry, entry.summary, entry.level - baseLevel + 1));
     }
-    elements.structure_document.append(expanded);
   }
+  const tree = document.createElement("div");
+  tree.className = "tree-writer-tree";
+  for (const entry of structureEntries) tree.append(treeWriterNode(entry, 0));
+  elements.structure_document.append(tree);
 }
 
 elements.refresh_structure.addEventListener("click", () => { void refreshStructure(); });
@@ -646,6 +781,7 @@ function showExpandedStructure(): void {
 }
 
 function hideExpandedStructure(): void {
+  closeTreeWriterEditor();
   elements.structure_view.hidden = true;
   const file = state.files.find(candidate => candidate.path === state.activeFile);
   elements.editor.hidden = !file?.text;
@@ -1471,6 +1607,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
 }
 
 function disconnectEditor() {
+  closeTreeWriterEditor();
   closeEditorContextMenu();
   if (editorSession) editorSession.dispose();
   else {
@@ -1723,11 +1860,13 @@ function setAwareness() {
   state.provider.awareness.setLocalStateField("user", { name, username: state.user?.username || null, color, colorLight: `${color}33` });
 }
 
-async function openFile(relativePath: string): Promise<void> {
+async function openFile(relativePath: string, options: { keepAuxiliary?: boolean } = {}): Promise<void> {
   const file = state.files.find(candidate => candidate.path === relativePath);
   if (!file) return;
-  fileTabs.activateFile();
-  hideExpandedStructure();
+  if (!options.keepAuxiliary) {
+    fileTabs.activateFile();
+    hideExpandedStructure();
+  }
   setMobileFilesOpen(false);
   if (relativePath === state.activeFile && (state.view || !file.text)) return;
   if (state.view && state.activeFile) staticSourceCache.set(state.activeFile, state.view.state.doc.toString());

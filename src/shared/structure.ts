@@ -1,21 +1,32 @@
 import { withoutComments } from "./references.ts";
 
-export type StructureHeading = {
+export type SourceRange = { path: string; from: number; to: number };
+export type StructureSummary = { title: string; line: number; range: SourceRange };
+
+type StructureNodeBase = {
+  id: string;
+  level: number;
+  title: string;
+  path: string;
+  line: number;
+  commandRange: SourceRange;
+  sourceRange: SourceRange;
+  children: StructureEntry[];
+};
+
+export type StructureHeading = StructureNodeBase & {
   type: "heading";
-  level: number;
   kind: "part" | "chapter" | "section" | "subsection" | "subsubsection" | "paragraph" | "subparagraph";
-  title: string;
-  path: string;
-  line: number;
+  summary: StructureSummary | null;
 };
-export type StructurePoint = {
+
+export type StructurePoint = StructureNodeBase & {
   type: "point";
-  level: number;
-  kind: "section" | "paragraph";
-  title: string;
-  path: string;
-  line: number;
+  kind: "paragraph";
+  summaryRange: SourceRange;
+  children: [];
 };
+
 export type StructureEntry = StructureHeading | StructurePoint;
 
 const LEVELS: Record<StructureHeading["kind"], number> = {
@@ -28,7 +39,16 @@ const LEVELS: Record<StructureHeading["kind"], number> = {
   subparagraph: 6,
 };
 
-function bracedArgument(source: string, start: number): { value: string; end: number } | null {
+type ParsedArgument = { value: string; from: number; to: number; end: number };
+type ParsedCommand = {
+  command: StructureHeading["kind"] | "input" | "include" | "tldr" | "sectiontldr";
+  start: number;
+  end: number;
+  argument: ParsedArgument;
+  level: number | null;
+};
+
+function bracedArgument(source: string, start: number): ParsedArgument | null {
   let cursor = start;
   while (/\s/.test(source[cursor] || "")) cursor++;
   if (source[cursor] !== "{") return null;
@@ -36,7 +56,9 @@ function bracedArgument(source: string, start: number): { value: string; end: nu
   for (let index = cursor; index < source.length; index++) {
     if (source[index] === "\\") { index++; continue; }
     if (source[index] === "{") depth++;
-    if (source[index] === "}" && --depth === 0) return { value: source.slice(cursor + 1, index), end: index + 1 };
+    if (source[index] === "}" && --depth === 0) {
+      return { value: source.slice(cursor + 1, index), from: cursor + 1, to: index, end: index + 1 };
+    }
   }
   return null;
 }
@@ -88,10 +110,70 @@ function includedPath(origin: string, target: string, sources: ReadonlyMap<strin
   return [root, relative].find(candidate => candidate && sources.has(candidate)) || null;
 }
 
+function trimRange(source: string, from: number, to: number): { from: number; to: number } {
+  while (from < to && /\s/.test(source[from])) from++;
+  while (to > from && /\s/.test(source[to - 1])) to--;
+  return { from, to };
+}
+
+function lineAt(source: string, offset: number): number {
+  return source.slice(0, offset).split("\n").length;
+}
+
+function parseCommands(source: string): ParsedCommand[] {
+  const clean = withoutComments(source);
+  const commands: ParsedCommand[] = [];
+  const pattern = /\\(sectiontldr|subsubsection|subsection|section|chapter|part|subparagraph|paragraph|input|include|tldr)\*?(?![a-zA-Z@])/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(clean))) {
+    const command = match[1] as ParsedCommand["command"];
+    const argumentStart = command === "input" || command === "include" || command === "tldr" || command === "sectiontldr"
+      ? match.index + match[0].length
+      : skipOptionalArgument(clean, match.index + match[0].length);
+    const argument = bracedArgument(clean, argumentStart);
+    if (!argument) continue;
+    pattern.lastIndex = argument.end;
+    commands.push({
+      command,
+      start: match.index,
+      end: argument.end,
+      argument,
+      level: command in LEVELS ? LEVELS[command as StructureHeading["kind"]] : null,
+    });
+  }
+  return commands;
+}
+
+function paragraphStart(source: string, clean: string, floor: number, macroStart: number): number {
+  let boundary = floor;
+  const segment = clean.slice(floor, macroStart);
+  for (const match of segment.matchAll(/\n[ \t]*\n|\\par(?![a-zA-Z@])/g)) {
+    boundary = floor + match.index! + match[0].length;
+  }
+  return trimRange(source, boundary, macroStart).from;
+}
+
+export function flattenStructure(entries: readonly StructureEntry[]): StructureEntry[] {
+  const result: StructureEntry[] = [];
+  const visit = (entry: StructureEntry): void => {
+    result.push(entry);
+    for (const child of entry.children) visit(child);
+  };
+  for (const entry of entries) visit(entry);
+  return result;
+}
+
 export function projectStructure(main: string, sources: ReadonlyMap<string, string>): StructureEntry[] {
-  const entries: StructureEntry[] = [];
+  const roots: StructureEntry[] = [];
   const visiting = new Set<string>();
-  let headingLevel = -1;
+  const headingStack: StructureHeading[] = [];
+  let currentHeading: StructureHeading | null = null;
+
+  function append(entry: StructureEntry): void {
+    const parent = headingStack.at(-1);
+    if (parent) parent.children.push(entry);
+    else roots.push(entry);
+  }
 
   function visit(filePath: string): void {
     if (visiting.has(filePath)) return;
@@ -99,46 +181,88 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
     if (source === undefined) return;
     visiting.add(filePath);
     const clean = withoutComments(source);
-    const commands = /\\(sectiontldr|subsubsection|subsection|section|chapter|part|subparagraph|paragraph|input|include|tldr)\*?(?![a-zA-Z@])/g;
-    let match: RegExpExecArray | null;
-    while ((match = commands.exec(clean))) {
-      const command = match[1] as StructureHeading["kind"] | "input" | "include" | "tldr" | "sectiontldr";
-      const argumentStart = command === "input" || command === "include" || command === "tldr" || command === "sectiontldr"
-        ? match.index + match[0].length
-        : skipOptionalArgument(clean, match.index + match[0].length);
-      const argument = bracedArgument(clean, argumentStart);
-      if (!argument) continue;
-      commands.lastIndex = argument.end;
-      if (command === "input" || command === "include") {
-        const child = includedPath(filePath, argument.value, sources);
+    const commands = parseCommands(source);
+    let localHeading: StructureHeading | null = null;
+    let previousParagraph: StructurePoint | null = null;
+    let paragraphFloor = 0;
+
+    for (let index = 0; index < commands.length; index++) {
+      const parsed = commands[index];
+      if (parsed.command === "input" || parsed.command === "include") {
+        const child = includedPath(filePath, parsed.argument.value, sources);
         if (child) visit(child);
+        paragraphFloor = parsed.end;
+        previousParagraph = null;
         continue;
       }
-      if (command === "tldr" || command === "sectiontldr") {
-        if (command === "sectiontldr" && headingLevel < 0) continue;
-        entries.push({
-          type: "point",
-          level: headingLevel < 0 ? 0 : headingLevel + 1,
-          kind: command === "sectiontldr" ? "section" : "paragraph",
-          title: displayTitle(source.slice(argumentStart, argument.end).replace(/^\s*\{/, "").replace(/\}\s*$/, "")),
+
+      if (parsed.level !== null) {
+        while (headingStack.length && headingStack.at(-1)!.level >= parsed.level) headingStack.pop();
+        const nextBoundary = commands.slice(index + 1).find(candidate => candidate.level !== null && candidate.level <= parsed.level)?.start ?? source.length;
+        const body = trimRange(source, parsed.end, nextBoundary);
+        const heading: StructureHeading = {
+          id: `${filePath}:heading:${parsed.start}`,
+          type: "heading",
+          level: parsed.level,
+          kind: parsed.command as StructureHeading["kind"],
+          title: displayTitle(source.slice(parsed.argument.from, parsed.argument.to)),
           path: filePath,
-          line: source.slice(0, match.index).split("\n").length,
-        });
+          line: lineAt(source, parsed.start),
+          commandRange: { path: filePath, from: parsed.start, to: parsed.end },
+          sourceRange: { path: filePath, ...body },
+          summary: null,
+          children: [],
+        };
+        append(heading);
+        headingStack.push(heading);
+        currentHeading = heading;
+        localHeading = heading;
+        paragraphFloor = parsed.end;
+        previousParagraph = null;
         continue;
       }
-      headingLevel = LEVELS[command];
-      entries.push({
-        type: "heading",
-        level: headingLevel,
-        kind: command,
-        title: displayTitle(source.slice(argumentStart, argument.end).replace(/^\s*\{/, "").replace(/\}\s*$/, "")),
+
+      if (parsed.command === "sectiontldr") {
+        if (currentHeading) {
+          currentHeading.summary = {
+            title: displayTitle(source.slice(parsed.argument.from, parsed.argument.to)),
+            line: lineAt(source, parsed.start),
+            range: { path: filePath, from: parsed.argument.from, to: parsed.argument.to },
+          };
+          if (localHeading === currentHeading) {
+            const nextBoundary = commands.slice(index + 1).find(candidate => candidate.level !== null && candidate.level <= currentHeading!.level)?.start ?? source.length;
+            currentHeading.sourceRange = { path: filePath, ...trimRange(source, parsed.end, nextBoundary) };
+          }
+        }
+        paragraphFloor = parsed.end;
+        previousParagraph = null;
+        continue;
+      }
+
+      const gapFromPrevious = previousParagraph ? clean.slice(previousParagraph.commandRange.to, parsed.start) : "";
+      const sameParagraph = Boolean(previousParagraph && !/\n[ \t]*\n|\\par(?![a-zA-Z@])/.test(gapFromPrevious));
+      const body = sameParagraph
+        ? previousParagraph!.sourceRange
+        : { path: filePath, ...trimRange(source, paragraphStart(source, clean, paragraphFloor, parsed.start), parsed.start) };
+      const point: StructurePoint = {
+        id: `${filePath}:paragraph:${parsed.start}`,
+        type: "point",
+        level: currentHeading ? currentHeading.level + 1 : 0,
+        kind: "paragraph",
+        title: displayTitle(source.slice(parsed.argument.from, parsed.argument.to)),
         path: filePath,
-        line: source.slice(0, match.index).split("\n").length,
-      });
+        line: lineAt(source, parsed.start),
+        commandRange: { path: filePath, from: parsed.start, to: parsed.end },
+        summaryRange: { path: filePath, from: parsed.argument.from, to: parsed.argument.to },
+        sourceRange: body,
+        children: [],
+      };
+      append(point);
+      previousParagraph = point;
     }
     visiting.delete(filePath);
   }
 
   visit(main);
-  return entries;
+  return roots;
 }

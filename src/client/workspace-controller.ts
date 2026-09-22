@@ -80,7 +80,9 @@ export class WorkspaceController {
     const mobile = this.narrow.matches;
     const mobileOutputOpen = this.elements.outputPane.classList.contains("mobile-open");
     const singlePaneOutput = !mobile && this.outputHidden && this.desktopOutputOpen;
-    this.elements.filesPane.style.transform = mobile && this.elements.filesPane.classList.contains("mobile-open") ? "translateX(0)" : "";
+    this.elements.filesPane.style.transform = mobile
+      ? this.elements.filesPane.classList.contains("mobile-open") ? "translateX(0)" : "translateX(-100%)"
+      : "";
     this.elements.editorPane.hidden = (mobile && mobileOutputOpen) || singlePaneOutput;
     this.elements.outputPane.hidden = !mobile && this.outputHidden && !this.desktopOutputOpen;
     for (const [pane, column] of this.columns) {
