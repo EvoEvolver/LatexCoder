@@ -161,7 +161,7 @@ const elements = Object.fromEntries([
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
-  "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "mobile-code", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
+  "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
@@ -2694,11 +2694,6 @@ function setOutputViewOpen(open: boolean): void {
   else if (outputHidden) desktopOutputOpen = open;
   updateWorkspaceLayout();
   elements.open_pdf.setAttribute("aria-expanded", String(open));
-  elements.open_pdf.setAttribute("aria-pressed", String(open));
-  elements.open_pdf.classList.toggle("active", open);
-  elements.mobile_code.setAttribute("aria-pressed", String(!open));
-  elements.mobile_code.classList.toggle("active", !open);
-  elements.close_output.setAttribute("aria-pressed", String(!open));
 }
 
 setInterval(() => {
@@ -3157,7 +3152,6 @@ elements.open_pdf.addEventListener("click", () => {
   selectOutput("pdf");
   setOutputViewOpen(true);
 });
-elements.mobile_code.addEventListener("click", () => setOutputViewOpen(false));
 elements.close_output.addEventListener("click", () => setOutputViewOpen(false));
 function updatePdfFitButtons(): void {
   for (const [button, mode] of [[elements.pdf_fit_width, "width"], [elements.pdf_fit_page, "page"]] as const) {
@@ -3433,6 +3427,10 @@ async function goToPdf(view: EditorView) {
   }
   if (state.projectId !== project || state.view !== view) return;
   selectOutput("pdf");
+  if (narrowWorkspace.matches || outputHidden) {
+    setOutputViewOpen(true);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  }
   if (!state.pdfDocument || state.pdfSourceRevision !== position.revision) {
     await showPdf(true, position.page);
   } else if (!elements.pdf_document.querySelector(`canvas[data-page="${position.page}"]`)) {
@@ -3445,7 +3443,6 @@ async function goToPdf(view: EditorView) {
   const viewport = page.getViewport({ scale: 1 });
   const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;
   const y = Math.max(0, Math.min(viewport.height, position.y)) / viewport.height * canvas.clientHeight;
-  if (narrowWorkspace.matches) setOutputViewOpen(true);
   elements.pdf_view.scrollTo({ top: Math.max(0, canvas.offsetTop + y - elements.pdf_view.clientHeight / 2), left: Math.max(0, canvas.offsetLeft + x - elements.pdf_view.clientWidth / 2), behavior: "smooth" });
   const expires = Date.now() + 3000;
   state.pdfHighlights = { boxes: position.boxes || [{ page: position.page, left: position.x - 30, top: position.y - 8, width: 60, height: 16 }], expires };
@@ -3703,11 +3700,6 @@ function updateWorkspaceLayout() {
   elements.toggle_files.setAttribute("aria-expanded", String(mobile ? elements.files_pane.classList.contains("mobile-open") : !filesHidden));
   elements.workspace_view_switch.hidden = !mobile && !outputHidden;
   elements.close_output.hidden = !mobile && !singlePaneOutput;
-  const outputTabs = document.getElementById("output-view-tabs")!;
-  outputTabs.classList.toggle("w-44", mobile || singlePaneOutput);
-  outputTabs.classList.toggle("grid-cols-3", mobile || singlePaneOutput);
-  outputTabs.classList.toggle("w-32", !mobile && !singlePaneOutput);
-  outputTabs.classList.toggle("grid-cols-2", !mobile && !singlePaneOutput);
 
   const syncColumnToggle = (button: HTMLElement, hidden: boolean, labels: [string, string]): void => {
     button.title = hidden ? labels[1] : labels[0];

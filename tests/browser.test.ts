@@ -402,7 +402,8 @@ test("mobile editor can open, compile, view, and close the PDF preview", async (
     assert.equal(await page.locator("#open-pdf").getAttribute("aria-expanded"), "true");
     assert.equal(await page.locator("#compile-button").isVisible(), true);
     assert.equal(await page.locator("#close-output").isVisible(), true);
-    assert.equal((await page.locator("#close-output").textContent())?.trim(), "Source");
+    assert.equal((await page.locator("#close-output").textContent())?.trim(), "Switch to source");
+    assert.equal(await page.locator("#output-view-tabs #close-output").count(), 0);
 
     await page.locator("#compile-button").click();
     await page.locator("#pdf-document canvas").waitFor();
@@ -432,12 +433,20 @@ test("source navigation loads a new PDF revision once and then reuses it", async
       downloads++;
       return route.fulfill({ contentType: "application/pdf", headers: { "X-LaTeX-Coder-Source-Revision": "navigation-revision" }, body: previewPdf(2) });
     });
+    await page.locator("#toggle-output-column").click();
+    assert.equal(await page.locator("#output-pane").isVisible(), false);
     for (let attempt = 0; attempt < 2; attempt++) {
       await selectionContextMenu(page, "TARGET", false);
       await page.locator('[data-editor-action="pdf"]').click();
       await page.locator("#pdf-source-marker").waitFor();
+      assert.equal(await page.locator("#output-pane").isVisible(), true);
+      assert.equal(await page.locator("#editor-pane").isVisible(), false);
       assert.equal(downloads, 1);
       assert.equal(await page.locator("#pdf-document canvas").count(), 2);
+      if (attempt === 0) {
+        await page.locator("#close-output").click();
+        assert.equal(await page.locator("#editor-pane").isVisible(), true);
+      }
     }
     assert.equal(await page.locator("#pdf-freshness").isHidden(), true);
     assert.equal(await page.locator("#pdf-freshness").textContent(), "");
@@ -997,9 +1006,11 @@ test("workspace panels resize, collapse from arrow handles, and switch the singl
         width: element.getBoundingClientRect().width,
         handleHeight: handle ? getComputedStyle(handle).height : "",
         handleWidth: handle ? getComputedStyle(handle).width : "",
+        handleBorder: handle ? getComputedStyle(handle).borderWidth : "",
       };
     }));
     assert.deepEqual(resizeStyles, [resizeStyles[0], resizeStyles[0]]);
+    assert.equal(resizeStyles[0].handleBorder, "0px");
     await drag("#files-resize", 60);
     assert.ok(await width("#files-pane") > files + 50);
     const output = await width("#output-pane");
@@ -1037,11 +1048,17 @@ test("workspace panels resize, collapse from arrow handles, and switch the singl
     assert.equal(await page.locator("#toggle-output-column").getAttribute("title"), "Show PDF");
     assert.equal(await page.locator("#workspace-view-switch").isVisible(), true);
     assert.equal(await page.locator("#editor-pane").isVisible(), true);
+    assert.equal((await page.locator("#open-pdf").textContent())?.trim(), "Switch to PDF");
+    const switchToPdf = await page.locator("#open-pdf").boundingBox();
     await page.screenshot({ path: "/tmp/latexcoder-single-source.png" });
     await page.locator("#open-pdf").click();
     assert.equal(await page.locator("#editor-pane").isVisible(), false);
     assert.equal(await page.locator("#output-pane").isVisible(), true);
     assert.equal(await page.locator("#close-output").isVisible(), true);
+    assert.equal(await page.locator("#output-view-tabs button").count(), 2);
+    assert.deepEqual(await page.locator("#output-view-tabs button").allTextContents(), ["PDF", "Log "]);
+    const switchToSource = await page.locator("#close-output").boundingBox();
+    assert.ok(Math.abs(switchToPdf.x + switchToPdf.width - switchToSource.x - switchToSource.width) < 100, "source and PDF switch commands should occupy comparable toolbar positions");
     const singlePdf = await page.locator("#output-pane").boundingBox();
     const singleWorkspace = await page.locator("#workspace").boundingBox();
     const singleLayout = await page.locator("#output-pane").evaluate(element => ({ style: element.getAttribute("style"), computedRow: getComputedStyle(element).gridRow, workspaceRows: getComputedStyle(element.parentElement!).gridTemplateRows }));
