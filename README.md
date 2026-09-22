@@ -35,7 +35,8 @@ Licensed under the [MIT License](LICENSE).
 - Real-time Yjs collaboration over WebSockets, with presence indicators.
 - Character-level blame stored with the shared Yjs text. New text records its
   collaborator and the first Git checkpoint containing it, with compact
-  per-line attribution in the editor and a machine-readable blame API.
+  per-line attribution, an editor Blame mode that labels and highlights every
+  continuous authorship range, and a machine-readable blame API.
 - Threaded inline comments, replies, and tracked suggestions encoded as explicit
   LaTeX macros. Humans and agents see and edit the same review state through
   ordinary source reads and hash-checked full-file uploads, including replying, accepting,
@@ -47,7 +48,9 @@ Licensed under the [MIT License](LICENSE).
 - Conflict isolation on `conflict/<UTC timestamp>` branches, leaving the live
   Yjs document and `main` untouched until the content is resolved.
 - Git status, history, checkpoints, and a copy-ready personal Git remote for
-  ordinary `clone`, `pull`, and `push` workflows.
+  ordinary `clone`, `pull`, and `push` workflows. Pushed text is attributed to
+  the personal secret's owner, with the commit author name and email retained
+  as auxiliary blame information.
 - Open-file tabs and an indented, keyboard-accessible file tree with file-type
   icons, folder menus, drag-and-drop moves, recoverable deletion, and downloads.
 - On-demand LaTeX compilation with content-addressed caching, PDF preview,
@@ -281,7 +284,9 @@ commit in a temporary detached worktree and imports a clean result into the live
 Yjs documents. If Git or review-storage validation finds a conflict, the pushed
 commit is kept on `conflict/<UTC timestamp>` while `main` and Yjs remain
 unchanged. Resolve the content on `main`, then use **Mark resolved** to create
-the two-parent merge commit and remove the quarantine branch.
+the two-parent merge commit and remove the quarantine branch. Blame treats the
+personal Git secret's owner as the pusher and shows the commit's author name and
+email as unverified auxiliary identity.
 
 **Download ZIP** packages the live working tree, including current uncommitted
 files, without changing the Git index or creating a commit.

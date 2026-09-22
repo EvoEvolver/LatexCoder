@@ -86,6 +86,14 @@ test("Git pushes update the open browser file tree without reloading the editor"
       await page.waitForFunction(() => globalThis.__paperE2E.state.files.some(file => file.path === "pushed.tex"));
       assert.ok(await page.locator("#file-list").getByText("pushed.tex", { exact: true }).count());
       assert.equal(await page.evaluate(() => globalThis.__gitTestView === globalThis.__paperE2E.state.view), true);
+      await page.locator("#file-list").getByText("pushed.tex", { exact: true }).click();
+      await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "pushed.tex");
+      await page.locator("#toggle-blame").click();
+      const pushedAuthor = page.locator(".cm-blame-author", { hasText: "Test User" }).first();
+      await pushedAuthor.waitFor();
+      assert.match(await pushedAuthor.getAttribute("title"), /Git author: Test <test@example\.com>.*Commit [0-9a-f]{7}/);
+      await page.locator("#toggle-blame").click();
+      await page.locator("#file-list").getByText("main.tex", { exact: true }).click();
       await git(["rm", "pushed.tex"]);
       await git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Remove pushed file"]);
       await git(["push", "origin", "main"]);
@@ -1315,6 +1323,16 @@ test("collaborative edits show compact line blame in the editor gutter", async (
     assert.match(await marker.getAttribute("title"), /^Test User · Uncommitted$/);
     const blame = await (await fetch(`${base}/v1/blame?path=main.tex`)).json();
     assert.ok(blame.runs.some(run => run.authorId === "test-user" && run.authorName === "Test User"));
+
+    await page.locator("#toggle-blame").click();
+    assert.equal(await page.locator("#toggle-blame").getAttribute("aria-pressed"), "true");
+    const author = page.locator(".cm-blame-author", { hasText: "Test User" }).first();
+    await author.waitFor();
+    assert.match(await author.getAttribute("title"), /^Test User · .*Uncommitted$/);
+    assert.ok(await page.locator(".cm-blame-range").count() > 0);
+
+    await page.locator("#toggle-blame").click();
+    assert.equal(await page.locator(".cm-blame-author").count(), 0);
   });
 });
 

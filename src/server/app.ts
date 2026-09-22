@@ -91,6 +91,20 @@ async function git(projectDir: string, args: string[], options: GitRunOptions = 
   return { ...result, output: result.output.trim() };
 }
 
+type GitAuthorIdentity = { name: string; email: string };
+const gitAuthorCache = new Map<string, GitAuthorIdentity | null>();
+
+async function gitAuthorForCommit(projectDir: string, commit: string): Promise<GitAuthorIdentity | null> {
+  if (!/^[0-9a-f]{40}$/i.test(commit)) return null;
+  const key = `${projectDir}\0${commit}`;
+  if (gitAuthorCache.has(key)) return gitAuthorCache.get(key)!;
+  const result = await git(projectDir, ["show", "-s", "--format=%an%x00%ae", commit], { allowedCodes: [0, 128] });
+  const [name = "", email = ""] = result.code === 0 ? result.output.split("\0") : [];
+  const identity = name && email ? { name, email } : null;
+  gitAuthorCache.set(key, identity);
+  return identity;
+}
+
 async function ensureGitRepository(projectDir: string): Promise<void> {
   if (!existsSync(path.join(projectDir, ".git"))) {
     await git(projectDir, ["init", "-b", "main"]);
@@ -210,7 +224,14 @@ async function trackedPaths(projectDir: string): Promise<string[]> {
   return output ? output.split("\0").filter(Boolean) : [];
 }
 
-async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, main = runtime.build.main, validateReviews = true, blameCommit: string | null = null): Promise<void> {
+async function importGitWorktree(
+  runtime: ProjectRuntime,
+  sourceDir: string,
+  main = runtime.build.main,
+  validateReviews = true,
+  blameCommit: string | null = null,
+  blameActor: BlameActor = { id: "git", name: "Git import" },
+): Promise<void> {
   const before = new Set(await trackedPaths(runtime.projectDir));
   const after = new Set(await trackedPaths(sourceDir));
   if (!after.has(main)) throw apiError("git_main_missing", "the incoming version deletes the main document", 409);
@@ -244,7 +265,7 @@ async function importGitWorktree(runtime: ProjectRuntime, sourceDir: string, mai
     await mkdir(path.dirname(target), { recursive: true });
     if (isTextFile(relativePath)) {
       const content = await readFile(source, "utf8");
-      runtime.collaboration.importText(relativePath, content, { id: "git", name: "Git import", commit: blameCommit });
+      runtime.collaboration.importText(relativePath, content, { ...blameActor, commit: blameCommit });
     } else {
       await cp(source, target);
     }
@@ -324,7 +345,7 @@ async function withTemporaryWorktree<T>(runtime: ProjectRuntime, commit: string,
   }
 }
 
-async function gitSyncLocked(runtime: ProjectRuntime, requestedRef: string) {
+async function gitSyncLocked(runtime: ProjectRuntime, requestedRef: string, blameActor?: BlameActor) {
     await ensureGitRepository(runtime.projectDir);
     const checkpoint = await gitCheckpoint(runtime, "Checkpoint before sync");
     const local = checkpoint.commit;
@@ -359,7 +380,7 @@ async function gitSyncLocked(runtime: ProjectRuntime, requestedRef: string) {
         mergedCommit = await gitHead(worktree);
       }
       try {
-        await importGitWorktree(runtime, worktree, runtime.build.main, true, mergedCommit);
+        await importGitWorktree(runtime, worktree, runtime.build.main, true, mergedCommit, blameActor);
       } catch (error) {
         semanticConflict = error instanceof Error ? error : new Error(String(error));
       }
@@ -450,7 +471,7 @@ async function syncGitIngress(runtime: ProjectRuntime): Promise<{ ingressDir: st
   return { ingressDir, head };
 }
 
-async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string) {
+async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string, blameActor?: BlameActor) {
   const { ingressDir, head: before } = await syncGitIngress(runtime);
   const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
   if (protocol) env.GIT_PROTOCOL = protocol;
@@ -467,7 +488,7 @@ async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Ui
   const incomingRef = `refs/latexcoder/incoming/${randomUUID()}`;
   try {
     await git(runtime.projectDir, ["fetch", "--no-tags", ingressDir, `+refs/heads/main:${incomingRef}`]);
-    const sync = await gitSyncLocked(runtime, incomingRef);
+    const sync = await gitSyncLocked(runtime, incomingRef, blameActor);
     return { output, sync };
   } finally {
     await git(runtime.projectDir, ["update-ref", "-d", incomingRef], { allowedCodes: [0, 1] });
@@ -516,8 +537,10 @@ Agent's committed local branch, so browser users never need to commit first.
 Each registered collaborator gets a personal smart HTTP URL at
 \`/git/<project-id>/<share-secret>\`. Clone it and push \`main\` normally; no
 upstream configuration is required. A push checkpoints current Yjs changes and
-automatically merges the incoming commit into the live document. Conflicts are
-quarantined on \`conflict/<UTC timestamp>\`; Yjs and main remain unchanged.
+automatically merges the incoming commit into the live document. Imported text
+is attributed to the personal secret's owner; commit author name and email are
+returned as auxiliary blame information. Conflicts are quarantined on
+\`conflict/<UTC timestamp>\`; Yjs and main remain unchanged.
 After resolving the content on main, \`POST /v1/git/resolve\` records the
 two-parent merge commit.
 
@@ -1096,14 +1119,20 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     if (!findProjectShare(runtime, request.params.shareToken)) throw apiError("project_access_required", "Git clone URL is invalid", 401);
     return runtime;
   };
-  const resolveGitPushProject = async (request: Request): Promise<ProjectRuntime> => {
+  const resolveGitPushProject = async (request: Request): Promise<{ runtime: ProjectRuntime; actor: BlameActor }> => {
     const runtime = await loadProject(request.params.projectId);
     const share = findProjectShare(runtime, request.params.shareToken);
-    const membership = share?.username ? database.getProjectMember(runtime.id, share.username) : null;
-    if (!membership || membership.role === "viewer") {
+    const username = share?.username;
+    const membership = username ? database.getProjectMember(runtime.id, username) : null;
+    if (!username || !membership || membership.role === "viewer") {
       throw apiError("project_access_required", "a registered member's personal Git URL is required for push", 401);
     }
-    return runtime;
+    const user = database.getUser(username);
+    const requestUser = currentUser(request);
+    return {
+      runtime,
+      actor: { id: username, name: user?.displayName || (requestUser?.username === username ? requestUser.displayName : username) },
+    };
   };
 
   const { compileProject, ensureLatestPdf } = createCompileService({
@@ -1621,15 +1650,14 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       if (service !== "git-upload-pack" && service !== "git-receive-pack") {
         throw apiError("git_service_invalid", "unsupported Git service", 400);
       }
-      const runtime = service === "git-receive-pack"
-        ? await resolveGitPushProject(request)
-        : await resolveGitProject(request);
+      const pushAccess = service === "git-receive-pack" ? await resolveGitPushProject(request) : null;
+      const runtime = pushAccess?.runtime || await resolveGitProject(request);
       const advertised = await withGitReader(runtime, async () => {
         if (service === "git-upload-pack") {
           await withLiveGitOperation(runtime, () => prepareGitPull(runtime));
           return gitUploadPack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"));
         }
-        return (await withLiveGitOperation(runtime, () => gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol")))).output;
+        return (await withLiveGitOperation(runtime, () => gitReceivePack(runtime, ["--advertise-refs"], Buffer.alloc(0), request.get("git-protocol"), pushAccess?.actor))).output;
       });
       response.setHeader("Cache-Control", "no-store");
       response.type(`application/x-${service}-advertisement`);
@@ -1653,12 +1681,13 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   });
   app.post("/git/:projectId/:shareToken/git-receive-pack", express.raw({ type: () => true, limit: "32mb" }), async (request, response, next) => {
     try {
-      const runtime = await resolveGitPushProject(request);
+      const { runtime, actor } = await resolveGitPushProject(request);
       const result = await withGitReader(runtime, () => withGitOperation(runtime, () => gitReceivePack(
         runtime,
         [],
         Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
         request.get("git-protocol"),
+        actor,
       )));
       if (result.sync?.status) response.setHeader("X-LaTeX-Coder-Sync", result.sync.status);
       if (result.sync) notifyProjectFiles(runtime.id);
@@ -1780,8 +1809,15 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       const runtime = await resolveProject(request);
       const relativePath = safeRelativePath(request.query.path);
       if (!isTextFile(relativePath)) throw apiError("not_text", "only text files have collaborative blame", 415);
+      const blame = runtime.collaboration.blame(relativePath);
+      const commits = [...new Set(blame.runs.map(run => run.commit).filter((commit): commit is string => Boolean(commit)))];
+      const authors = new Map(await Promise.all(commits.map(async commit => [commit, await gitAuthorForCommit(runtime.projectDir, commit)] as const)));
       response.setHeader("Cache-Control", "no-store");
-      response.json({ path: relativePath, ...runtime.collaboration.blame(relativePath) });
+      response.json({
+        path: relativePath,
+        revision: blame.revision,
+        runs: blame.runs.map(run => ({ ...run, gitAuthor: run.commit ? authors.get(run.commit) || null : null })),
+      });
     } catch (error) { next(error); }
   });
   app.put("/v1/files", express.raw({ type: () => true, limit: MAX_FILE_BYTES }), async (request, response, next) => {

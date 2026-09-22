@@ -14,7 +14,7 @@ import {
 import { tags } from "@lezer/highlight";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Annotation, EditorSelection, EditorState, RangeSet, StateEffect, StateField, Transaction, type Extension, type TransactionSpec } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState, RangeSet, StateEffect, StateField, Transaction, type Extension, type Range, type TransactionSpec } from "@codemirror/state";
 import {
   crosshairCursor,
   Decoration,
@@ -30,6 +30,8 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
+  type DecorationSet,
+  type ViewUpdate,
   WidgetType,
   ViewPlugin,
 } from "@codemirror/view";
@@ -161,7 +163,7 @@ const elements = Object.fromEntries([
   "project-list", "project-name", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
+  "toast", "toggle-blame", "toggle-files", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure",
 ].map(id => [id.replaceAll("-", "_"), document.getElementById(id)])) as Record<string, AppElement>;
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -1043,6 +1045,51 @@ const editorDiagnosticTooltip = hoverTooltip((view, position) => {
 });
 
 const setEditorBlame = StateEffect.define<BlameRun[]>();
+const setEditorBlameMode = StateEffect.define<boolean>();
+let blameModeEnabled = false;
+
+function blameDetails(blame: BlameRun): string {
+  const details = [blame.authorName];
+  if (blame.gitAuthor) details.push(`Git author: ${blame.gitAuthor.name} <${blame.gitAuthor.email}>`);
+  if (blame.createdAt) details.push(new Date(blame.createdAt).toLocaleString());
+  details.push(blame.commit ? `Commit ${blame.commit.slice(0, 7)}` : "Uncommitted");
+  return details.join(" · ");
+}
+
+function readableBlameRuns(runs: readonly BlameRun[]): BlameRun[] {
+  const merged: BlameRun[] = [];
+  for (const run of runs) {
+    const previous = merged.at(-1);
+    if (previous && previous.to === run.from && previous.authorId === run.authorId && previous.commit === run.commit) {
+      previous.to = run.to;
+      if (run.createdAt && (!previous.createdAt || run.createdAt < previous.createdAt)) previous.createdAt = run.createdAt;
+      continue;
+    }
+    merged.push({ ...run });
+  }
+  return merged;
+}
+
+class BlameAuthorWidget extends WidgetType {
+  constructor(readonly blame: BlameRun) { super(); }
+  eq(other: BlameAuthorWidget): boolean {
+    return this.blame.authorId === other.blame.authorId
+      && this.blame.authorName === other.blame.authorName
+      && this.blame.commit === other.blame.commit
+      && this.blame.createdAt === other.blame.createdAt
+      && this.blame.gitAuthor?.name === other.blame.gitAuthor?.name
+      && this.blame.gitAuthor?.email === other.blame.gitAuthor?.email;
+  }
+  toDOM(): HTMLElement {
+    const label = document.createElement("span");
+    label.className = "cm-blame-author";
+    label.textContent = this.blame.authorName;
+    label.title = blameDetails(this.blame);
+    label.style.setProperty("--blame-color", colorFor(this.blame.authorId || this.blame.authorName));
+    return label;
+  }
+  ignoreEvent(): boolean { return true; }
+}
 
 class BlameGutterMarker extends GutterMarker {
   readonly elementClass = "cm-blame-marker";
@@ -1068,6 +1115,47 @@ const editorBlameField = StateField.define<BlameRun[]>({
       to: transaction.changes.mapPos(run.to, -1),
     })).filter(run => run.to > run.from);
   },
+});
+
+const editorBlameModeField = StateField.define<boolean>({
+  create: () => blameModeEnabled,
+  update(enabled, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setEditorBlameMode)) return effect.value;
+    return enabled;
+  },
+});
+
+function buildBlameDecorations(editorState: EditorState): DecorationSet {
+  if (!editorState.field(editorBlameModeField)) return Decoration.none;
+  const decorations: Range<Decoration>[] = [];
+  for (const blame of readableBlameRuns(editorState.field(editorBlameField))) {
+    const from = Math.max(0, Math.min(blame.from, editorState.doc.length));
+    const to = Math.max(from, Math.min(blame.to, editorState.doc.length));
+    if (to <= from) continue;
+    const color = colorFor(blame.authorId || blame.authorName);
+    decorations.push(Decoration.widget({ widget: new BlameAuthorWidget(blame), side: -1 }).range(from));
+    decorations.push(Decoration.mark({
+      class: "cm-blame-range",
+      attributes: { title: blameDetails(blame), style: `--blame-color: ${color}` },
+    }).range(from, to));
+  }
+  return Decoration.set(decorations, true);
+}
+
+class BlameDecorationsPlugin {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = buildBlameDecorations(view.state); }
+  update(update: ViewUpdate): void {
+    if (update.docChanged
+      || update.startState.field(editorBlameField) !== update.state.field(editorBlameField)
+      || update.startState.field(editorBlameModeField) !== update.state.field(editorBlameModeField)) {
+      this.decorations = buildBlameDecorations(update.state);
+    }
+  }
+}
+
+const editorBlameDecorations = ViewPlugin.fromClass(BlameDecorationsPlugin, {
+  decorations: plugin => plugin.decorations,
 });
 
 const editorBlameGutter = gutter({
@@ -1201,6 +1289,8 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     editorDiagnosticGutter,
     editorBlameGutter,
     editorBlameField,
+    editorBlameModeField,
+    editorBlameDecorations,
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     ViewPlugin.define(view => {
@@ -1301,6 +1391,8 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       ".cm-diagnostic-marker": { display: "grid", width: "12px", height: "12px", marginTop: "4px", placeItems: "center", borderRadius: "50%", backgroundColor: "#b42318", color: "white", fontSize: "8px", fontWeight: "800", cursor: "help" },
       ".cm-blame-gutter": { width: "25px" },
       ".cm-blame-marker": { display: "grid", width: "20px", height: "16px", marginTop: "2px", placeItems: "center", borderRadius: "3px", color: "white", fontSize: "7px", fontWeight: "750", cursor: "help", opacity: "0.78" },
+      ".cm-blame-author": { display: "inline-flex", height: "16px", margin: "0 5px 0 2px", padding: "0 5px", alignItems: "center", borderRadius: "3px", backgroundColor: "var(--blame-color)", color: "white", fontFamily: "ui-sans-serif, sans-serif", fontSize: "9px", fontWeight: "700", lineHeight: "16px", verticalAlign: "1px", whiteSpace: "nowrap", cursor: "help" },
+      ".cm-blame-range": { borderRadius: "2px", backgroundColor: "color-mix(in srgb, var(--blame-color) 16%, transparent)", boxShadow: "inset 0 -2px 0 color-mix(in srgb, var(--blame-color) 72%, transparent)", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone", cursor: "help" },
       ".cm-diagnostic-marker.warning": { backgroundColor: "#b7791f" },
       ".cm-diagnostic-range.error": { textDecoration: "underline wavy #d92d20", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
       ".cm-diagnostic-range.warning": { textDecoration: "underline wavy #d28a16", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
@@ -1350,6 +1442,15 @@ function disconnectEditor() {
   state.doc = null;
   state.selectionSuggestionIds = [];
   elements.selection_actions.hidden = true;
+}
+
+function setBlameMode(enabled: boolean): void {
+  blameModeEnabled = enabled;
+  elements.toggle_blame.classList.toggle("active", enabled);
+  elements.toggle_blame.setAttribute("aria-pressed", String(enabled));
+  elements.toggle_blame.title = enabled ? "Hide authorship" : "Show who wrote each part";
+  if (state.view) state.view.dispatch({ effects: setEditorBlameMode.of(enabled) });
+  if (enabled) void refreshEditorBlame();
 }
 
 function resetFilePreview() {
@@ -1519,6 +1620,7 @@ async function openFile(relativePath: string): Promise<void> {
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
+  elements.toggle_blame.hidden = !file.text;
   elements.add_comment.hidden = !state.projectCanEdit || !file.text;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file.text;
   renderFiles();
@@ -3500,6 +3602,7 @@ elements.toggle_files.addEventListener("click", () => {
   if (!narrowWorkspace.matches) updateWorkspaceLayout();
 });
 elements.close_files.addEventListener("click", () => setMobileFilesOpen(false));
+elements.toggle_blame.addEventListener("click", () => setBlameMode(!blameModeEnabled));
 document.getElementById("toggle-review")!.addEventListener("click", () => setReviewOpen(Boolean(elements.review_pane.hidden)));
 document.getElementById("close-review")!.addEventListener("click", () => setReviewOpen(false));
 new ResizeObserver(updateWorkspaceLayout).observe(workspace);

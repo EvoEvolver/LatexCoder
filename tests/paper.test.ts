@@ -517,6 +517,18 @@ test("invite-only users and project capability sessions enforce access boundarie
       assert.notEqual((await fetch(`${base}/git/${project.id}/info/refs?service=git-upload-pack`)).status, 200);
       await execFileAsync("git", ["clone", `${base}${share.clonePath}`, temporary]);
       assert.equal(await testGit(temporary, ["branch", "--show-current"]), "main");
+      await writeFile(path.join(temporary, "member-push.tex"), "pushed with a personal secret\n", "utf8");
+      await testGit(temporary, ["add", "member-push.tex"]);
+      await testGit(temporary, ["commit", "-m", "Attribute personal Git push"]);
+      await testGit(temporary, ["push", "origin", "main"]);
+      const pushedBlame = await (await fetch(`${base}/v1/blame?project=${project.id}&path=member-push.tex`, {
+        headers: { Cookie: memberCookie },
+      })).json();
+      assert.ok(pushedBlame.runs.some(run => run.authorId === "member.one"
+        && run.authorName === "member.one"
+        && run.commit
+        && run.gitAuthor?.name === "Test User"
+        && run.gitAuthor?.email === "test@example.com"));
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }

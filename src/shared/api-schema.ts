@@ -31,6 +31,7 @@ export const apiErrorSchema = z.object({ error: z.object({ code: z.string(), mes
 export const blameRunSchema = z.object({
   from: z.number(), to: z.number(), authorId: z.string(), authorName: z.string(), changeId: z.string(),
   createdAt: z.number().nullable(), commit: z.string().nullable(),
+  gitAuthor: z.object({ name: z.string(), email: z.string() }).nullable(),
 });
 export const blameResponseSchema = z.object({ path: z.string(), revision: z.string(), runs: z.array(blameRunSchema) });
 
