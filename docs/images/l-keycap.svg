@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">L keycap</title>
+  <desc id="description">A three-dimensional keyboard keycap marked L, viewed from the front at a forty-five degree downward angle.</desc>
+  <defs>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9cdc8" />
+      <stop offset="1" stop-color="#959b96" />
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b9bfba" />
+      <stop offset="1" stop-color="#858b86" />
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#979d98" />
+      <stop offset="1" stop-color="#6f7571" />
+    </linearGradient>
+    <linearGradient id="top" x1="0.08" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.52" stop-color="#eef0ec" />
+      <stop offset="1" stop-color="#d7dad5" />
+    </linearGradient>
+    <linearGradient id="dish" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f8faf6" />
+      <stop offset="1" stop-color="#e2e5df" />
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-80%" width="170%" height="260%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="15" />
+    </filter>
+    <filter id="contact-shadow" x="-30%" y="-100%" width="170%" height="300%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5" />
+    </filter>
+    <filter id="top-shadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#343a36" flood-opacity="0.2" />
+    </filter>
+  </defs>
+
+  <!-- The upper-left light source casts the key's soft shadow to the lower right. -->
+  <ellipse cx="286" cy="407" rx="167" ry="31" transform="rotate(4 286 407)" fill="#222824" opacity="0.3" filter="url(#shadow)" />
+  <ellipse cx="268" cy="385" rx="132" ry="15" fill="#1e2420" opacity="0.3" filter="url(#contact-shadow)" />
+
+  <!-- Extruded shell: left, front, and right faces have progressively less light. -->
+  <path d="M93 251 L126 277 L143 384 Q119 380 114 361 Z" fill="url(#left)" />
+  <path d="M126 277 L386 277 L381 360 Q379 384 354 390 L150 390 Q124 385 114 361 L93 251 Z" fill="url(#front)" />
+  <path d="M386 277 L407 251 L390 354 Q387 373 381 376 L381 360 Z" fill="url(#right)" />
+  <path d="M119 353 Q125 374 151 379 L352 379 Q375 375 381 354 L381 360 Q379 384 354 390 L150 390 Q124 385 114 361 Z" fill="#737a75" opacity="0.42" />
+  <path d="M130 286 L381 286" fill="none" stroke="#e2e5e0" stroke-opacity="0.55" stroke-width="2" />
+
+  <!-- A rounded trapezoid produces the foreshortened top plane of the keycap. -->
+  <path d="M151 83 Q139 85 134 101 L91 246 Q85 266 104 276 Q112 280 127 280 L380 280 Q395 280 403 268 Q408 260 404 246 L362 102 Q357 84 342 83 Z" fill="url(#top)" stroke="#aeb4af" stroke-width="3" stroke-linejoin="round" filter="url(#top-shadow)" />
+  <path d="M166 105 Q155 106 151 119 L119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250 Q385 244 381 233 L348 118 Q345 106 334 105 Z" fill="url(#dish)" stroke="#ffffff" stroke-opacity="0.72" stroke-width="2" />
+  <path d="M151 119 Q155 106 166 105 L334 105 Q345 106 348 118" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.72" />
+  <path d="M119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250" fill="none" stroke="#adb3ae" stroke-width="3" stroke-linecap="round" opacity="0.7" />
+
+  <!-- The legend follows the top plane and sits slightly above its optical center. -->
+  <path d="M229 145 L229 219 Q229 227 237 227 L291 227" fill="none" stroke="#111512" stroke-opacity="0.16" stroke-width="21" stroke-linecap="round" stroke-linejoin="round" transform="translate(1 3)" />
+  <path d="M229 145 L229 219 Q229 227 237 227 L291 227" fill="none" stroke="#242a26" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
