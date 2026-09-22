@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import keycapUrl from "../../docs/images/l-keycap.svg?url";
 
 const iconButton = "icon-button size-8 p-0";
 const toolButton = "tool-button h-8 px-2.5 text-xs [&.active]:bg-primary [&.active]:text-primary-foreground";
@@ -96,8 +97,13 @@ function CopyRow({ inputId, buttonId, label }: { inputId: string; buttonId: stri
   );
 }
 
-function Brand({ compact = false }: { compact?: boolean }) {
-  return <span className="brand inline-flex shrink-0 items-center gap-2 text-primary"><Icon name="file-text" /><strong className={cn("font-serif text-lg", compact && "max-sm:hidden")}>LaTeX Coder</strong></span>;
+function Brand({ prominent = false }: { prominent?: boolean }) {
+  return (
+    <span className={cn("brand inline-flex shrink-0 items-center text-foreground", prominent ? "flex-col gap-2.5" : "gap-2.5")}>
+      <img src={keycapUrl} alt="" className={cn("shrink-0 object-contain", prominent ? "size-[5.5rem]" : "size-10")} />
+      <strong className={cn("font-serif font-semibold", prominent ? "text-2xl" : "text-lg max-sm:hidden")}>LaTeX Coder</strong>
+    </span>
+  );
 }
 
 export function AppShell() {
@@ -105,7 +111,7 @@ export function AppShell() {
     <>
       <div id="auth-page" className="auth-page grid min-h-dvh place-items-center bg-muted/60 p-6" hidden>
         <main className="w-full max-w-sm space-y-5">
-          <div className="flex justify-center"><Brand /></div>
+          <div className="flex justify-center"><Brand prominent /></div>
           <Card>
             <CardHeader className="pb-4">
               <h1 id="auth-title" className="font-serif text-2xl font-semibold">Sign in</h1>
@@ -143,6 +149,7 @@ export function AppShell() {
         <header id="editor-topbar" className="topbar relative flex min-w-0 items-center border-b bg-background px-1.5 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
           <div id="topbar-actions" className="flex h-full shrink-0 items-center">
             <IconButton id="back-projects" icon="arrow-left" title="All projects" className="mr-0.5 size-7" />
+            <img src={keycapUrl} alt="LaTeX Coder" className="mx-0.5 size-7 shrink-0 object-contain" />
             <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="project-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Project</Button></DropdownMenuTrigger>

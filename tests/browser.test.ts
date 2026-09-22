@@ -1795,10 +1795,16 @@ test("login, invitations, and capability links separate members from guests", as
   await withEditor(async ({ page, base, browser }) => {
     await page.goto(`${base}/`);
     await page.locator("#auth-page").waitFor();
+    const loginMark = page.locator("#auth-page .brand img");
+    await loginMark.waitFor();
+    assert.equal(await loginMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
+    assert.match(await page.locator('link[rel="icon"]').getAttribute("href"), /l-keycap(?:-[A-Za-z0-9_-]+)?\.svg$/);
     await page.locator("#auth-username").fill("admin");
     await page.locator("#auth-password").fill("browser admin password");
     await page.locator("#auth-submit").click();
     await page.locator("#projects-page").waitFor();
+    const projectMark = page.locator("#projects-page .brand img");
+    assert.equal(await projectMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
     assert.equal(await page.locator("#current-user").textContent(), "admin");
     assert.equal(await page.locator("#new-project").isVisible(), true);
     await page.locator("#account-button").click();
@@ -1817,6 +1823,12 @@ test("login, invitations, and capability links separate members from guests", as
 
     await page.locator(".project-row").first().click();
     assert.equal(await page.locator("#guest-name-field").isHidden(), true);
+    const editorMark = page.locator("#editor-topbar img[alt='LaTeX Coder']");
+    assert.equal(await editorMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
+    const backBounds = await page.locator("#back-projects").boundingBox();
+    const markBounds = await editorMark.boundingBox();
+    const projectBounds = await page.locator("#project-menu").boundingBox();
+    assert.ok(backBounds && markBounds && projectBounds && backBounds.x < markBounds.x && markBounds.x < projectBounds.x);
     await page.locator("#account-menu").click();
     assert.equal(await page.locator("#editor-account-button").isVisible(), true);
     assert.match(await page.locator("#editor-account-button").textContent(), /Account Settings/);

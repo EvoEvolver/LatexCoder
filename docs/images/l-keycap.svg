@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="48 48 416 416" role="img" aria-labelledby="title description">
   <title id="title">L keycap</title>
   <desc id="description">A three-dimensional keyboard keycap marked L, viewed from the front at a forty-five degree downward angle.</desc>
   <defs>
@@ -36,14 +36,13 @@
   <ellipse cx="270" cy="397" rx="154" ry="16" fill="#1e2420" opacity="0.3" filter="url(#contact-shadow)" />
 
   <!-- The shell flares outward toward its base, producing a true keycap trapezoid. -->
-  <path d="M104 276 L127 280 L104 399 Q79 395 81 371 Z" fill="url(#left)" />
-  <path d="M127 280 L380 280 L406 399 L104 399 Z" fill="url(#front)" />
-  <path d="M380 280 L403 268 L431 371 Q435 391 406 399 Z" fill="url(#right)" />
+  <path d="M96 250 C94 266 108 282 127 282 L104 399 Q79 395 81 371 Z" fill="url(#left)" />
+  <path d="M127 282 L380 282 L406 399 L104 399 Z" fill="url(#front)" />
+  <path d="M380 282 C399 281 412 267 410 250 L431 371 Q435 391 406 399 Z" fill="url(#right)" />
   <path d="M99 375 Q104 389 120 391 L393 391 Q408 389 427 375 L431 371 Q435 391 406 399 L104 399 Q82 395 81 375 Z" fill="#68706b" opacity="0.42" />
-  <path d="M127 281 L380 281" fill="none" stroke="#727974" stroke-opacity="0.35" stroke-width="2" />
 
   <!-- A rounded trapezoid produces the foreshortened top plane of the keycap. -->
-  <path d="M151 83 Q139 85 134 101 L91 246 Q85 266 104 276 Q112 280 127 280 L380 280 Q395 280 403 268 Q408 260 404 246 L362 102 Q357 84 342 83 Z" fill="url(#top)" stroke="#aeb4af" stroke-width="3" stroke-linejoin="round" />
+  <path d="M151 83 Q139 85 134 101 L96 250 C94 266 108 282 127 282 L380 282 C399 281 412 267 410 250 L362 102 Q357 84 342 83 Z" fill="url(#top)" stroke="#aeb4af" stroke-width="3" stroke-linejoin="round" />
   <path d="M166 105 Q155 106 151 119 L119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250 Q385 244 381 233 L348 118 Q345 106 334 105 Z" fill="url(#dish)" stroke="#ffffff" stroke-opacity="0.72" stroke-width="2" />
   <path d="M151 119 Q155 106 166 105 L334 105 Q345 106 348 118" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.72" />
   <path d="M119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250" fill="none" stroke="#adb3ae" stroke-width="3" stroke-linecap="round" opacity="0.7" />
