@@ -242,6 +242,9 @@ Details \tldr{The method combines two stages.}`;
     assert.deepEqual(await headings.allTextContents(), ["Overview", "Method", "Evaluation", "Conclusion"]);
     assert.match((await points.allTextContents()).join(" "), /Evaluation confirms the gain/);
 
+    await page.getByRole("button", { name: "Close chapters/method.tex", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "main.tex");
+
     await page.locator("#open-structure").click();
     const structureTab = page.getByRole("tab", { name: "TreeWriter", exact: true });
     await structureTab.waitFor();
@@ -264,6 +267,7 @@ Details \tldr{The method combines two stages.}`;
     await treeEditor.waitFor();
     assert.equal(await structureTab.getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("#active-file-label").textContent(), "chapters/method.tex");
+    assert.equal(await page.getByRole("tab", { name: "method.tex", exact: true }).count(), 0, "TreeWriter source files should stay transient");
     await page.screenshot({ path: "/tmp/latexcoder-treewriter-editor.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => document.getElementById("files-pane")!.getBoundingClientRect().right <= 1);
@@ -284,10 +288,8 @@ Details \tldr{The method combines two stages.}`;
     const remote = rewritten.replace("Rewritten details.", "Remote details.");
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: remote, headers: { "Content-Type": "text/plain" } });
     await page.waitForFunction(() => document.querySelector(".tree-writer-editor .cm-content")?.textContent?.includes("Remote details."));
-    await page.getByRole("tab", { name: "method.tex", exact: true }).click();
     await page.waitForFunction(() => globalThis.__paperE2E.state.view?.state.doc.toString().includes("Remote details."));
 
-    await structureTab.click();
     let overviewNode = page.locator(".tree-writer-node").filter({ has: page.locator(".tree-writer-node-button", { hasText: "Overview" }) }).first();
     await overviewNode.getByRole("button", { name: "Edit section source", exact: true }).click();
     const macroEditor = overviewNode.locator(".tree-writer-editor .cm-content");

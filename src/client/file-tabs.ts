@@ -1,5 +1,6 @@
 export type TabFile = { path: string };
 export type AuxiliaryTab = { id: string; label: string; controls: string };
+export type TabUpdateOptions = { transient?: boolean };
 
 export function createFileTabs(host: HTMLElement, open: (path: string) => void, openAuxiliary: (id: string) => void) {
   let paths: string[] = [];
@@ -89,11 +90,13 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
   }
 
   return {
-    update(files: TabFile[], selected: string, projectId: string): void {
+    update(files: TabFile[], selected: string, projectId: string, options: TabUpdateOptions = {}): void {
       if (project !== projectId) { paths = []; auxiliary = null; auxiliaryActive = false; project = projectId; }
       paths = paths.filter(path => files.some(file => file.path === path));
-      active = selected;
-      if (selected && !paths.includes(selected) && files.some(file => file.path === selected)) paths.push(selected);
+      if (!options.transient) {
+        active = selected;
+        if (selected && !paths.includes(selected) && files.some(file => file.path === selected)) paths.push(selected);
+      }
       render();
     },
     move(from: string, to: string): void {

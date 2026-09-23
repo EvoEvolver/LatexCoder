@@ -517,8 +517,10 @@ elements.files_menu.addEventListener("click", event => {
   fileTree.openRootMenu(elements.files_menu);
 });
 
+let activeFileIsTransient = false;
+
 function renderFiles(): void {
-  fileTabs.update(state.files, state.activeFile, state.projectId);
+  fileTabs.update(state.files, state.activeFile, state.projectId, { transient: activeFileIsTransient });
   fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "", editable: state.projectCanEdit }, state.projectId);
 }
 
@@ -804,7 +806,9 @@ function showTreeWriterError(error: unknown, panel: TreeWriterPanel): void {
 
 async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButtonElement, panel: TreeWriterPanel): Promise<void> {
   closeTreeWriterEditor();
-  if (state.activeFile !== target.range.path || !editorSession) await openFile(target.range.path, { keepAuxiliary: true });
+  if (state.activeFile !== target.range.path || !editorSession) {
+    await openFile(target.range.path, { keepAuxiliary: true, transient: true });
+  }
   showExpandedStructure();
   const version = ++treeWriterOpenVersion;
   treeWriterNodeId = target.id;
@@ -850,7 +854,9 @@ async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButton
 
 async function insertTreeWriterNode(insertion: StructureInsertion, panel: TreeWriterPanel): Promise<void> {
   closeTreeWriterEditor();
-  if (state.activeFile !== insertion.path || !editorSession) await openFile(insertion.path, { keepAuxiliary: true });
+  if (state.activeFile !== insertion.path || !editorSession) {
+    await openFile(insertion.path, { keepAuxiliary: true, transient: true });
+  }
   showExpandedStructure();
   const session = editorSession;
   if (!session) throw new Error("Could not open the source document");
@@ -2052,7 +2058,7 @@ function setAwareness() {
   state.provider.awareness.setLocalStateField("user", { name, username: state.user?.username || null, color, colorLight: `${color}33` });
 }
 
-async function openFile(relativePath: string, options: { keepAuxiliary?: boolean } = {}): Promise<void> {
+async function openFile(relativePath: string, options: { keepAuxiliary?: boolean; transient?: boolean } = {}): Promise<void> {
   const file = state.files.find(candidate => candidate.path === relativePath);
   if (!file) return;
   if (!options.keepAuxiliary) {
@@ -2060,7 +2066,11 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
     hideExpandedStructure();
   }
   setMobileFilesOpen(false);
-  if (relativePath === state.activeFile && (state.view || !file.text)) return;
+  activeFileIsTransient = options.transient === true;
+  if (relativePath === state.activeFile && (state.view || !file.text)) {
+    renderFiles();
+    return;
+  }
   if (state.view && state.activeFile) staticSourceCache.set(state.activeFile, state.view.state.doc.toString());
   disconnectEditor();
   resetFilePreview();
