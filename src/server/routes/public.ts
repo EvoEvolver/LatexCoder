@@ -39,7 +39,7 @@ export function registerPublicRoutes(app: RouteApp, context: PublicRouteContext)
     }
     return response.type("text/markdown; charset=utf-8").send(context.manual());
   });
-  app.get(["/login", "/projects", "/projects/:projectId", "/register/:token"], (_request, response) => {
+  app.get(["/login", "/projects", "/admin", "/projects/:projectId", "/register/:token"], (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.sendFile(`${context.appDir}/dist/index.html`);
   });

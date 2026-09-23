@@ -57,6 +57,7 @@ import {
   GitMerge,
   GitPullRequestCreateArrow,
   Image,
+  KeyRound,
   Link,
   LogIn,
   LogOut,
@@ -146,6 +147,7 @@ const ICONS = {
     GitMerge,
     GitPullRequestCreateArrow,
     Image,
+    KeyRound,
     Link,
     LogIn,
     LogOut,
@@ -175,6 +177,7 @@ const e2eMode = new URLSearchParams(window.location.search).has("e2e");
 
 const elementIds = [
   "access-close", "access-dialog", "access-done", "access-project-name", "access-secret-close", "access-secret-dialog", "access-secret-done", "agent-access-close", "agent-access-dialog", "agent-access-done", "agent-command", "agent-command-label", "agent-direct", "agent-editing-description", "agent-propose", "back-projects",
+  "admin-back", "admin-button", "admin-next", "admin-page", "admin-page-status", "admin-previous", "admin-projects-tab", "admin-search", "admin-table", "admin-total", "admin-users-tab",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
@@ -212,6 +215,7 @@ const elements = createElementRegistry(elementIds, {
   git_message: HTMLInputElement,
   invite_link: HTMLInputElement,
   project_search: HTMLInputElement,
+  admin_search: HTMLInputElement,
   share_link: HTMLInputElement,
   upload_input: HTMLInputElement,
   review_text: HTMLTextAreaElement,
@@ -221,6 +225,8 @@ const elements = createElementRegistry(elementIds, {
   pdf_download: HTMLAnchorElement,
   image_preview: HTMLImageElement,
   account_save: HTMLButtonElement,
+  admin_next: HTMLButtonElement,
+  admin_previous: HTMLButtonElement,
   action_submit: HTMLButtonElement,
   auth_submit: HTMLButtonElement,
   compile_button: HTMLButtonElement,
@@ -356,7 +362,11 @@ function syncAccountUi(): void {
   elements.guest_name_field.hidden = registered;
   elements.back_projects.hidden = !registered;
   document.documentElement.dataset.authState = registered ? "registered" : "guest";
+  document.documentElement.dataset.adminState = state.user?.isAdmin ? "admin" : "member";
   elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
+  elements.admin_button.hidden = !state.user?.isAdmin;
+  const editorAdmin = document.getElementById("editor-admin-button");
+  if (editorAdmin) editorAdmin.hidden = !state.user?.isAdmin;
 }
 
 let projectTitleLayoutFrame = 0;
@@ -410,7 +420,7 @@ function showToast(message: string): void {
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
 }
 
-function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false, allowEmpty = false }: DialogOptions): Promise<string | boolean | null> {
+function openActionDialog({ title, label = "", value = "", maxLength = 512, message = "", submitLabel, danger = false, zip = false, allowEmpty = false, inputType = "text" }: DialogOptions): Promise<string | boolean | null> {
   document.querySelector("#project-zip-field")?.remove();
   if (zip) {
     const field = document.createElement("label");
@@ -432,6 +442,7 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
   elements.action_input.hidden = !hasInput;
   elements.action_input.disabled = !hasInput;
   elements.action_input.required = hasInput && !allowEmpty;
+  elements.action_input.type = inputType;
   elements.action_input.value = value;
   elements.action_input.maxLength = maxLength;
   elements.action_message.textContent = message;
@@ -2582,6 +2593,190 @@ function renderProjects() {
   createIcons({ icons: ICONS });
 }
 
+type AdminUserRow = {
+  username: string; displayName: string; createdAt: string; invitedBy: string | null;
+  isAdmin: boolean; deletedAt: string | null; projectCount: number; ownedProjectCount: number;
+};
+type AdminProjectRow = {
+  id: string; name: string; ownerUsername: string | null; ownerDisplayName: string | null;
+  ownerDeletedAt: string | null; createdAt: string; lastOpenedAt: string; memberCount: number;
+};
+type AdminPageResult<T> = { items: T[]; total: number; page: number; limit: number };
+
+let adminView: "users" | "projects" = "users";
+let adminPageNumber = 1;
+let adminSearchTimer: ReturnType<typeof setTimeout> | undefined;
+
+function adminCell(text: string, className = ""): HTMLTableCellElement {
+  const cell = document.createElement("td");
+  cell.className = `whitespace-nowrap border-b px-3 py-2.5 text-xs ${className}`;
+  cell.textContent = text;
+  return cell;
+}
+
+function adminAction(label: string, icon: "key-round" | "trash-2", action: () => void, danger = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.className = `inline-flex size-7 items-center justify-center rounded hover:bg-accent [&_svg]:size-3.5 ${danger ? "text-destructive" : "text-muted-foreground"}`;
+  button.innerHTML = `<i data-lucide="${icon}"></i>`;
+  button.addEventListener("click", action);
+  return button;
+}
+
+function adminTable(headers: string[]): { table: HTMLTableElement; body: HTMLTableSectionElement } {
+  const table = document.createElement("table");
+  table.className = "w-full min-w-[760px] border-collapse text-left";
+  const head = document.createElement("thead");
+  head.className = "sticky top-0 z-10 bg-muted/95 text-[10px] uppercase text-muted-foreground backdrop-blur";
+  const row = document.createElement("tr");
+  for (const header of headers) {
+    const cell = document.createElement("th");
+    cell.className = "whitespace-nowrap border-b px-3 py-2 font-semibold";
+    cell.textContent = header;
+    row.append(cell);
+  }
+  head.append(row);
+  const body = document.createElement("tbody");
+  table.append(head, body);
+  return { table, body };
+}
+
+async function resetAdminUserPassword(user: AdminUserRow): Promise<void> {
+  const password = await openActionDialog({
+    title: `Reset password for ${user.username}`,
+    label: "New password",
+    inputType: "password",
+    maxLength: 1024,
+    message: "The user's existing login sessions will be revoked.",
+    submitLabel: "Reset password",
+  });
+  if (typeof password !== "string") return;
+  try {
+    await request(`v1/admin/users/${encodeURIComponent(user.username)}/password`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
+    });
+    showToast(`Password reset for ${user.username}.`);
+  } catch (error) { showToast(error.message); }
+}
+
+async function softDeleteAdminUser(user: AdminUserRow): Promise<void> {
+  const confirmed = await openActionDialog({
+    title: "Delete user",
+    message: `Disable ${user.username}? They will be signed out and cannot log in. Their projects and authorship history will be retained.`,
+    submitLabel: "Delete user",
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    await request(`v1/admin/users/${encodeURIComponent(user.username)}`, { method: "DELETE" });
+    await refreshAdminTable();
+    showToast(`${user.username} was disabled.`);
+  } catch (error) { showToast(error.message); }
+}
+
+async function deleteAdminProject(project: AdminProjectRow): Promise<void> {
+  const confirmed = await openActionDialog({
+    title: "Delete project",
+    message: `Permanently delete “${project.name}” (${project.id}) and all project files?`,
+    submitLabel: "Delete project",
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    await request(`v1/admin/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+    await refreshAdminTable();
+    showToast("Project deleted.");
+  } catch (error) { showToast(error.message); }
+}
+
+function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
+  const { table, body } = adminTable(["User", "Status", "Projects", "Created", "Invited by", "Actions"]);
+  for (const user of result.items) {
+    const row = document.createElement("tr");
+    row.className = "hover:bg-accent/40";
+    const identity = adminCell("");
+    const name = document.createElement("strong");
+    name.className = "block font-medium text-foreground";
+    name.textContent = user.displayName;
+    const username = document.createElement("span");
+    username.className = "text-[10px] text-muted-foreground";
+    username.textContent = `@${user.username}`;
+    identity.append(name, username);
+    const status = user.deletedAt ? "Deleted" : user.isAdmin ? "Admin" : "Active";
+    const statusCell = adminCell(status, user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
+    const projects = adminCell(`${user.projectCount} total · ${user.ownedProjectCount} owned`, "tabular-nums");
+    const actions = adminCell("");
+    actions.classList.add("space-x-1", "text-right");
+    if (!user.deletedAt) {
+      actions.append(adminAction(`Reset password for ${user.username}`, "key-round", () => void resetAdminUserPassword(user)));
+      if (!user.isAdmin) actions.append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
+    }
+    row.append(identity, statusCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString()), adminCell(user.invitedBy || "Bootstrap"), actions);
+    body.append(row);
+  }
+  elements.admin_table.replaceChildren(table);
+}
+
+function renderAdminProjects(result: AdminPageResult<AdminProjectRow>): void {
+  const { table, body } = adminTable(["Project", "Owner", "Members", "Last opened", "Created", "Actions"]);
+  for (const project of result.items) {
+    const row = document.createElement("tr");
+    row.className = "hover:bg-accent/40";
+    const identity = adminCell("");
+    const name = document.createElement("strong");
+    name.className = "block max-w-80 truncate font-medium text-foreground";
+    name.textContent = project.name;
+    const id = document.createElement("code");
+    id.className = "text-[10px] text-muted-foreground";
+    id.textContent = project.id;
+    identity.append(name, id);
+    const owner = adminCell(project.ownerDisplayName || project.ownerUsername || "No owner", project.ownerDeletedAt ? "text-muted-foreground line-through" : "");
+    const actions = adminCell("");
+    actions.classList.add("text-right");
+    actions.append(adminAction(`Delete ${project.name}`, "trash-2", () => void deleteAdminProject(project), true));
+    row.append(identity, owner, adminCell(String(project.memberCount), "tabular-nums"), adminCell(new Date(project.lastOpenedAt).toLocaleString()), adminCell(new Date(project.createdAt).toLocaleDateString()), actions);
+    body.append(row);
+  }
+  elements.admin_table.replaceChildren(table);
+}
+
+async function refreshAdminTable(): Promise<void> {
+  elements.admin_table.innerHTML = '<p class="px-4 py-12 text-center text-sm text-muted-foreground">Loading...</p>';
+  const query = new URLSearchParams({ q: elements.admin_search.value, page: String(adminPageNumber), limit: "50" });
+  const result = adminView === "users"
+    ? await request<AdminPageResult<AdminUserRow>>(`v1/admin/users?${query}`)
+    : await request<AdminPageResult<AdminProjectRow>>(`v1/admin/projects?${query}`);
+  if (adminView === "users") renderAdminUsers(result as AdminPageResult<AdminUserRow>);
+  else renderAdminProjects(result as AdminPageResult<AdminProjectRow>);
+  const start = result.total ? (result.page - 1) * result.limit + 1 : 0;
+  const end = Math.min(result.total, result.page * result.limit);
+  elements.admin_total.textContent = `${result.total} ${adminView}`;
+  elements.admin_page_status.textContent = `${start}-${end} of ${result.total}`;
+  elements.admin_previous.disabled = result.page <= 1;
+  elements.admin_next.disabled = end >= result.total;
+  createIcons({ icons: ICONS });
+}
+
+function showAdminPage(push = true): void {
+  if (!state.user?.isAdmin) {
+    showProjectsPage(false);
+    showToast("Administrator access is required.");
+    return;
+  }
+  stopProjectEvents();
+  disconnectEditor();
+  elements.auth_page.hidden = true;
+  elements.projects_page.hidden = true;
+  elements.editor_page.hidden = true;
+  elements.share_confirm_page.hidden = true;
+  elements.admin_page.hidden = false;
+  if (push) window.history.pushState({}, "", "/admin");
+  document.title = "Administration · LaTeX Coder";
+  void refreshAdminTable().catch(error => showToast(error.message));
+}
+
 async function editProjectTags(project: ProjectSummary): Promise<void> {
   const value = await openActionDialog({
     title: "Edit project tags",
@@ -2669,6 +2864,7 @@ async function showProjectShareConfirmation(share: { projectId: string; token: s
   elements.auth_page.hidden = true;
   elements.projects_page.hidden = true;
   elements.editor_page.hidden = true;
+  elements.admin_page.hidden = true;
   elements.share_confirm_page.hidden = false;
   elements.share_confirm_submit.hidden = false;
   elements.share_confirm_submit.disabled = true;
@@ -2746,6 +2942,7 @@ function showAuthPage(mode = "login", description = "") {
   disconnectEditor();
   elements.projects_page.hidden = true;
   elements.editor_page.hidden = true;
+  elements.admin_page.hidden = true;
   elements.share_confirm_page.hidden = true;
   elements.auth_page.hidden = false;
   elements.auth_error.hidden = true;
@@ -2777,6 +2974,7 @@ function showProjectsPage(push = true) {
   if (elements.git_dialog.open) elements.git_dialog.close();
   for (const dialog of collaborateDialogs) if (dialog.open) dialog.close();
   elements.editor_page.hidden = true;
+  elements.admin_page.hidden = true;
   elements.projects_page.hidden = false;
   elements.auth_page.hidden = true;
   elements.share_confirm_page.hidden = true;
@@ -2799,6 +2997,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   }
   elements.projects_page.hidden = true;
   elements.auth_page.hidden = true;
+  elements.admin_page.hidden = true;
   elements.share_confirm_page.hidden = true;
   elements.editor_page.hidden = false;
   state.projectId = projectId;
@@ -3454,6 +3653,36 @@ elements.project_search.addEventListener("input", () => {
   projectSearchQuery = elements.project_search.value;
   renderProjects();
 });
+const selectAdminView = (view: "users" | "projects"): void => {
+  adminView = view;
+  adminPageNumber = 1;
+  elements.admin_users_tab.classList.toggle("active", view === "users");
+  elements.admin_projects_tab.classList.toggle("active", view === "projects");
+  elements.admin_users_tab.setAttribute("aria-selected", String(view === "users"));
+  elements.admin_projects_tab.setAttribute("aria-selected", String(view === "projects"));
+  elements.admin_search.placeholder = view === "users" ? "Search username or display name" : "Search title, ID, or owner";
+  void refreshAdminTable().catch(error => showToast(error.message));
+};
+elements.admin_users_tab.addEventListener("click", () => selectAdminView("users"));
+elements.admin_projects_tab.addEventListener("click", () => selectAdminView("projects"));
+elements.admin_search.addEventListener("input", () => {
+  clearTimeout(adminSearchTimer);
+  adminSearchTimer = setTimeout(() => {
+    adminPageNumber = 1;
+    void refreshAdminTable().catch(error => showToast(error.message));
+  }, 250);
+});
+elements.admin_previous.addEventListener("click", () => {
+  adminPageNumber = Math.max(1, adminPageNumber - 1);
+  void refreshAdminTable().catch(error => showToast(error.message));
+});
+elements.admin_next.addEventListener("click", () => {
+  adminPageNumber += 1;
+  void refreshAdminTable().catch(error => showToast(error.message));
+});
+elements.admin_button.addEventListener("click", () => showAdminPage());
+elements.admin_back.addEventListener("click", () => showProjectsPage());
+onDynamicClick("editor-admin-button", () => showAdminPage());
 for (const [button, view] of [[elements.projects_active, "active"], [elements.projects_archived, "archived"]] as const) {
   button.addEventListener("click", () => {
     projectArchiveView = view;
@@ -3651,7 +3880,7 @@ async function newFolder(prefix = "") {
 }
 
 const aboutDialog = document.getElementById("about-dialog") as HTMLDialogElement;
-for (const id of ["projects-about", "editor-about"]) {
+for (const id of ["projects-about", "editor-about", "admin-about"]) {
   document.getElementById(id)!.addEventListener("click", () => aboutDialog.showModal());
 }
 document.getElementById("about-close")!.addEventListener("click", () => aboutDialog.close());
@@ -4018,6 +4247,12 @@ window.addEventListener("beforeunload", () => {
   resetFilePreview();
 });
 async function routeApp() {
+  if (window.location.pathname === "/admin") {
+    if (state.user?.isAdmin) showAdminPage(false);
+    else if (state.user) showProjectsPage(false);
+    else showAuthPage("login", "Sign in with an administrator account.");
+    return;
+  }
   const projectShare = routeProjectShare();
   if (projectShare) {
     if (!state.user) {

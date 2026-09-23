@@ -138,6 +138,11 @@ Projects support shared tags, title/tag search, tag filters, and per-user
 archiving. Project URLs use short generated IDs and do not change when a project
 is renamed.
 
+The bootstrap administrator has a paginated administration panel for all users
+and projects. It supports account search, password resets with session
+revocation, soft user deletion that preserves projects and attribution, and
+project deletion. Regular members cannot access the panel or its APIs.
+
 Guests enter through `/share/<project-id>/<secret>`. The secret is exchanged for
 a 24-hour, project-scoped HttpOnly session before redirecting to the clean
 project URL. Signed-in users see a confirmation page before adding a project or

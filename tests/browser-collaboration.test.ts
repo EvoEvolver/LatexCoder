@@ -429,6 +429,17 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#about-close").click();
     assert.equal(await page.locator("#current-user").textContent(), "admin");
     assert.equal(await page.locator("#new-project").isVisible(), true);
+    assert.equal(await page.locator("#admin-button").isVisible(), true);
+    await page.locator("#admin-button").click();
+    await page.waitForURL(`${base}/admin`);
+    await page.locator("#admin-table tbody tr").first().waitFor();
+    assert.match(await page.locator("#admin-table").textContent(), /admin/);
+    assert.match(await page.locator("#admin-total").textContent(), /users/);
+    await page.locator("#admin-projects-tab").click();
+    await page.waitForFunction(() => document.querySelector("#admin-total")?.textContent?.includes("projects"));
+    assert.match(await page.locator("#admin-table").textContent(), /Paper/);
+    await page.locator("#admin-back").click();
+    await page.waitForURL(`${base}/projects`);
     await page.locator("#account-button").click();
     await page.locator("#account-dialog").waitFor();
     assert.equal(await page.locator("#account-username").inputValue(), "admin");
@@ -524,6 +535,7 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.locator("#projects-page").waitFor();
     assert.equal(await invited.locator("#current-user").textContent(), "browser.member");
     assert.equal(await invited.locator("#new-project").isVisible(), true);
+    assert.equal(await invited.locator("#admin-button").isHidden(), true);
     assert.equal(await invited.locator(".project-row").count(), 0);
 
     await invited.goto(viewLink);

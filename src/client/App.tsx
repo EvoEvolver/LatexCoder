@@ -3,7 +3,7 @@ import {
   Archive, ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
   GitPullRequestCreateArrow, Link, LogIn, LogOut, MessageSquarePlus,
-  Maximize2, Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
+  KeyRound, Maximize2, Monitor, Moon, MoreHorizontal, PanelLeft, Pencil, Play, RefreshCw, ShieldCheck, StretchHorizontal, StretchVertical, Sun, TerminalSquare, Trash2,
   ClipboardPaste, Redo2, Scissors, ScanText, Search, Settings, Undo2, Upload, UserPlus, UserRound, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,7 @@ const iconComponents = {
   "git-merge": GitMerge,
   "git-pull-request-create-arrow": GitPullRequestCreateArrow,
   "link": Link,
+  "key-round": KeyRound,
   "log-in": LogIn,
   "log-out": LogOut,
   "message-square-plus": MessageSquarePlus,
@@ -55,6 +56,7 @@ const iconComponents = {
   "scissors": Scissors,
   "scan-text": ScanText,
   "search": Search,
+  "shield-check": ShieldCheck,
   "settings": Settings,
   "stretch-horizontal": StretchHorizontal,
   "stretch-vertical": StretchVertical,
@@ -174,6 +176,7 @@ export function AppShell() {
         <header className="projects-header flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-65rem)/2))]">
           <button id="projects-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder" aria-haspopup="dialog"><Brand /></button>
           <div className="projects-account flex items-center gap-2">
+            <Button id="admin-button" variant="ghost" size="sm" hidden><Icon name="shield-check" /><span className="max-sm:hidden">Admin</span></Button>
             <Button id="account-button" variant="ghost" size="sm"><Icon name="user-round" /><span id="current-user" className="max-w-36 truncate max-sm:hidden" /></Button>
             <Button id="invite-user" variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
             <Button id="new-project" size="sm"><Icon name="folder-plus" /><span>New project</span></Button>
@@ -188,6 +191,23 @@ export function AppShell() {
           </div>
           <div id="project-tag-filters" className="mb-3 flex flex-wrap items-center gap-1.5" aria-label="Filter projects by tag" hidden />
           <div id="project-list" className="project-list overflow-visible rounded-lg border bg-card" />
+        </main>
+      </div>
+
+      <div id="admin-page" className="min-h-dvh overflow-auto bg-muted/40" hidden>
+        <header className="flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-80rem)/2))]">
+          <button id="admin-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder"><Brand /></button>
+          <Button id="admin-back" variant="ghost" size="sm"><Icon name="arrow-left" />Projects</Button>
+        </header>
+        <main className="mx-auto w-[min(calc(100%-2rem),80rem)] py-8">
+          <div className="mb-5"><h1 className="font-serif text-3xl font-semibold">Administration</h1><p className="mt-1 text-sm text-muted-foreground">Manage accounts and projects across this installation.</p></div>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="segmented grid grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist" aria-label="Admin data"><Button id="admin-users-tab" className="active h-8 px-4 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" role="tab">Users</Button><Button id="admin-projects-tab" className="h-8 px-4 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" role="tab">Projects</Button></div>
+            <label className="relative min-w-56 flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="admin-search" className="pl-8" type="search" placeholder="Search users" aria-label="Search admin records" /></label>
+            <span id="admin-total" className="text-xs tabular-nums text-muted-foreground" />
+          </div>
+          <div id="admin-table" className="min-h-72 overflow-x-auto rounded-md border bg-card" />
+          <footer className="mt-3 flex items-center justify-between"><span id="admin-page-status" className="text-xs tabular-nums text-muted-foreground" /><div className="flex gap-2"><Button id="admin-previous" variant="outline" size="sm">Previous</Button><Button id="admin-next" variant="outline" size="sm">Next</Button></div></footer>
         </main>
       </div>
 
@@ -226,6 +246,7 @@ export function AppShell() {
               <DropdownMenuTrigger asChild><Button id="account-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Account</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-60">
                 <DropdownMenuLabel>Account</DropdownMenuLabel>
+                <DropdownMenuItem id="editor-admin-button" data-admin-only><Icon name="shield-check" />Administration…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-account-button" data-user-only><Icon name="user-round" />Account Settings…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-invite-user" data-user-only><Icon name="user-plus" />Invite Team Member…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-logout" data-user-only className="text-destructive focus:text-destructive"><Icon name="log-out" />Sign Out</DropdownMenuItem>

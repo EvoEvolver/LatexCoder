@@ -8,6 +8,7 @@ export const loginRequestSchema = z.strictObject({ username: usernameSchema, pas
 export const registerRequestSchema = z.strictObject({ token: z.string().min(1), username: usernameSchema, password: passwordSchema });
 export const createInvitationRequestSchema = z.strictObject({ reusable: z.boolean().default(false) });
 export const updateProfileRequestSchema = z.strictObject({ displayName: z.string().trim().min(1).max(80) });
+export const adminResetPasswordRequestSchema = z.strictObject({ password: passwordSchema });
 export const createProjectRequestSchema = z.strictObject({ name: projectNameSchema });
 export const updateProjectRequestSchema = createProjectRequestSchema;
 export const projectTagsRequestSchema = z.strictObject({
@@ -21,7 +22,7 @@ export const settingsRequestSchema = z.strictObject({
 });
 export const compileRequestSchema = z.strictObject({ main: z.string().optional() });
 
-export const currentUserSchema = z.object({ username: z.string(), displayName: z.string() });
+export const currentUserSchema = z.object({ username: z.string(), displayName: z.string(), isAdmin: z.boolean().default(false) });
 export const projectFileSchema = z.object({ path: z.string(), size: z.number(), text: z.boolean() });
 export const editorSettingsSchema = z.object({ main: z.string(), autoCompile: z.boolean(), compiler: z.string() });
 export const projectSummarySchema = z.object({

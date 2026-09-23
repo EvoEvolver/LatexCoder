@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 11;
+export const LATEST_SCHEMA_VERSION = 12;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -245,6 +245,20 @@ const migrations: Migration[] = [
       if (!hasColumn(database, "invitations", "reusable")) {
         database.exec("ALTER TABLE invitations ADD COLUMN reusable INTEGER NOT NULL DEFAULT 0 CHECK (reusable IN (0, 1));");
       }
+    },
+  },
+  {
+    version: 12,
+    name: "administrators and soft-deleted users",
+    up(database) {
+      if (!hasColumn(database, "users", "is_admin")) {
+        database.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1));");
+      }
+      if (!hasColumn(database, "users", "deleted_at")) database.exec("ALTER TABLE users ADD COLUMN deleted_at TEXT;");
+      database.exec(`
+        UPDATE users SET is_admin = 1 WHERE username = 'admin' AND invited_by IS NULL;
+        CREATE INDEX IF NOT EXISTS users_admin_status_idx ON users(is_admin, deleted_at, created_at);
+      `);
     },
   },
 ];

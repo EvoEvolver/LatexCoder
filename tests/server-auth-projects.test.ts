@@ -145,17 +145,18 @@ test("invite-only users and project capability sessions enforce access boundarie
     });
     assert.equal(login.status, 200);
     const adminCookie = login.headers.get("set-cookie").split(";", 1)[0];
-    assert.deepEqual((await login.json()).user, { username: "admin", displayName: "admin" });
+    assert.deepEqual((await login.json()).user, { username: "admin", displayName: "admin", isAdmin: true });
     const profileResponse = await fetch(`${base}/v1/users/me`, {
       method: "PATCH",
       headers: { Cookie: adminCookie, "Content-Type": "application/json" },
       body: JSON.stringify({ displayName: "Admin Editor" }),
     });
     assert.equal(profileResponse.status, 200);
-    assert.deepEqual((await profileResponse.json()).user, { username: "admin", displayName: "Admin Editor" });
+    assert.deepEqual((await profileResponse.json()).user, { username: "admin", displayName: "Admin Editor", isAdmin: true });
     assert.deepEqual((await (await fetch(`${base}/v1/auth/me`, { headers: { Cookie: adminCookie } })).json()).user, {
       username: "admin",
       displayName: "Admin Editor",
+      isAdmin: true,
     });
 
     const listed = await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } });
@@ -459,6 +460,68 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.equal(existsSync(path.join(stateDir, "auth.json")), false);
     assert.equal(existsSync(path.join(stateDir, "projects", project.id, "project.json")), false);
     assert.ok(initialProject);
+  }, { authDisabled: false, adminPassword });
+});
+
+test("administrators page through users and projects and manage their lifecycle", async () => {
+  const adminPassword = "admin control password";
+  await withServer(async ({ base }) => {
+    const login = await fetch(`${base}/v1/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: adminPassword }),
+    });
+    const adminCookie = login.headers.get("set-cookie")!.split(";", 1)[0];
+    const invitation = await (await fetch(`${base}/v1/invitations`, {
+      method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" }, body: JSON.stringify({ reusable: true }),
+    })).json();
+    const registration = await fetch(`${base}/v1/auth/register`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: invitation.invitation.token, username: "managed.user", password: "managed old password" }),
+    });
+    const memberCookie = registration.headers.get("set-cookie")!.split(";", 1)[0];
+    assert.equal((await fetch(`${base}/v1/admin/users`, { headers: { Cookie: memberCookie } })).status, 403);
+
+    const usersResponse = await fetch(`${base}/v1/admin/users?q=managed&page=1&limit=10`, { headers: { Cookie: adminCookie } });
+    assert.equal(usersResponse.status, 200);
+    const users = await usersResponse.json();
+    assert.equal(users.total, 1);
+    assert.equal(users.items[0].username, "managed.user");
+    assert.equal(users.items[0].projectCount, 0);
+    assert.equal(users.items[0].deletedAt, null);
+
+    const reset = await fetch(`${base}/v1/admin/users/managed.user/password`, {
+      method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "managed new password" }),
+    });
+    assert.equal(reset.status, 200);
+    assert.equal((await fetch(`${base}/v1/projects`, { headers: { Cookie: memberCookie } })).status, 401);
+    assert.equal((await fetch(`${base}/v1/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "managed.user", password: "managed old password" }),
+    })).status, 401);
+    assert.equal((await fetch(`${base}/v1/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "managed.user", password: "managed new password" }),
+    })).status, 200);
+
+    assert.equal((await fetch(`${base}/v1/admin/users/admin`, { method: "DELETE", headers: { Cookie: adminCookie } })).status, 409);
+    assert.equal((await fetch(`${base}/v1/admin/users/managed.user`, { method: "DELETE", headers: { Cookie: adminCookie } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "managed.user", password: "managed new password" }),
+    })).status, 401);
+    const deletedUsers = await (await fetch(`${base}/v1/admin/users?q=managed`, { headers: { Cookie: adminCookie } })).json();
+    assert.equal(typeof deletedUsers.items[0].deletedAt, "string");
+
+    const created = await (await fetch(`${base}/v1/projects`, {
+      method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" }, body: JSON.stringify({ name: "Disposable Admin Project" }),
+    })).json();
+    const projects = await (await fetch(`${base}/v1/admin/projects?q=Disposable&limit=10`, { headers: { Cookie: adminCookie } })).json();
+    assert.equal(projects.total, 1);
+    assert.equal(projects.items[0].ownerUsername, "admin");
+    assert.equal(projects.items[0].memberCount, 1);
+    assert.equal((await fetch(`${base}/v1/admin/projects/${created.project.id}`, { method: "DELETE", headers: { Cookie: adminCookie } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/project?project=${created.project.id}`, { headers: { Cookie: adminCookie } })).status, 404);
   }, { authDisabled: false, adminPassword });
 });
 

@@ -23,6 +23,7 @@ import { createCompileService } from "./compile-service.ts";
 import { checkDependencies } from "./dependencies.ts";
 import { createLogger, requestLogger } from "./logger.ts";
 import { registerAuthRoutes } from "./routes/auth.ts";
+import { registerAdminRoutes } from "./routes/admin.ts";
 import { registerBuildRoutes } from "./routes/build.ts";
 import { registerFileRoutes } from "./routes/files.ts";
 import { registerGitRoutes } from "./routes/git.ts";
@@ -35,7 +36,7 @@ import type { ProjectMetadata } from "./database.ts";
 import type { BlameActor, ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
 type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };
-type AuthenticatedUser = { username: string; displayName: string };
+type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean };
 type CookieSession = { key: string; token: string };
 type CookieRequest = { headers: { cookie?: string } };
 type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
@@ -815,6 +816,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
       ...passwordRecord(password),
       createdAt: new Date().toISOString(),
       invitedBy: null,
+      isAdmin: true,
     });
   }
 
@@ -844,11 +846,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   }
 
   function currentUser(request: CookieRequest): AuthenticatedUser | null {
-    if (authDisabled) return { username: "test-user", displayName: "Test User" };
+    if (authDisabled) return { username: "test-user", displayName: "Test User", isAdmin: true };
     const session = userSession(request);
     if (!session) return null;
     const user = database.getUser(session.record.username);
-    return user ? { username: user.username, displayName: user.displayName } : null;
+    return user && !user.deletedAt ? { username: user.username, displayName: user.displayName, isAdmin: user.isAdmin } : null;
   }
 
   function requestBlameActor(request: CookieRequest & { query?: Record<string, unknown> }): BlameActor {
@@ -865,6 +867,12 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   function requireUser(request: CookieRequest): AuthenticatedUser {
     const user = currentUser(request);
     if (!user) throw apiError("authentication_required", "sign in to continue", 401);
+    return user;
+  }
+
+  function requireAdmin(request: CookieRequest): AuthenticatedUser {
+    const user = requireUser(request);
+    if (!user.isAdmin) throw apiError("admin_required", "administrator access is required", 403);
     return user;
   }
 
@@ -1290,6 +1298,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     database, currentUser, issueUserSession, json: express.json, loginAttempts,
     requireUser, userSession, invitationSeconds: INVITATION_SECONDS,
   });
+  registerAdminRoutes(app, { database, deleteProject, json: express.json, loadProject, requireAdmin });
   registerProjectRoutes(app, {
     assertProjectWritable, cleanProjectName, cleanProjectTags, createProject,
     createProjectArchive, database, deleteProject, isProjectOwner,

@@ -37,13 +37,13 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       if (attempts.count >= 10) throw apiError("login_rate_limited", "too many login attempts; try again later", 429);
       const username = cleanUsername(body.username);
       const user = database.getUser(username);
-      if (!user || !passwordMatches(body.password, user)) {
+      if (!user || user.deletedAt || !passwordMatches(body.password, user)) {
         attempts.count += 1;
         throw apiError("invalid_credentials", "username or password is incorrect", 401);
       }
       context.loginAttempts.delete(attemptKey);
       context.issueUserSession(request, response, username);
-      response.json({ user: { username, displayName: user.displayName } });
+      response.json({ user: { username, displayName: user.displayName, isAdmin: user.isAdmin } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/logout", (request, response) => {
@@ -57,7 +57,7 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       const user = context.requireUser(request);
       const displayName = cleanDisplayName(parseBody(updateProfileRequestSchema, request.body).displayName);
       if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
-      response.json({ user: { username: user.username, displayName } });
+      response.json({ user: { username: user.username, displayName, isAdmin: user.isAdmin } });
     } catch (error) { next(error); }
   });
   app.get("/v1/invitations/:token", (request, response, next) => {
@@ -106,7 +106,7 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
         }
       });
       context.issueUserSession(request, response, username);
-      response.status(201).json({ user: { username, displayName: username } });
+      response.status(201).json({ user: { username, displayName: username, isAdmin: false } });
     } catch (error) { next(error); }
   });
 }

@@ -10,7 +10,7 @@ export type RouteApp = Express;
 export type JsonMiddleware = (options: { limit: string }) => RequestHandler;
 export type RawMiddleware = (options: { type: (() => boolean) | string; limit: string | number }) => RequestHandler;
 
-export type AuthenticatedUser = { username: string; displayName: string };
+export type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean };
 export type UserSession = { key: string; token: string; record: { username: string } };
 
 export interface AuthRouteContext {
@@ -22,6 +22,14 @@ export interface AuthRouteContext {
   requireUser(request: Request): AuthenticatedUser;
   userSession(request: Request): UserSession | null;
   invitationSeconds: number;
+}
+
+export interface AdminRouteContext {
+  database: StateDatabase;
+  deleteProject(runtime: ProjectRuntime): Promise<{ defaultProjectId: string | null }>;
+  json: JsonMiddleware;
+  loadProject(id: unknown): Promise<ProjectRuntime>;
+  requireAdmin(request: Request): AuthenticatedUser;
 }
 
 export interface GitRouteContext {

@@ -99,7 +99,7 @@ export class StateDatabase {
   }
 
   firstUsername() {
-    return (this.db.prepare("SELECT username FROM users ORDER BY created_at, username LIMIT 1").get() as SqlRow | undefined)?.username as string | undefined;
+    return (this.db.prepare("SELECT username FROM users WHERE deleted_at IS NULL ORDER BY created_at, username LIMIT 1").get() as SqlRow | undefined)?.username as string | undefined;
   }
 
   getUser(username: string) {
@@ -112,14 +112,88 @@ export class StateDatabase {
       hash: row.password_hash as string,
       createdAt: row.created_at as string,
       invitedBy: row.invited_by as string | null,
+      isAdmin: Boolean(row.is_admin),
+      deletedAt: row.deleted_at as string | null,
     };
   }
 
-  createUser(user: { username: string; displayName: string; salt: string; hash: string; createdAt: string; invitedBy: string | null }) {
+  createUser(user: { username: string; displayName: string; salt: string; hash: string; createdAt: string; invitedBy: string | null; isAdmin?: boolean }) {
     this.db.prepare(`
-      INSERT INTO users (username, display_name, password_salt, password_hash, created_at, invited_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(user.username, user.displayName, user.salt, user.hash, user.createdAt, user.invitedBy);
+      INSERT INTO users (username, display_name, password_salt, password_hash, created_at, invited_by, is_admin)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(user.username, user.displayName, user.salt, user.hash, user.createdAt, user.invitedBy, Number(user.isAdmin || false));
+  }
+
+  listAdminUsers(query: string, limit: number, offset: number) {
+    const search = `%${query}%`;
+    const where = query ? "WHERE users.username LIKE ? ESCAPE '\\' OR users.display_name LIKE ? ESCAPE '\\'" : "";
+    const parameters = query ? [search, search] : [];
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM users ${where}`).get(...parameters) as SqlRow).count);
+    const rows = this.db.prepare(`
+      SELECT users.username, users.display_name, users.created_at, users.invited_by, users.is_admin, users.deleted_at,
+        COUNT(DISTINCT project_members.project_id) AS project_count,
+        COUNT(DISTINCT CASE WHEN project_members.role = 'owner' THEN project_members.project_id END) AS owned_project_count
+      FROM users LEFT JOIN project_members ON project_members.username = users.username
+      ${where}
+      GROUP BY users.username
+      ORDER BY users.deleted_at IS NOT NULL, users.is_admin DESC, users.created_at, users.username COLLATE NOCASE
+      LIMIT ? OFFSET ?
+    `).all(...parameters, limit, offset) as SqlRow[];
+    return { total, items: rows.map(row => ({
+      username: row.username as string,
+      displayName: row.display_name as string,
+      createdAt: row.created_at as string,
+      invitedBy: row.invited_by as string | null,
+      isAdmin: Boolean(row.is_admin),
+      deletedAt: row.deleted_at as string | null,
+      projectCount: Number(row.project_count),
+      ownedProjectCount: Number(row.owned_project_count),
+    })) };
+  }
+
+  listAdminProjects(query: string, limit: number, offset: number) {
+    const search = `%${query}%`;
+    const where = query ? "WHERE projects.id LIKE ? ESCAPE '\\' OR projects.name LIKE ? ESCAPE '\\' OR projects.owner_username LIKE ? ESCAPE '\\'" : "";
+    const parameters = query ? [search, search, search] : [];
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM projects ${where}`).get(...parameters) as SqlRow).count);
+    const rows = this.db.prepare(`
+      SELECT projects.id, projects.name, projects.owner_username, projects.created_at, projects.last_opened_at,
+        users.display_name AS owner_display_name, users.deleted_at AS owner_deleted_at,
+        COUNT(project_members.username) AS member_count
+      FROM projects
+      LEFT JOIN users ON users.username = projects.owner_username
+      LEFT JOIN project_members ON project_members.project_id = projects.id
+      ${where}
+      GROUP BY projects.id
+      ORDER BY projects.last_opened_at DESC, projects.name COLLATE NOCASE
+      LIMIT ? OFFSET ?
+    `).all(...parameters, limit, offset) as SqlRow[];
+    return { total, items: rows.map(row => ({
+      id: row.id as string,
+      name: row.name as string,
+      ownerUsername: row.owner_username as string | null,
+      ownerDisplayName: row.owner_display_name as string | null,
+      ownerDeletedAt: row.owner_deleted_at as string | null,
+      createdAt: row.created_at as string,
+      lastOpenedAt: row.last_opened_at as string,
+      memberCount: Number(row.member_count),
+    })) };
+  }
+
+  softDeleteUser(username: string, deletedAt: string) {
+    return this.transaction(() => {
+      const result = this.db.prepare("UPDATE users SET deleted_at = ? WHERE username = ? AND deleted_at IS NULL AND is_admin = 0").run(deletedAt, username);
+      if (Number(result.changes) === 1) this.db.prepare("DELETE FROM user_sessions WHERE username = ?").run(username);
+      return Number(result.changes) === 1;
+    });
+  }
+
+  resetUserPassword(username: string, salt: string, hash: string) {
+    return this.transaction(() => {
+      const result = this.db.prepare("UPDATE users SET password_salt = ?, password_hash = ? WHERE username = ? AND deleted_at IS NULL").run(salt, hash, username);
+      if (Number(result.changes) === 1) this.db.prepare("DELETE FROM user_sessions WHERE username = ?").run(username);
+      return Number(result.changes) === 1;
+    });
   }
 
   updateUserDisplayName(username: string, displayName: string) {

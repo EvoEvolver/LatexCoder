@@ -103,6 +103,7 @@
 
 html[data-auth-state="guest"] [data-user-only],
 html[data-auth-state="registered"] [data-guest-only] { display: none !important; }
+html:not([data-admin-state="admin"]) [data-admin-only] { display: none !important; }
 
 .tree-item { display: grid; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; min-height: 32px; border-radius: 4px; }
 .tree-item:hover, .tree-item.folder-selected { background: var(--muted); }
