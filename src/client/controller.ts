@@ -86,7 +86,7 @@ import { diffLines } from "diff";
 import * as Y from "yjs";
 
 import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
-import { referenceLinks, referenceDefinition, type ReferenceLink } from "../shared/references.ts";
+import { referenceDefinition, type ReferenceLink } from "../shared/references.ts";
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
 import {
@@ -111,6 +111,7 @@ import { createElementRegistry, optionalElement } from "./dom.ts";
 import { PdfController } from "./pdf-controller.ts";
 import { WorkspaceController } from "./workspace-controller.ts";
 import { TreeWriterEditor } from "./tree-writer-editor.ts";
+import { sourceEditorInteractions, sourceModifierIsMeta, sourceModifierLabel, sourceModifierPressed } from "./source-editor-interactions.ts";
 import type {
   AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -549,6 +550,7 @@ let structureSources = new Map<string, string>();
 let treeWriterEditor: TreeWriterEditor | null = null;
 let treeWriterNodeId = "";
 let treeWriterOpenVersion = 0;
+const projectedSourceViews = new WeakMap<EditorView, { sourcePosition: (localPosition: number) => number | null }>();
 
 function closeTreeWriterEditor(): void {
   treeWriterOpenVersion += 1;
@@ -927,19 +929,27 @@ async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButton
   const selection = target.selectMacroArgument
     ? treeWriterMacroSelection(session.text.toString().slice(target.range.from, target.range.to))
     : target.selection;
-  treeWriterEditor = new TreeWriterEditor({
+  const undoManager = state.view ? editorUndoManagers.get(state.view) : undefined;
+  const editor = new TreeWriterEditor({
     editable: state.projectCanEdit,
     host: panel.host,
     range: target.range,
     text: session.text,
-    undoManager: state.view ? editorUndoManagers.get(state.view) : undefined,
+    undoManager,
     selection,
+    extensions: sourceEditorInteractions({
+      followReference: link => { void followReference(link); },
+      openContextMenu: openEditorContextMenu,
+    }),
     onInvalidated: () => {
       panel.status.hidden = false;
       panel.status.textContent = "This source range was removed. Refresh the Tree to continue.";
     },
   });
-  treeWriterEditor.focus();
+  treeWriterEditor = editor;
+  projectedSourceViews.set(editor.view, { sourcePosition: position => editor.sourcePosition(position) });
+  if (undoManager) editorUndoManagers.set(editor.view, undoManager);
+  editor.focus();
 }
 
 async function insertTreeWriterNode(insertion: StructureInsertion, panel: TreeWriterPanel): Promise<void> {
@@ -1417,34 +1427,6 @@ async function followReference(link: ReferenceLink) {
   } catch (error) { showToast(error.message); }
 }
 
-const referenceControl = StateEffect.define<boolean>();
-const macReferences = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-const referenceModifier = macReferences ? "Meta" : "Control";
-const referenceModifierPressed = (event: MouseEvent) => macReferences ? event.metaKey : event.ctrlKey;
-let controlHeld = false;
-const referenceHighlights = StateField.define({
-  create: () => ({ held: controlHeld, marks: Decoration.none }),
-  update(value, transaction) {
-    let held = value.held;
-    for (const effect of transaction.effects) if (effect.is(referenceControl)) held = effect.value;
-    if (!held) return { held, marks: Decoration.none };
-    const marks = referenceLinks(transaction.state.doc.toString()).map(link =>
-      Decoration.mark({ class: "cm-reference-link" }).range(link.from, link.to));
-    return { held, marks: Decoration.set(marks, true) };
-  },
-  provide: field => EditorView.decorations.from(field, value => value.marks),
-});
-
-function setReferenceControl(held: boolean) {
-  if (held === controlHeld) return;
-  controlHeld = held;
-  state.view?.dispatch({ effects: referenceControl.of(held) });
-  if (!held && state.view) state.view.contentDOM.style.cursor = "";
-}
-window.addEventListener("keydown", event => { if (event.key === referenceModifier) setReferenceControl(true); }, true);
-window.addEventListener("keyup", event => { if (event.key === referenceModifier) setReferenceControl(false); }, true);
-window.addEventListener("blur", () => setReferenceControl(false));
-
 type PositionedDiagnostic = BuildDiagnostic & { from: number; to: number };
 const setEditorDiagnostics = StateEffect.define<PositionedDiagnostic[]>();
 
@@ -1791,37 +1773,9 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     highlightActiveLine(),
     highlightSelectionMatches(),
     StreamLanguage.define(stex),
-    referenceHighlights,
-    EditorView.domEventHandlers({
-      mousedown(event, view) {
-        if (event.button === 2) {
-          event.preventDefault();
-          if (view.state.selection.main.empty) {
-            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
-            if (position !== null) view.dispatch({ selection: { anchor: position } });
-          }
-          return true;
-        }
-        if (!referenceModifierPressed(event) || event.button !== 0) return false;
-        const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (position === null) return false;
-        const link = referenceLinks(view.state.doc.toString()).find(link => position >= link.from && position < link.to);
-        if (!link) return false;
-        event.preventDefault();
-        void followReference(link);
-        return true;
-      },
-      mousemove(event, view) {
-        const position = referenceModifierPressed(event) ? view.posAtCoords({ x: event.clientX, y: event.clientY }) : null;
-        const linked = position !== null && referenceLinks(view.state.doc.toString()).some(link => position >= link.from && position < link.to);
-        view.contentDOM.style.cursor = linked ? "pointer" : "";
-      },
-      keyup(event, view) { if (event.key === referenceModifier) view.contentDOM.style.cursor = ""; },
-      contextmenu(event, view) {
-        event.preventDefault();
-        openEditorContextMenu(event, view);
-        return true;
-      },
+    sourceEditorInteractions({
+      followReference: link => { void followReference(link); },
+      openContextMenu: openEditorContextMenu,
     }),
     reviewDecorations,
     reviewTooltip,
@@ -1857,7 +1811,6 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
       ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "var(--primary)" },
       ".cm-line": { padding: "0 14px" },
-      ".cm-reference-link": { textDecoration: "underline", textUnderlineOffset: "3px", textDecorationThickness: "1.5px", color: "var(--primary)", cursor: "pointer" },
       ".cm-diagnostic-gutter": { width: "15px" },
       ".cm-diagnostic-marker": { display: "grid", width: "12px", height: "12px", marginTop: "4px", placeItems: "center", borderRadius: "50%", backgroundColor: "#b42318", color: "white", fontSize: "8px", fontWeight: "800", cursor: "help" },
       ".cm-blame-gutter": { width: "25px" },
@@ -2852,8 +2805,8 @@ const pdfController = new PdfController({
     status: elements.pdf_status,
     view: elements.pdf_view,
   },
-  modifierLabel: macReferences ? "Command" : "Ctrl",
-  modifierPressed: referenceModifierPressed,
+  modifierLabel: sourceModifierLabel,
+  modifierPressed: sourceModifierPressed,
   pdfUrl: () => projectApiUrl("v1/build/pdf"),
   sourceAt: async (page, x, y, revision) => {
     const projectId = state.projectId;
@@ -3676,6 +3629,17 @@ const copyLineReference = document.getElementById("copy-line-reference") as HTML
 let contextView: EditorView | null = null;
 let currentLineReference = "";
 
+function canonicalContext(view: EditorView): { view: EditorView; from: number; to: number } | null {
+  const selection = view.state.selection.main;
+  if (view === state.view) return { view, from: selection.from, to: selection.to };
+  const projection = projectedSourceViews.get(view);
+  const sourceView = state.view;
+  if (!projection || !sourceView) return null;
+  const from = projection.sourcePosition(selection.from);
+  const to = projection.sourcePosition(selection.to);
+  return from === null || to === null ? null : { view: sourceView, from, to };
+}
+
 function closeEditorContextMenu() {
   editorContextMenu.hidden = true;
   if (contextView) delete contextView.dom.dataset.contextMenu;
@@ -3703,7 +3667,10 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   contextView = view;
   view.dom.dataset.contextMenu = "open";
   const selection = view.state.selection.main;
-  const overlapsReview = parseReviews(view.state.doc.toString()).some(item => selection.from < item.to && selection.to > item.from);
+  const canonical = canonicalContext(view);
+  const overlapsReview = canonical
+    ? parseReviews(canonical.view.state.doc.toString()).some(item => canonical.from < item.to && canonical.to > item.from)
+    : false;
   editorContextMenu.querySelectorAll<HTMLButtonElement>("[data-editor-action]").forEach(button => {
     const action = button.dataset.editorAction;
     const manager = editorUndoManagers.get(view);
@@ -3711,10 +3678,10 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
     button.disabled = !state.projectCanEdit && writeAction ? true
       : action === "undo" ? !manager?.undoStack.length
       : action === "redo" ? !manager?.redoStack.length
-      : action === "comment" ? selection.empty || overlapsReview
+      : action === "comment" ? selection.empty || overlapsReview || !canonical
       : action === "copy" || action === "cut" || action === "delete" ? selection.empty
       : action === "select-all" ? !view.state.doc.length
-      : action === "pdf" ? !state.activeFile.endsWith(".tex") || !state.projectId
+      : action === "pdf" ? !canonical || !state.activeFile.endsWith(".tex") || !state.projectId
       : action === "paste" ? !navigator.clipboard?.readText
       : false;
   });
@@ -3763,7 +3730,7 @@ async function goToPdf(view: EditorView) {
 editorContextMenu.addEventListener("click", async event => {
   const button = (event.target as Element).closest<HTMLButtonElement>("[data-editor-action]");
   const view = contextView;
-  if (!button || button.disabled || !view || state.view !== view) return;
+  if (!button || button.disabled || !view) return;
   const action = button.dataset.editorAction;
   const doc = view.state.doc;
   const selection = view.state.selection;
@@ -3773,8 +3740,14 @@ editorContextMenu.addEventListener("click", async event => {
     if (action === "undo") { editorUndoManagers.get(view)?.undo(); return; }
     if (action === "redo") { editorUndoManagers.get(view)?.redo(); return; }
     if (action === "select-all") { selectAll(view); return; }
-    if (action === "comment") { openReviewDialog(); return; }
-    if (action === "pdf") { await goToPdf(view); return; }
+    if (action === "comment" || action === "pdf") {
+      const canonical = canonicalContext(view);
+      if (!canonical) throw new Error("The source range changed. Reopen the TreeWriter editor.");
+      canonical.view.dispatch({ selection: { anchor: canonical.from, head: canonical.to } });
+      if (action === "comment") openReviewDialog();
+      else await goToPdf(canonical.view);
+      return;
+    }
     if (action === "copy" || action === "cut") {
       const text = selection.ranges.map(range => stripReviewStorage(doc.sliceString(range.from, range.to))).join("\n");
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
@@ -3782,7 +3755,7 @@ editorContextMenu.addEventListener("click", async event => {
       if (action === "copy") return;
     }
     const inserted = action === "paste" ? await navigator.clipboard.readText() : "";
-    if (state.view !== view || view.state.doc !== doc || !view.state.selection.eq(selection)) throw new Error("The selection changed. Try again.");
+    if (view.state.doc !== doc || !view.state.selection.eq(selection)) throw new Error("The selection changed. Try again.");
     view.dispatch({ ...view.state.replaceSelection(inserted), userEvent: action === "paste" ? "input.paste" : "delete.cut" });
   } catch (error) { showToast(error.message); }
 });
@@ -3891,7 +3864,7 @@ applyReplacements.addEventListener("click", async () => {
   finally { applyReplacements.disabled = false; }
 });
 window.addEventListener("keydown", event => {
-  if ((macReferences ? event.metaKey : event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f" && !elements.editor_page.hidden) {
+  if ((sourceModifierIsMeta ? event.metaKey : event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f" && !elements.editor_page.hidden) {
     event.preventDefault();
     if (!searchDialog.open) openProjectSearch();
   }

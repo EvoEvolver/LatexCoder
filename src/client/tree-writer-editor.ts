@@ -1,7 +1,7 @@
 import { defaultKeymap } from "@codemirror/commands";
 import { defaultHighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
-import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import * as Y from "yjs";
 
@@ -15,6 +15,7 @@ type TreeWriterEditorOptions = {
   undoManager?: Y.UndoManager;
   onInvalidated: () => void;
   selection?: { anchor: number; head?: number };
+  extensions?: Extension;
 };
 
 type LocalChange = { from: number; to: number; insert: string };
@@ -69,6 +70,7 @@ export class TreeWriterEditor {
           lineNumbers(),
           StreamLanguage.define(stex),
           syntaxHighlighting(defaultHighlightStyle),
+          options.extensions || [],
           EditorView.lineWrapping,
           keymap.of([
             { key: "Mod-z", run: () => { options.undoManager?.undo(); return Boolean(options.undoManager); } },
@@ -125,6 +127,11 @@ export class TreeWriterEditor {
     this.options.text.unobserve(this.handleTextChange);
     this.options.undoManager?.removeTrackedOrigin(this.origin);
     this.view.destroy();
+  }
+
+  sourcePosition(localPosition: number): number | null {
+    const start = this.resolve(this.start);
+    return start === null ? null : start + localPosition;
   }
 
   private readonly handleTextChange = (_event: Y.YTextEvent, transaction: Y.Transaction): void => {

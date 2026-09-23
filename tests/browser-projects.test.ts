@@ -218,7 +218,7 @@ test("Tree follows the main document and TreeWriter navigates the outline", asyn
 \end{document}`;
     const method = String.raw`Introduction
 \subsection{Method}
-Details \tldr{The method combines two stages.}`;
+Details at \url{https://example.com}. \tldr{The method combines two stages.}`;
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: main, headers: { "Content-Type": "text/plain" } });
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: method, headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
@@ -269,6 +269,21 @@ Details \tldr{The method combines two stages.}`;
     assert.equal(await structureTab.getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("#active-file-label").textContent(), "chapters/method.tex");
     assert.equal(await page.getByRole("tab", { name: "method.tex", exact: true }).count(), 0, "TreeWriter source files should stay transient");
+    await treeEditor.click({ button: "right" });
+    const treeContextMenu = page.getByRole("menu", { name: "Edit selection", exact: true });
+    await treeContextMenu.waitFor();
+    assert.equal(await treeContextMenu.getByRole("menuitem", { name: "Select all", exact: true }).isEnabled(), true);
+    await treeContextMenu.getByRole("menuitem", { name: "Select all", exact: true }).click();
+    const modifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta" as const : "Control" as const);
+    await page.keyboard.down(modifier);
+    const treeLink = page.locator(".tree-writer-editor .cm-reference-link", { hasText: "https://example.com" });
+    await treeLink.waitFor();
+    const popupPromise = page.waitForEvent("popup");
+    await treeLink.click({ modifiers: [modifier] });
+    const popup = await popupPromise;
+    assert.equal(popup.url(), "https://example.com/");
+    await popup.close();
+    await page.keyboard.up(modifier);
     await page.screenshot({ path: "/tmp/latexcoder-treewriter-editor.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => document.getElementById("files-pane")!.getBoundingClientRect().right <= 1);
