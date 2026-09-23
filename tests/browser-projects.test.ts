@@ -208,6 +208,7 @@ test("Tree follows the main document and TreeWriter navigates the outline", asyn
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     const main = String.raw`\documentclass{article}
+\title{A Collaborative Paper}
 \begin{document}
 \section{Overview}
 \sectiontldr{The paper starts with its central question.}
@@ -251,7 +252,7 @@ Details \tldr{The method combines two stages.}`;
     assert.equal(await structureTab.getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("#structure-view").isVisible(), true);
     assert.equal(await page.locator("#editor").isVisible(), false);
-    assert.equal(await page.locator("#structure-document").getByText("Paper at a glance", { exact: true }).count(), 1);
+    assert.equal(await page.locator("#structure-document").getByText("A Collaborative Paper", { exact: true }).count(), 1);
     assert.match(await page.locator("#structure-document").textContent(), /The method combines two stages/);
     await page.screenshot({ path: "/tmp/latexcoder-tldr-structure-expanded.png" });
     const mainTab = page.getByRole("tab", { name: "main.tex", exact: true });

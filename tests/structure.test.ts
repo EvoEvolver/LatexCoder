@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flattenStructure, projectStructure, rootStructureInsertion, structureInsertions } from "../src/shared/structure.ts";
+import { documentTitle, flattenStructure, projectStructure, rootStructureInsertion, structureInsertions } from "../src/shared/structure.ts";
 
 test("project structure follows includes from the main document in source order", () => {
   const sources = new Map([
@@ -38,6 +38,12 @@ test("project structure resolves root-relative includes before file-relative inc
     ["paper/shared.tex", String.raw`\section{Relative copy}`],
   ]);
   assert.equal(projectStructure("paper/main.tex", sources)[0]?.title, "Root copy");
+});
+
+test("paper titles support optional arguments and nested formatting", () => {
+  assert.equal(documentTitle(String.raw`\title[Short]{A \textbf{Structured} Paper}`), "A Structured Paper");
+  assert.equal(documentTitle("% \\title{Ignored}\n\\title{Visible title}"), "Visible title");
+  assert.equal(documentTitle("\\section{No title}"), null);
 });
 
 test("leaf nodes own exact editable source ranges without annotation macros", () => {

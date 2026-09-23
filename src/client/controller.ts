@@ -91,6 +91,7 @@ import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
 import {
   flattenStructure,
+  documentTitle,
   projectStructure,
   rootStructureInsertion,
   structureInsertions,
@@ -980,7 +981,9 @@ function renderStructure(): void {
   const heading = document.createElement("div");
   const title = document.createElement("h1");
   title.className = "text-xl font-semibold";
-  title.textContent = "Paper at a glance";
+  title.textContent = documentTitle(structureSources.get(state.main) || "")
+    || state.projects.find(project => project.id === state.projectId)?.name
+    || "Untitled paper";
   const source = document.createElement("p");
   source.className = "mt-1 text-xs text-muted-foreground";
   source.textContent = state.main;

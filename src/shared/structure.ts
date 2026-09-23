@@ -186,6 +186,17 @@ export function flattenStructure(entries: readonly StructureEntry[]): StructureE
   return result;
 }
 
+export function documentTitle(source: string): string | null {
+  const clean = withoutComments(source);
+  const pattern = /\\title\*?(?![a-zA-Z@])/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(clean))) {
+    const argument = bracedArgument(clean, skipOptionalArgument(clean, match.index + match[0].length));
+    if (argument) return displayTitle(source.slice(argument.from, argument.to));
+  }
+  return null;
+}
+
 export function structureInsertions(entry: StructureEntry): StructureInsertion[] {
   if (entry.type === "point") {
     return [{
