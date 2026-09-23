@@ -495,7 +495,8 @@ test("login, invitations, and capability links separate members from guests", as
     await viewer.waitForFunction(() => document.querySelector("#sync-state")?.textContent !== "Synchronizing");
     assert.equal(await viewer.locator("#sync-state").textContent(), "Viewing live");
     assert.equal(await viewer.locator(".cm-content").getAttribute("contenteditable"), "false");
-    assert.equal(await viewer.locator("#add-comment").isHidden(), true);
+    assert.equal(await viewer.locator("#add-comment").count(), 0);
+    assert.equal(await viewer.locator("#selection-actions").isHidden(), true);
     assert.equal(await viewer.locator("#suggest-edit").isHidden(), true);
     assert.equal(await viewer.locator("#collaborate-menu").isHidden(), true);
     const sourceBeforeViewerMutation = await viewer.evaluate(project => fetch(`/v1/files?project=${project}&path=main.tex`).then(response => response.text()), projectId);

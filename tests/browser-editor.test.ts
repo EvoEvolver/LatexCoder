@@ -23,7 +23,8 @@ test("Review opens beside source independently of PDF and closes back to full ed
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     await page.waitForFunction(() => document.querySelector("#review-count")?.textContent === "1");
     const width = (await page.locator("#editor").boundingBox()).width;
-    assert.equal(await page.locator("#review-actions #toggle-files + #add-comment").count(), 1);
+    assert.equal(await page.locator("#add-comment").count(), 0);
+    assert.equal(await page.locator("#review-actions #toggle-files + #suggest-edit").count(), 1);
     assert.equal(await page.locator("#output-pane [data-output=review]").count(), 0);
     assert.equal((await page.locator("#toggle-review").textContent()).trim(), "1");
     assert.equal(await page.locator("#editor-search").count(), 0);
@@ -414,7 +415,7 @@ test("comment accepts arbitrary selected LaTeX fragments", async () => {
       view.dispatch({ selection: { anchor, head } });
       view.focus();
     }, [from, to]);
-    await page.locator("#add-comment").click();
+    await page.locator("#selection-comment").click();
     await page.locator("#review-text").fill("Comment on this fragment");
     await page.locator("#dialog-submit").click();
 
@@ -448,17 +449,17 @@ test("an empty inline comment can be cancelled or closed", async () => {
     });
 
     await selectWord();
-    await page.locator("#add-comment").click();
+    await page.locator("#selection-comment").click();
     await page.locator("#review-cancel").click();
     assert.equal(await page.locator("#review-dialog").isHidden(), true);
 
     await selectWord();
-    await page.locator("#add-comment").click();
+    await page.locator("#selection-comment").click();
     await page.locator("#review-close").click();
     assert.equal(await page.locator("#review-dialog").isHidden(), true);
 
     await selectWord();
-    await page.locator("#add-comment").click();
+    await page.locator("#selection-comment").click();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#review-dialog").isHidden(), true);
     assert.equal((await editorState(page)).doc, LIPSUM);
@@ -498,11 +499,14 @@ test("selection action accepts every suggestion in the selected range", async ()
     }, content.length);
     const action = page.locator("#selection-accept");
     await action.waitFor();
+    assert.equal(await page.locator("#selection-comment").isHidden(), true);
     assert.equal((await action.innerText()).trim(), "Accept 2 suggestions");
     await action.click();
     const { doc } = await editorState(page);
     assert.equal(doc, "A new and more text.");
-    assert.equal(await page.locator("#selection-actions").isHidden(), true);
+    assert.equal(await page.locator("#selection-actions").isVisible(), true);
+    assert.equal(await page.locator("#selection-comment").isVisible(), true);
+    assert.equal(await action.isHidden(), true);
   });
 });
 

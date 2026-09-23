@@ -261,7 +261,7 @@ export function AppShell() {
           <section id="editor-pane" className="editor-pane relative grid min-h-0 min-w-0 grid-rows-[2.75rem_2.75rem_minmax(0,1fr)] border-r">
             <div id="file-tabs" className="file-tabs" role="tablist" aria-label="Open files" />
             <div className={cn(paneToolbar, "editor-toolbar justify-between")}>
-              <div id="review-actions" className="review-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Files" className="min-[761px]:hidden" /><Button id="add-comment" className={toolButton} variant="ghost" size="sm"><Icon name="message-square-plus" /><span className="max-[480px]:hidden">Comment</span></Button><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span className="max-[480px]:hidden">Suggest</span></Button></div>
+              <div id="review-actions" className="review-actions flex items-center gap-1"><IconButton id="toggle-files" icon="panel-left" title="Files" className="min-[761px]:hidden" /><Button id="suggest-edit" className={toolButton} variant="ghost" size="sm" aria-pressed="false"><Icon name="git-pull-request-create-arrow" /><span className="max-[480px]:hidden">Suggest</span></Button></div>
               <div className="editor-actions flex items-center gap-1"><div id="workspace-view-switch"><Button id="open-pdf" className="h-8 px-2.5 text-xs" variant="ghost" type="button" title="Show PDF preview" aria-controls="output-pane" aria-expanded="false">Switch to PDF</Button></div><Button id="toggle-review" data-output="review" variant="ghost" size="sm" className="h-8 min-w-8 px-1.5" aria-label="Review" aria-expanded="false" title="Review"><span id="review-count" className="rounded-full bg-amber-700 px-1.5 text-[9px] text-white">0</span></Button></div>
             </div>
             <div id="editor-body" className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden">
@@ -298,7 +298,7 @@ export function AppShell() {
             </div>
           </section>
         </main>
-        <div id="selection-actions" className="selection-actions fixed z-30" hidden><Button id="selection-accept" className="selection-accept h-8 shadow-lg" size="sm"><Icon name="check-check" /><span>Accept suggestion</span></Button></div>
+        <div id="selection-actions" className="selection-actions fixed z-30 flex items-center gap-1" hidden><IconButton id="selection-comment" icon="message-square-plus" title="Add comment" className="size-8 shadow-lg" /><Button id="selection-accept" className="selection-accept h-8 shadow-lg" size="sm"><Icon name="check-check" /><span>Accept suggestion</span></Button></div>
       </div>
 
       <div id="toast" className="toast fixed bottom-5 left-1/2 z-50 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-xl" role="status" hidden />

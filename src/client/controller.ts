@@ -178,7 +178,7 @@ const elementIds = [
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
-  "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
+  "active-file-label", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
@@ -186,7 +186,7 @@ const elementIds = [
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
-  "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
+  "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "selection-comment", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
 ] as const;
 
 const elements = createElementRegistry(elementIds, {
@@ -232,6 +232,7 @@ const elements = createElementRegistry(elementIds, {
   invite_reusable: HTMLButtonElement,
   invite_single: HTMLButtonElement,
   refresh_structure: HTMLButtonElement,
+  selection_comment: HTMLButtonElement,
 });
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -475,15 +476,20 @@ function renderSelectionActions() {
   if (!view || !state.projectCanEdit) return;
   const selection = view.state.selection.main;
   if (selection.empty) return;
-  const ids = [...new Set(parseReviews(view.state.doc.toString())
+  const overlappingReviews = parseReviews(view.state.doc.toString())
+    .filter(item => selection.from < item.to && selection.to > item.from);
+  const ids = [...new Set(overlappingReviews
     .filter(item => item.kind !== "comment" && selection.from < item.to && selection.to > item.from)
     .map(item => item.id))];
-  if (!ids.length) return;
+  const canComment = overlappingReviews.length === 0;
+  if (!ids.length && !canComment) return;
   const caret = view.coordsAtPos(selection.head, 1);
   const editor = elements.editor.getBoundingClientRect();
   if (!caret || caret.bottom < editor.top || caret.top > editor.bottom) return;
 
   state.selectionSuggestionIds = ids;
+  elements.selection_comment.hidden = !canComment;
+  elements.selection_accept.hidden = ids.length === 0;
   elements.selection_accept.querySelector("span").textContent = ids.length === 1
     ? "Accept suggestion"
     : `Accept ${ids.length} suggestions`;
@@ -542,7 +548,6 @@ function syncProjectPermissionUi(): void {
   document.getElementById("history-restore")!.hidden = !editable;
   document.getElementById("history-restore-file")!.hidden = !editable;
   const textFile = state.files.find(file => file.path === state.activeFile)?.text;
-  elements.add_comment.hidden = !editable || !textFile;
   elements.suggest_edit.hidden = !editable || !textFile;
   if (!editable) elements.selection_actions.hidden = true;
 }
@@ -1079,7 +1084,6 @@ function showExpandedStructure(): void {
   elements.editor.hidden = true;
   elements.binary_view.hidden = true;
   elements.review_actions.hidden = false;
-  elements.add_comment.hidden = true;
   elements.suggest_edit.hidden = true;
 }
 
@@ -1089,7 +1093,6 @@ function hideExpandedStructure(): void {
   const file = state.files.find(candidate => candidate.path === state.activeFile);
   elements.editor.hidden = !file?.text;
   elements.binary_view.hidden = file?.text !== false;
-  elements.add_comment.hidden = !state.projectCanEdit || !file?.text;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file?.text;
 }
 
@@ -2084,7 +2087,6 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
-  elements.add_comment.hidden = !state.projectCanEdit || !file.text;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file.text;
   renderFiles();
   if (!file.text) {
@@ -3399,7 +3401,8 @@ elements.new_project.addEventListener("click", async () => {
   } catch (error) { showToast(error.message); }
 });
 elements.compile_button.addEventListener("click", compile);
-elements.add_comment.addEventListener("click", openReviewDialog);
+elements.selection_comment.addEventListener("mousedown", (event: Event) => event.preventDefault());
+elements.selection_comment.addEventListener("click", openReviewDialog);
 elements.selection_accept.addEventListener("mousedown", (event: Event) => event.preventDefault());
 elements.selection_accept.addEventListener("click", () => {
   applyReviewDecisions(state.selectionSuggestionIds, "accept");
