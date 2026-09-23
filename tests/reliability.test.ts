@@ -23,13 +23,17 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
     CREATE TABLE project_shares (id TEXT PRIMARY KEY, project_id TEXT, token_hash TEXT, created_at INTEGER);
     CREATE TABLE project_sessions (token_hash TEXT, project_id TEXT, expires_at INTEGER, PRIMARY KEY (token_hash, project_id));
     CREATE TABLE builds (project_id TEXT PRIMARY KEY, status TEXT, main_file TEXT, started_at TEXT, finished_at TEXT, log TEXT, has_pdf INTEGER);
+    INSERT INTO users (username, password_salt, password_hash, created_at, invited_by)
+      VALUES ('legacy.user', 'salt', 'hash', '2025-01-01T00:00:00.000Z', NULL);
+    INSERT INTO invitations (token_hash, created_by, created_at, expires_at, used_at, used_by)
+      VALUES ('legacy-token', 'legacy.user', '2025-01-01T00:00:00.000Z', 9999999999999, NULL, NULL);
     PRAGMA user_version = 1;
   `);
   legacy.close();
 
   const database = new StateDatabase(stateDir);
   try {
-    assert.equal(database.schemaVersion(), 12);
+    assert.equal(database.schemaVersion(), 13);
     assert.equal(database.ping(), true);
     const upgraded = new DatabaseSync(filename, { readOnly: true });
     try {
@@ -37,6 +41,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
       assert.ok(columns("users").includes("display_name"));
       assert.ok(columns("users").includes("is_admin"));
       assert.ok(columns("users").includes("deleted_at"));
+      assert.ok(columns("users").includes("user_type"));
       assert.ok(columns("project_sessions").includes("share_id"));
       assert.ok(columns("project_shares").includes("username"));
       assert.ok(columns("builds").includes("source_revision"));
@@ -46,6 +51,9 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
       assert.ok(columns("project_sessions").includes("access_mode"));
       assert.ok(columns("project_members").includes("archived"));
       assert.ok(columns("invitations").includes("reusable"));
+      assert.ok(columns("invitations").includes("user_type"));
+      assert.equal((upgraded.prepare("SELECT user_type FROM users WHERE username = 'legacy.user'").get() as { user_type: string }).user_type, "internal");
+      assert.equal((upgraded.prepare("SELECT user_type FROM invitations WHERE token_hash = 'legacy-token'").get() as { user_type: string }).user_type, "internal");
       assert.deepEqual(columns("project_tags"), ["project_id", "tag", "created_at"]);
     } finally {
       upgraded.close();
@@ -96,7 +104,7 @@ test("health endpoints distinguish liveness and readiness", async () => {
     const ready = await readyResponse.json();
     assert.equal(readyResponse.status, 200);
     assert.equal(ready.status, "ready");
-    assert.equal(ready.schemaVersion, 12);
+    assert.equal(ready.schemaVersion, 13);
     assert.deepEqual(ready.queue, { active: 0, queued: 0, concurrency: 2, accepting: true });
     assert.equal(typeof ready.dependencies.git.available, "boolean");
   } finally {

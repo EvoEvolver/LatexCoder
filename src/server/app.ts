@@ -36,7 +36,7 @@ import type { ProjectMetadata } from "./database.ts";
 import type { BlameActor, ImportedProjectFile, PaperServer, ProjectFile, ProjectRuntime, ServerOptions } from "./types.ts";
 
 type GitRunOptions = { env?: NodeJS.ProcessEnv; allowedCodes?: number[]; code?: string; status?: number };
-type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean };
+type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean; userType: "internal" | "external" };
 type CookieSession = { key: string; token: string };
 type CookieRequest = { headers: { cookie?: string } };
 type ProjectAccessRequest = CookieRequest & { query?: { access?: unknown } };
@@ -846,11 +846,11 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   }
 
   function currentUser(request: CookieRequest): AuthenticatedUser | null {
-    if (authDisabled) return { username: "test-user", displayName: "Test User", isAdmin: true };
+    if (authDisabled) return { username: "test-user", displayName: "Test User", isAdmin: true, userType: "internal" };
     const session = userSession(request);
     if (!session) return null;
     const user = database.getUser(session.record.username);
-    return user && !user.deletedAt ? { username: user.username, displayName: user.displayName, isAdmin: user.isAdmin } : null;
+    return user && !user.deletedAt ? { username: user.username, displayName: user.displayName, isAdmin: user.isAdmin, userType: user.userType } : null;
   }
 
   function requestBlameActor(request: CookieRequest & { query?: Record<string, unknown> }): BlameActor {

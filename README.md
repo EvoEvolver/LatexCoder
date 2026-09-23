@@ -116,9 +116,11 @@ LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' pnpm start
 
 Open <http://127.0.0.1:8090>. On an empty data directory, sign in as `admin`
 with `LATEXCODER_ADMIN_PASSWORD`. The password must contain at least 10
-characters and is used only to create the first account. Existing users can
-then issue registration links that expire after seven days. Links are
-single-use by default and can optionally remain reusable until they expire.
+characters and is used only to create the first account. Internal users can
+then issue registration links that expire after seven days, choosing whether
+the new account is Internal or External. Links are single-use by default and
+can optionally remain reusable until they expire. External users keep a full
+project dashboard and can create projects, but cannot invite more users.
 
 For local development:
 
@@ -141,7 +143,9 @@ is renamed.
 The bootstrap administrator has a paginated administration panel for all users
 and projects. It supports account search, password resets with session
 revocation, soft user deletion that preserves projects and attribution, and
-project deletion. Regular members cannot access the panel or its APIs.
+project deletion. Administrators can also switch active non-admin accounts
+between Internal and External. Regular members cannot access the panel or its
+APIs. Existing accounts are migrated as Internal users.
 
 Guests enter through `/share/<project-id>/<secret>`. The secret is exchanged for
 a 24-hour, project-scoped HttpOnly session before redirecting to the clean

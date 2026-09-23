@@ -2,7 +2,7 @@ import type { Express, Request, RequestHandler, Response } from "express";
 
 import type { StateDatabase } from "../database.ts";
 import type { BlameActor, ProjectFile, ProjectRuntime, ServerOptions } from "../types.ts";
-import type { ProjectMetadata } from "../database.ts";
+import type { ProjectMetadata, UserType } from "../database.ts";
 import type { createProjectSearch } from "../search.ts";
 
 export type RouteApp = Express;
@@ -10,7 +10,7 @@ export type RouteApp = Express;
 export type JsonMiddleware = (options: { limit: string }) => RequestHandler;
 export type RawMiddleware = (options: { type: (() => boolean) | string; limit: string | number }) => RequestHandler;
 
-export type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean };
+export type AuthenticatedUser = { username: string; displayName: string; isAdmin: boolean; userType: UserType };
 export type UserSession = { key: string; token: string; record: { username: string } };
 
 export interface AuthRouteContext {

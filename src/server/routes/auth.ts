@@ -43,7 +43,7 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       }
       context.loginAttempts.delete(attemptKey);
       context.issueUserSession(request, response, username);
-      response.json({ user: { username, displayName: user.displayName, isAdmin: user.isAdmin } });
+      response.json({ user: { username, displayName: user.displayName, isAdmin: user.isAdmin, userType: user.userType } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/logout", (request, response) => {
@@ -57,20 +57,23 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       const user = context.requireUser(request);
       const displayName = cleanDisplayName(parseBody(updateProfileRequestSchema, request.body).displayName);
       if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
-      response.json({ user: { username: user.username, displayName, isAdmin: user.isAdmin } });
+      response.json({ user: { username: user.username, displayName, isAdmin: user.isAdmin, userType: user.userType } });
     } catch (error) { next(error); }
   });
   app.get("/v1/invitations/:token", (request, response, next) => {
     try {
       const invitation = database.getInvitation(sha256(String(request.params.token || "")));
       if (!invitationIsValid(invitation)) throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
-      response.json({ invitation: { invitedBy: invitation!.createdBy, expiresAt: new Date(invitation!.expiresAt).toISOString(), reusable: invitation!.reusable } });
+      response.json({ invitation: { invitedBy: invitation!.createdBy, expiresAt: new Date(invitation!.expiresAt).toISOString(), reusable: invitation!.reusable, userType: invitation!.userType } });
     } catch (error) { next(error); }
   });
   app.post("/v1/invitations", json({ limit: "1kb" }), (request, response, next) => {
     try {
       const user = context.requireUser(request);
-      const { reusable } = parseBody(createInvitationRequestSchema, request.body ?? {});
+      if (!user.isAdmin && user.userType !== "internal") {
+        throw apiError("invitation_forbidden", "external users cannot invite new users", 403);
+      }
+      const { reusable, userType } = parseBody(createInvitationRequestSchema, request.body ?? {});
       const token = randomToken();
       const createdAt = new Date();
       database.createInvitation({
@@ -79,8 +82,9 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
         createdAt: createdAt.toISOString(),
         expiresAt: createdAt.getTime() + context.invitationSeconds * 1000,
         reusable,
+        userType,
       });
-      response.status(201).json({ invitation: { token, path: `/register/${token}`, reusable } });
+      response.status(201).json({ invitation: { token, path: `/register/${token}`, reusable, userType } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/register", json({ limit: "16kb" }), (request, response, next) => {
@@ -100,13 +104,13 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
         if (!invitationIsValid(current)) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
-        database.createUser({ username, displayName: username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy });
+        database.createUser({ username, displayName: username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy, userType: current.userType });
         if (!current!.reusable && !database.consumeInvitation(tokenHash, username, createdAt)) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
       });
       context.issueUserSession(request, response, username);
-      response.status(201).json({ user: { username, displayName: username, isAdmin: false } });
+      response.status(201).json({ user: { username, displayName: username, isAdmin: false, userType: invitation!.userType } });
     } catch (error) { next(error); }
   });
 }

@@ -178,7 +178,7 @@ export function AppShell() {
           <div className="projects-account flex items-center gap-2">
             <Button id="admin-button" variant="ghost" size="sm" hidden><Icon name="shield-check" /><span className="max-sm:hidden">Admin</span></Button>
             <Button id="account-button" variant="ghost" size="sm"><Icon name="user-round" /><span id="current-user" className="max-w-36 truncate max-sm:hidden" /></Button>
-            <Button id="invite-user" variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
+            <Button id="invite-user" data-internal-only variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
             <Button id="new-project" size="sm"><Icon name="folder-plus" /><span>New project</span></Button>
             <IconButton id="logout-button" icon="log-out" title="Sign out" />
           </div>
@@ -248,7 +248,7 @@ export function AppShell() {
                 <DropdownMenuLabel>Account</DropdownMenuLabel>
                 <DropdownMenuItem id="editor-admin-button" data-admin-only><Icon name="shield-check" />Administration…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-account-button" data-user-only><Icon name="user-round" />Account Settings…</DropdownMenuItem>
-                <DropdownMenuItem id="editor-invite-user" data-user-only><Icon name="user-plus" />Invite Team Member…</DropdownMenuItem>
+                <DropdownMenuItem id="editor-invite-user" data-internal-only><Icon name="user-plus" />Invite User…</DropdownMenuItem>
                 <DropdownMenuItem id="editor-logout" data-user-only className="text-destructive focus:text-destructive"><Icon name="log-out" />Sign Out</DropdownMenuItem>
                 <DropdownMenuItem id="editor-login" data-guest-only><Icon name="log-in" />Sign In</DropdownMenuItem>
               </DropdownMenuContent>
@@ -421,7 +421,7 @@ export function AppShell() {
         </form>
       </dialog>
 
-      <dialog id="invite-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Invite a team member" closeId="invite-close" /><div className="mb-4 grid grid-cols-2 rounded-md border bg-muted p-0.5" role="radiogroup" aria-label="Invitation use"><Button id="invite-single" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">Single use</Button><Button id="invite-reusable" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">Reusable for 7 days</Button></div><section className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="invite-link">Registration link</label><p id="invite-description" className="text-xs text-muted-foreground" /><CopyRow inputId="invite-link" buttonId="copy-invite-link" label="Copy" /></section><footer className="flex justify-end gap-2"><Button id="invite-regenerate" variant="outline"><Icon name="refresh-cw" />New link</Button><Button id="invite-done">Done</Button></footer></div></dialog>
+      <dialog id="invite-dialog" className={dialogClass}><div className="access-dialog-body p-5"><DialogHeader title="Invite a user" closeId="invite-close" /><p className="mb-1 text-xs font-medium text-muted-foreground">Account type</p><div className="mb-4 grid grid-cols-2 rounded-md border bg-muted p-0.5" role="radiogroup" aria-label="Invited user type"><Button id="invite-external" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">External</Button><Button id="invite-internal" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">Internal</Button></div><p className="mb-1 text-xs font-medium text-muted-foreground">Link use</p><div className="mb-4 grid grid-cols-2 rounded-md border bg-muted p-0.5" role="radiogroup" aria-label="Invitation use"><Button id="invite-single" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">Single use</Button><Button id="invite-reusable" variant="ghost" size="sm" role="radio" className="h-8 [&.active]:bg-background [&.active]:shadow-sm">Reusable for 7 days</Button></div><section className="space-y-2 border-t py-4"><label className="text-sm font-medium" htmlFor="invite-link">Registration link</label><p id="invite-description" className="text-xs text-muted-foreground" /><CopyRow inputId="invite-link" buttonId="copy-invite-link" label="Copy" /></section><footer className="flex justify-end gap-2"><Button id="invite-regenerate" variant="outline"><Icon name="refresh-cw" />New link</Button><Button id="invite-done">Done</Button></footer></div></dialog>
     </>
   );
 }

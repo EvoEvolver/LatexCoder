@@ -36,6 +36,8 @@ export type BlameChange = {
   commit: string | null;
 };
 
+export type UserType = "internal" | "external";
+
 type SqlValue = string | number | bigint | Uint8Array | null;
 type SqlRow = Record<string, SqlValue>;
 type ProjectRow = SqlRow & {
@@ -113,15 +115,16 @@ export class StateDatabase {
       createdAt: row.created_at as string,
       invitedBy: row.invited_by as string | null,
       isAdmin: Boolean(row.is_admin),
+      userType: row.user_type as UserType,
       deletedAt: row.deleted_at as string | null,
     };
   }
 
-  createUser(user: { username: string; displayName: string; salt: string; hash: string; createdAt: string; invitedBy: string | null; isAdmin?: boolean }) {
+  createUser(user: { username: string; displayName: string; salt: string; hash: string; createdAt: string; invitedBy: string | null; isAdmin?: boolean; userType?: UserType }) {
     this.db.prepare(`
-      INSERT INTO users (username, display_name, password_salt, password_hash, created_at, invited_by, is_admin)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(user.username, user.displayName, user.salt, user.hash, user.createdAt, user.invitedBy, Number(user.isAdmin || false));
+      INSERT INTO users (username, display_name, password_salt, password_hash, created_at, invited_by, is_admin, user_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(user.username, user.displayName, user.salt, user.hash, user.createdAt, user.invitedBy, Number(user.isAdmin || false), user.userType || "internal");
   }
 
   listAdminUsers(query: string, limit: number, offset: number) {
@@ -130,7 +133,7 @@ export class StateDatabase {
     const parameters = query ? [search, search] : [];
     const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM users ${where}`).get(...parameters) as SqlRow).count);
     const rows = this.db.prepare(`
-      SELECT users.username, users.display_name, users.created_at, users.invited_by, users.is_admin, users.deleted_at,
+      SELECT users.username, users.display_name, users.created_at, users.invited_by, users.is_admin, users.user_type, users.deleted_at,
         COUNT(DISTINCT project_members.project_id) AS project_count,
         COUNT(DISTINCT CASE WHEN project_members.role = 'owner' THEN project_members.project_id END) AS owned_project_count
       FROM users LEFT JOIN project_members ON project_members.username = users.username
@@ -145,6 +148,7 @@ export class StateDatabase {
       createdAt: row.created_at as string,
       invitedBy: row.invited_by as string | null,
       isAdmin: Boolean(row.is_admin),
+      userType: row.user_type as UserType,
       deletedAt: row.deleted_at as string | null,
       projectCount: Number(row.project_count),
       ownedProjectCount: Number(row.owned_project_count),
@@ -201,6 +205,14 @@ export class StateDatabase {
     return Number(result.changes) === 1;
   }
 
+  updateUserType(username: string, userType: UserType) {
+    const result = this.db.prepare(`
+      UPDATE users SET user_type = ?
+      WHERE username = ? AND deleted_at IS NULL AND is_admin = 0
+    `).run(userType, username);
+    return Number(result.changes) === 1;
+  }
+
   getInvitation(tokenHash: string) {
     const row = this.db.prepare("SELECT * FROM invitations WHERE token_hash = ?").get(tokenHash) as SqlRow | undefined;
     if (!row) return null;
@@ -212,14 +224,15 @@ export class StateDatabase {
       usedAt: row.used_at as string | null,
       usedBy: row.used_by as string | null,
       reusable: Boolean(row.reusable),
+      userType: row.user_type as UserType,
     };
   }
 
-  createInvitation(invitation: { tokenHash: string; createdBy: string; createdAt: string; expiresAt: number; reusable: boolean }) {
+  createInvitation(invitation: { tokenHash: string; createdBy: string; createdAt: string; expiresAt: number; reusable: boolean; userType: UserType }) {
     this.db.prepare(`
-      INSERT INTO invitations (token_hash, created_by, created_at, expires_at, reusable)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(invitation.tokenHash, invitation.createdBy, invitation.createdAt, invitation.expiresAt, Number(invitation.reusable));
+      INSERT INTO invitations (token_hash, created_by, created_at, expires_at, reusable, user_type)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(invitation.tokenHash, invitation.createdBy, invitation.createdAt, invitation.expiresAt, Number(invitation.reusable), invitation.userType);
   }
 
   consumeInvitation(tokenHash: string, username: string, usedAt: string) {

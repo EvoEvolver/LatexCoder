@@ -184,7 +184,7 @@ const elementIds = [
   "active-file-label", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
-  "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
+  "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-external", "invite-internal", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "share-confirm-cancel", "share-confirm-description", "share-confirm-page", "share-confirm-project", "share-confirm-submit", "share-confirm-title",
@@ -363,6 +363,7 @@ function syncAccountUi(): void {
   elements.back_projects.hidden = !registered;
   document.documentElement.dataset.authState = registered ? "registered" : "guest";
   document.documentElement.dataset.adminState = state.user?.isAdmin ? "admin" : "member";
+  document.documentElement.dataset.userType = state.user?.isAdmin || state.user?.userType === "internal" ? "internal" : "external";
   elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
   elements.admin_button.hidden = !state.user?.isAdmin;
   const editorAdmin = document.getElementById("editor-admin-button");
@@ -2595,7 +2596,7 @@ function renderProjects() {
 
 type AdminUserRow = {
   username: string; displayName: string; createdAt: string; invitedBy: string | null;
-  isAdmin: boolean; deletedAt: string | null; projectCount: number; ownedProjectCount: number;
+  isAdmin: boolean; userType: "internal" | "external"; deletedAt: string | null; projectCount: number; ownedProjectCount: number;
 };
 type AdminProjectRow = {
   id: string; name: string; ownerUsername: string | null; ownerDisplayName: string | null;
@@ -2676,6 +2677,21 @@ async function softDeleteAdminUser(user: AdminUserRow): Promise<void> {
   } catch (error) { showToast(error.message); }
 }
 
+async function updateAdminUserType(user: AdminUserRow, userType: "internal" | "external"): Promise<void> {
+  try {
+    await request(`v1/admin/users/${encodeURIComponent(user.username)}/type`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userType }),
+    });
+    user.userType = userType;
+    showToast(`${user.username} is now ${userType}.`);
+  } catch (error) {
+    await refreshAdminTable();
+    showToast(error.message);
+  }
+}
+
 async function deleteAdminProject(project: AdminProjectRow): Promise<void> {
   const confirmed = await openActionDialog({
     title: "Delete project",
@@ -2692,7 +2708,7 @@ async function deleteAdminProject(project: AdminProjectRow): Promise<void> {
 }
 
 function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
-  const { table, body } = adminTable(["User", "Status", "Projects", "Created", "Invited by", "Actions"]);
+  const { table, body } = adminTable(["User", "Status", "Type", "Projects", "Created", "Invited by", "Actions"]);
   for (const user of result.items) {
     const row = document.createElement("tr");
     row.className = "hover:bg-accent/40";
@@ -2706,6 +2722,20 @@ function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
     identity.append(name, username);
     const status = user.deletedAt ? "Deleted" : user.isAdmin ? "Admin" : "Active";
     const statusCell = adminCell(status, user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
+    const typeCell = adminCell("");
+    const typeSelect = document.createElement("select");
+    typeSelect.className = "h-7 rounded border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60";
+    typeSelect.setAttribute("aria-label", `Account type for ${user.username}`);
+    for (const type of ["internal", "external"] as const) {
+      const option = document.createElement("option");
+      option.value = type;
+      option.textContent = type === "internal" ? "Internal" : "External";
+      option.selected = user.userType === type;
+      typeSelect.append(option);
+    }
+    typeSelect.disabled = user.isAdmin || Boolean(user.deletedAt);
+    typeSelect.addEventListener("change", () => void updateAdminUserType(user, typeSelect.value as "internal" | "external"));
+    typeCell.append(typeSelect);
     const projects = adminCell(`${user.projectCount} total · ${user.ownedProjectCount} owned`, "tabular-nums");
     const actions = adminCell("");
     actions.classList.add("space-x-1", "text-right");
@@ -2713,7 +2743,7 @@ function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
       actions.append(adminAction(`Reset password for ${user.username}`, "key-round", () => void resetAdminUserPassword(user)));
       if (!user.isAdmin) actions.append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
     }
-    row.append(identity, statusCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString()), adminCell(user.invitedBy || "Bootstrap"), actions);
+    row.append(identity, statusCell, typeCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString()), adminCell(user.invitedBy || "Bootstrap"), actions);
     body.append(row);
   }
   elements.admin_table.replaceChildren(table);
@@ -2950,7 +2980,7 @@ function showAuthPage(mode = "login", description = "") {
   elements.auth_submit.disabled = false;
   elements.auth_password.value = "";
   const registering = mode === "register";
-  elements.auth_title.textContent = registering ? "Join the team" : "Sign in";
+  elements.auth_title.textContent = registering ? "Create your account" : "Sign in";
   elements.auth_description.textContent = description || (registering
     ? "Choose an account for this invitation."
     : state.bootstrapReady
@@ -3447,7 +3477,9 @@ async function enterProjectDashboard(replace = false) {
 }
 
 type InvitationMode = "single" | "reusable";
+type InvitationUserType = "internal" | "external";
 let invitationMode: InvitationMode = "single";
+let invitationUserType: InvitationUserType = "external";
 let invitationRequestVersion = 0;
 
 function syncInvitationMode(): void {
@@ -3456,20 +3488,28 @@ function syncInvitationMode(): void {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-checked", String(selected));
   }
-  elements.invite_description.textContent = invitationMode === "single"
-    ? "This link can register one account and expires in seven days. The new user can manage projects and invite others."
-    : "This link can register multiple accounts for seven days. New users can manage projects and invite others.";
+  for (const [button, userType] of [[elements.invite_external, "external"], [elements.invite_internal, "internal"]] as const) {
+    const selected = invitationUserType === userType;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", String(selected));
+  }
+  const uses = invitationMode === "single" ? "one account" : "multiple accounts";
+  const permission = invitationUserType === "internal"
+    ? "The new user can manage projects and invite other users."
+    : "The new user can manage their own projects but cannot invite users.";
+  elements.invite_description.textContent = `This link can register ${uses} and expires in seven days. ${permission}`;
 }
 
-async function createInvitation(mode: InvitationMode = invitationMode): Promise<void> {
+async function createInvitation(mode: InvitationMode = invitationMode, userType: InvitationUserType = invitationUserType): Promise<void> {
   invitationMode = mode;
+  invitationUserType = userType;
   const requestVersion = ++invitationRequestVersion;
   syncInvitationMode();
   try {
     const result = await request<{ invitation: { path: string } }>("v1/invitations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reusable: mode === "reusable" }),
+      body: JSON.stringify({ reusable: mode === "reusable", userType }),
     });
     if (requestVersion !== invitationRequestVersion) return;
     elements.invite_link.value = `${window.location.origin}${result.invitation.path}`;
@@ -3602,6 +3642,8 @@ onDynamicClick("editor-invite-user", () => void createInvitation("single"));
 elements.invite_regenerate.addEventListener("click", () => void createInvitation());
 elements.invite_single.addEventListener("click", () => void createInvitation("single"));
 elements.invite_reusable.addEventListener("click", () => void createInvitation("reusable"));
+elements.invite_external.addEventListener("click", () => void createInvitation(invitationMode, "external"));
+elements.invite_internal.addEventListener("click", () => void createInvitation(invitationMode, "internal"));
 elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_done.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_dialog.addEventListener("cancel", (event: Event) => {
@@ -4265,8 +4307,11 @@ async function routeApp() {
   const invitationToken = routeInvitationToken();
   if (invitationToken) {
     try {
-      const result = await request<{ invitation: { invitedBy: string } }>(`v1/invitations/${encodeURIComponent(invitationToken)}`);
-      showAuthPage("register", `Invited by ${result.invitation.invitedBy}. Choose an account to join the core team.`);
+      const result = await request<{ invitation: { invitedBy: string; userType: InvitationUserType } }>(`v1/invitations/${encodeURIComponent(invitationToken)}`);
+      const accountDescription = result.invitation.userType === "internal"
+        ? "This internal account can create projects and invite users."
+        : "This external account can create and manage its own projects.";
+      showAuthPage("register", `Invited by ${result.invitation.invitedBy}. ${accountDescription}`);
     } catch (error) {
       showAuthPage("register", error.message);
       elements.auth_submit.disabled = true;

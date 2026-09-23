@@ -3,12 +3,17 @@ import { z } from "zod";
 export const usernameSchema = z.string().trim().min(1).max(64);
 export const passwordSchema = z.string().min(10).max(1024);
 export const projectNameSchema = z.string().trim().min(1).max(120);
+export const userTypeSchema = z.enum(["internal", "external"]);
 
 export const loginRequestSchema = z.strictObject({ username: usernameSchema, password: z.string() });
 export const registerRequestSchema = z.strictObject({ token: z.string().min(1), username: usernameSchema, password: passwordSchema });
-export const createInvitationRequestSchema = z.strictObject({ reusable: z.boolean().default(false) });
+export const createInvitationRequestSchema = z.strictObject({
+  reusable: z.boolean().default(false),
+  userType: userTypeSchema.default("external"),
+});
 export const updateProfileRequestSchema = z.strictObject({ displayName: z.string().trim().min(1).max(80) });
 export const adminResetPasswordRequestSchema = z.strictObject({ password: passwordSchema });
+export const adminUpdateUserTypeRequestSchema = z.strictObject({ userType: userTypeSchema });
 export const createProjectRequestSchema = z.strictObject({ name: projectNameSchema });
 export const updateProjectRequestSchema = createProjectRequestSchema;
 export const projectTagsRequestSchema = z.strictObject({
@@ -22,7 +27,12 @@ export const settingsRequestSchema = z.strictObject({
 });
 export const compileRequestSchema = z.strictObject({ main: z.string().optional() });
 
-export const currentUserSchema = z.object({ username: z.string(), displayName: z.string(), isAdmin: z.boolean().default(false) });
+export const currentUserSchema = z.object({
+  username: z.string(),
+  displayName: z.string(),
+  isAdmin: z.boolean().default(false),
+  userType: userTypeSchema.default("external"),
+});
 export const projectFileSchema = z.object({ path: z.string(), size: z.number(), text: z.boolean() });
 export const editorSettingsSchema = z.object({ main: z.string(), autoCompile: z.boolean(), compiler: z.string() });
 export const projectSummarySchema = z.object({

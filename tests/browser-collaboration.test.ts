@@ -451,6 +451,7 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#invite-user").click();
     await page.locator("#invite-dialog").waitFor();
     assert.equal(await page.locator("#invite-single").getAttribute("aria-checked"), "true");
+    assert.equal(await page.locator("#invite-external").getAttribute("aria-checked"), "true");
     assert.match(await page.locator("#invite-description").textContent(), /one account/);
     const defaultInvitationLink = await page.locator("#invite-link").inputValue();
     await page.locator("#invite-reusable").click();
@@ -458,6 +459,12 @@ test("login, invitations, and capability links separate members from guests", as
     assert.equal(await page.locator("#invite-reusable").getAttribute("aria-checked"), "true");
     assert.match(await page.locator("#invite-description").textContent(), /multiple accounts/);
     const reusableInvitationLink = await page.locator("#invite-link").inputValue();
+    await page.locator("#invite-internal").click();
+    await page.waitForFunction(previous => (document.querySelector("#invite-link") as HTMLInputElement).value !== previous, reusableInvitationLink);
+    assert.equal(await page.locator("#invite-internal").getAttribute("aria-checked"), "true");
+    assert.match(await page.locator("#invite-description").textContent(), /invite other users/);
+    await page.locator("#invite-external").click();
+    await page.waitForFunction(() => document.querySelector("#invite-external")?.getAttribute("aria-checked") === "true");
     await page.locator("#invite-single").click();
     await page.waitForFunction(previous => (document.querySelector("#invite-link") as HTMLInputElement).value !== previous, reusableInvitationLink);
     const invitationLink = await page.locator("#invite-link").inputValue();
@@ -528,13 +535,14 @@ test("login, invitations, and capability links separate members from guests", as
     const invited = await browser.newPage();
     await invited.goto(invitationLink);
     await invited.locator("#auth-page").waitFor();
-    assert.equal(await invited.locator("#auth-title").textContent(), "Join the team");
+    assert.equal(await invited.locator("#auth-title").textContent(), "Create your account");
     await invited.locator("#auth-username").fill("browser.member");
     await invited.locator("#auth-password").fill("browser member password");
     await invited.locator("#auth-submit").click();
     await invited.locator("#projects-page").waitFor();
     assert.equal(await invited.locator("#current-user").textContent(), "browser.member");
     assert.equal(await invited.locator("#new-project").isVisible(), true);
+    assert.equal(await invited.locator("#invite-user").isHidden(), true);
     assert.equal(await invited.locator("#admin-button").isHidden(), true);
     assert.equal(await invited.locator(".project-row").count(), 0);
 

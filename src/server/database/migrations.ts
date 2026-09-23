@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 12;
+export const LATEST_SCHEMA_VERSION = 13;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -258,6 +258,22 @@ const migrations: Migration[] = [
       database.exec(`
         UPDATE users SET is_admin = 1 WHERE username = 'admin' AND invited_by IS NULL;
         CREATE INDEX IF NOT EXISTS users_admin_status_idx ON users(is_admin, deleted_at, created_at);
+      `);
+    },
+  },
+  {
+    version: 13,
+    name: "internal and external users",
+    up(database) {
+      if (!hasColumn(database, "users", "user_type")) {
+        database.exec("ALTER TABLE users ADD COLUMN user_type TEXT NOT NULL DEFAULT 'internal' CHECK (user_type IN ('internal', 'external'));");
+      }
+      if (!hasColumn(database, "invitations", "user_type")) {
+        database.exec("ALTER TABLE invitations ADD COLUMN user_type TEXT NOT NULL DEFAULT 'internal' CHECK (user_type IN ('internal', 'external'));");
+      }
+      database.exec(`
+        UPDATE users SET user_type = 'internal';
+        CREATE INDEX IF NOT EXISTS users_type_status_idx ON users(user_type, deleted_at, created_at);
       `);
     },
   },
