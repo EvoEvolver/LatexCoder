@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { chromium, type Page } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 
 import { createPaperServer } from "../src/server/main.ts";
 
@@ -68,6 +68,45 @@ const references = String.raw`@article{collaboration2026,
 
 const wait = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+async function installCursor(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const cursor = document.createElement("div");
+    cursor.id = "demo-cursor";
+    cursor.innerHTML = `
+      <svg viewBox="0 0 28 36" aria-hidden="true">
+        <path d="M3 2.5V29l7.1-6 5 10.4 5-2.4-5-10.3H25L3 2.5Z" />
+      </svg>`;
+    document.body.append(cursor);
+  });
+}
+
+async function moveCursor(target: Locator, duration = 520): Promise<void> {
+  await target.waitFor({ state: "visible" });
+  const box = await target.boundingBox();
+  if (!box) throw new Error("Cannot move the demo cursor to a hidden target");
+  const x = Math.round(box.x + box.width / 2);
+  const y = Math.round(box.y + box.height / 2);
+  await target.evaluate((element, { x, y, duration }) => {
+    const cursor = document.getElementById("demo-cursor");
+    if (!cursor) throw new Error("Demo cursor is not installed");
+    const surface = element.closest("dialog") || document.body;
+    if (cursor.parentElement !== surface) surface.append(cursor);
+    cursor.style.setProperty("--cursor-duration", `${duration}ms`);
+    cursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    cursor.classList.add("visible");
+  }, { x, y, duration });
+  await wait(duration + 80);
+}
+
+async function demoClick(target: Locator): Promise<void> {
+  await moveCursor(target);
+  await target.page().evaluate(() => document.getElementById("demo-cursor")?.classList.add("clicking"));
+  await wait(110);
+  await target.click();
+  await wait(120);
+  await target.page().evaluate(() => document.getElementById("demo-cursor")?.classList.remove("clicking"));
+}
+
 async function caption(page: Page, eyebrow: string, title: string, detail: string, duration = 3200): Promise<void> {
   await page.evaluate(({ eyebrow, title, detail }) => {
     document.getElementById("demo-caption")?.remove();
@@ -87,6 +126,7 @@ async function caption(page: Page, eyebrow: string, title: string, detail: strin
 
 async function splash(page: Page, closing = false): Promise<void> {
   await page.evaluate(closing => {
+    document.getElementById("demo-cursor")?.classList.remove("visible");
     document.getElementById("demo-splash")?.remove();
     const logo = document.querySelector<HTMLImageElement>(".brand img, #editor-about img")?.src || "";
     const panel = document.createElement("div");
@@ -102,6 +142,7 @@ async function splash(page: Page, closing = false): Promise<void> {
   if (!closing) {
     await page.evaluate(() => document.getElementById("demo-splash")?.classList.remove("visible"));
     await wait(500);
+    await page.evaluate(() => document.getElementById("demo-cursor")?.classList.add("visible"));
   }
 }
 
@@ -168,47 +209,59 @@ async function main(): Promise<void> {
       #demo-splash img { width: 112px; height: 112px; object-fit: contain; }
       #demo-splash h1 { max-width: 900px; margin: 22px 32px 0; text-align: center; font-family: Georgia, serif; font-size: 44px; letter-spacing: 0; }
       #demo-splash p { margin: 12px 24px 0; color: #637068; font-size: 18px; }
+      #demo-cursor { --cursor-duration: 520ms; position: fixed; left: -4px; top: -3px; z-index: 10001; width: 28px; height: 36px; opacity: 0; transform: translate3d(1180px, 110px, 0); transition: transform var(--cursor-duration) cubic-bezier(.22,.78,.24,1), opacity .18s ease; pointer-events: none; }
+      #demo-cursor.visible { opacity: 1; }
+      #demo-cursor svg { display: block; width: 28px; height: 36px; overflow: visible; filter: drop-shadow(0 2px 2px rgba(0,0,0,.34)); transform-origin: 4px 4px; transition: transform .1s ease; }
+      #demo-cursor path { fill: #fff; stroke: #111; stroke-width: 1.7; stroke-linejoin: round; }
+      #demo-cursor::after { content: ""; position: absolute; left: -7px; top: -7px; width: 20px; height: 20px; border: 2px solid rgba(0, 112, 78, .72); border-radius: 50%; opacity: 0; transform: scale(.35); transition: opacity .1s ease, transform .22s ease; }
+      #demo-cursor.clicking svg { transform: scale(.82); }
+      #demo-cursor.clicking::after { opacity: 1; transform: scale(1.25); }
       #clone-command { color: transparent !important; text-shadow: 0 0 8px rgba(24,32,27,.5); }
     ` });
+    await installCursor(page);
 
     await splash(page);
     await caption(page, "Projects", "Keep every paper organized", "Search by title or tag, archive projects personally, and open the entire row.", 3400);
-    await page.locator("#project-search").fill("Research");
+    const projectSearch = page.locator("#project-search");
+    await demoClick(projectSearch);
+    await projectSearch.pressSequentially("Research", { delay: 75 });
     await wait(1600);
-    await page.locator("#project-search").fill("");
+    await projectSearch.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await projectSearch.press("Backspace");
     await wait(700);
-    await page.locator(".project-row", { hasText: "Collaborative Research Notes" }).click();
+    await demoClick(page.locator(".project-row", { hasText: "Collaborative Research Notes" }));
     await page.locator("#editor-page").waitFor();
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     await page.locator("#pdf-document canvas").first().waitFor();
 
     await caption(page, "Source + PDF", "Write and preview side by side", "Resizable panes keep files, source, and the compiled paper in one professional workspace.", 4200);
-    await page.locator('.tree-item[data-path="sections"] > .tree-row').click();
-    await page.locator('.file-row[title="sections/method.tex"]').click();
+    await demoClick(page.locator('.tree-item[data-path="sections"] > .tree-row'));
+    await demoClick(page.locator('.file-row[title="sections/method.tex"]'));
     await wait(1700);
-    await page.getByRole("tab", { name: "main.tex", exact: true }).click();
+    await demoClick(page.getByRole("tab", { name: "main.tex", exact: true }));
     await wait(700);
 
-    await page.locator("#toggle-review").click();
+    await demoClick(page.locator("#toggle-review"));
     await page.locator("#review-list .review-item").first().waitFor();
     await caption(page, "Review", "Comments and tracked suggestions", "Discuss, reply, accept, or reject changes across the whole project.", 4300);
-    await page.locator("#close-review").click();
+    await demoClick(page.locator("#close-review"));
 
-    await page.locator("#collaborate-menu").click();
+    await demoClick(page.locator("#collaborate-menu"));
     await caption(page, "Collaboration", "Share with View or Edit access", "Invite registered collaborators or send a protected project link to a guest.", 3600);
     await page.keyboard.press("Escape");
 
-    await page.locator("#history-menu").click();
-    await page.locator("#toggle-blame").click();
+    await demoClick(page.locator("#history-menu"));
+    await demoClick(page.locator("#toggle-blame"));
     await page.locator(".cm-blame-author").first().waitFor();
     await caption(page, "Attribution", "See who wrote every range", "Blame follows collaborative text and connects authorship to project checkpoints.", 3600);
-    await page.locator("#history-menu").click();
-    await page.locator("#git-button").click();
+    await demoClick(page.locator("#history-menu"));
+    await demoClick(page.locator("#git-button"));
     await page.locator("#git-history .version-row").first().waitFor();
+    await moveCursor(page.locator("#history-restore"));
     await caption(page, "History", "Inspect and restore persistent versions", "Browse per-file diffs and restore one file or the complete paper without rewriting history.", 3900);
-    await page.locator("#git-close").click();
-    await page.locator("#history-menu").click();
-    await page.locator("#toggle-blame").click();
+    await demoClick(page.locator("#git-close"));
+    await demoClick(page.locator("#history-menu"));
+    await demoClick(page.locator("#toggle-blame"));
 
     await page.evaluate(() => {
       const state = (window as Window & { __paperE2E?: { state: { view: { state: { doc: { toString(): string } }; dispatch(spec: unknown): void; focus(): void } } } }).__paperE2E?.state;
@@ -219,17 +272,18 @@ async function main(): Promise<void> {
       state.view.focus();
     });
     await wait(700);
-    await page.locator("#compile-button").click();
+    await demoClick(page.locator("#compile-button"));
     await page.locator("#first-fatal-error").waitFor();
     await caption(page, "Log", "Find the first fatal error immediately", "Structured diagnostics jump from the compiler output back to the exact source line.", 4800);
-    await page.locator("#first-fatal-error").click();
+    await demoClick(page.locator("#first-fatal-error"));
     await wait(1200);
 
-    await page.locator("#collaborate-menu").click();
-    await page.locator("#collaborate-git").click();
+    await demoClick(page.locator("#collaborate-menu"));
+    await demoClick(page.locator("#collaborate-git"));
     await page.locator("#git-access-dialog").waitFor();
+    await moveCursor(page.locator("#copy-clone-command"));
     await caption(page, "Git", "Clone, pull, and push normally", "Each project is a real repository; live browser edits are checkpointed before Git clients pull.", 4000);
-    await page.locator("#git-access-close").click();
+    await demoClick(page.locator("#git-access-close"));
 
     await splash(page, true);
     const video = page.video();
