@@ -1,5 +1,5 @@
 import { apiError, cleanDisplayName, cleanUsername, passwordMatches, passwordRecord, randomToken, sessionCookie, sha256, validatePassword } from "../core.ts";
-import { loginRequestSchema, registerRequestSchema, updateProfileRequestSchema } from "../../shared/api-schema.ts";
+import { createInvitationRequestSchema, loginRequestSchema, registerRequestSchema, updateProfileRequestSchema } from "../../shared/api-schema.ts";
 import type { ZodType } from "zod";
 import type { AuthRouteContext, RouteApp } from "./types.ts";
 
@@ -9,6 +9,10 @@ function parseBody<T>(schema: ZodType<T>, value: unknown): T {
   throw apiError("invalid_request", "request body is invalid", 400, {
     issues: result.error.issues.map(issue => ({ path: issue.path.join("."), message: issue.message })),
   });
+}
+
+function invitationIsValid(invitation: ReturnType<AuthRouteContext["database"]["getInvitation"]>): boolean {
+  return Boolean(invitation && invitation.expiresAt > Date.now() && (invitation.reusable || !invitation.usedAt));
 }
 
 export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): void {
@@ -59,14 +63,14 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
   app.get("/v1/invitations/:token", (request, response, next) => {
     try {
       const invitation = database.getInvitation(sha256(String(request.params.token || "")));
-      const valid = invitation && !invitation.usedAt && invitation.expiresAt > Date.now();
-      if (!valid) throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
-      response.json({ invitation: { invitedBy: invitation.createdBy, expiresAt: new Date(invitation.expiresAt).toISOString() } });
+      if (!invitationIsValid(invitation)) throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
+      response.json({ invitation: { invitedBy: invitation!.createdBy, expiresAt: new Date(invitation!.expiresAt).toISOString(), reusable: invitation!.reusable } });
     } catch (error) { next(error); }
   });
-  app.post("/v1/invitations", (request, response, next) => {
+  app.post("/v1/invitations", json({ limit: "1kb" }), (request, response, next) => {
     try {
       const user = context.requireUser(request);
+      const { reusable } = parseBody(createInvitationRequestSchema, request.body ?? {});
       const token = randomToken();
       const createdAt = new Date();
       database.createInvitation({
@@ -74,8 +78,9 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
         createdBy: user.username,
         createdAt: createdAt.toISOString(),
         expiresAt: createdAt.getTime() + context.invitationSeconds * 1000,
+        reusable,
       });
-      response.status(201).json({ invitation: { token, path: `/register/${token}` } });
+      response.status(201).json({ invitation: { token, path: `/register/${token}`, reusable } });
     } catch (error) { next(error); }
   });
   app.post("/v1/auth/register", json({ limit: "16kb" }), (request, response, next) => {
@@ -83,7 +88,7 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       const body = parseBody(registerRequestSchema, request.body);
       const tokenHash = sha256(body.token);
       const invitation = database.getInvitation(tokenHash);
-      if (!invitation || invitation.usedAt || invitation.expiresAt <= Date.now()) {
+      if (!invitationIsValid(invitation)) {
         throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
       }
       const username = cleanUsername(body.username);
@@ -92,11 +97,11 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       const createdAt = new Date().toISOString();
       database.transaction(() => {
         const current = database.getInvitation(tokenHash);
-        if (!current || current.usedAt || current.expiresAt <= Date.now()) {
+        if (!invitationIsValid(current)) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
         database.createUser({ username, displayName: username, ...passwordRecord(password), createdAt, invitedBy: current.createdBy });
-        if (!database.consumeInvitation(tokenHash, username, createdAt)) {
+        if (!current!.reusable && !database.consumeInvitation(tokenHash, username, createdAt)) {
           throw apiError("invitation_invalid", "invitation is invalid or expired", 404);
         }
       });

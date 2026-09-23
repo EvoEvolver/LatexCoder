@@ -17,6 +17,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
   const legacy = new DatabaseSync(filename);
   legacy.exec(`
     CREATE TABLE users (username TEXT PRIMARY KEY, password_salt TEXT, password_hash TEXT, created_at TEXT, invited_by TEXT);
+    CREATE TABLE invitations (token_hash TEXT PRIMARY KEY, created_by TEXT, created_at TEXT, expires_at INTEGER, used_at TEXT, used_by TEXT);
     CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, owner_username TEXT, share_token TEXT, created_at TEXT, git_state_json TEXT);
     CREATE TABLE project_members (project_id TEXT, username TEXT, role TEXT, joined_at INTEGER, PRIMARY KEY (project_id, username));
     CREATE TABLE project_shares (id TEXT PRIMARY KEY, project_id TEXT, token_hash TEXT, created_at INTEGER);
@@ -28,7 +29,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
 
   const database = new StateDatabase(stateDir);
   try {
-    assert.equal(database.schemaVersion(), 10);
+    assert.equal(database.schemaVersion(), 11);
     assert.equal(database.ping(), true);
     const upgraded = new DatabaseSync(filename, { readOnly: true });
     try {
@@ -42,6 +43,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
       assert.ok(columns("project_shares").includes("view_token_hash"));
       assert.ok(columns("project_sessions").includes("access_mode"));
       assert.ok(columns("project_members").includes("archived"));
+      assert.ok(columns("invitations").includes("reusable"));
       assert.deepEqual(columns("project_tags"), ["project_id", "tag", "created_at"]);
     } finally {
       upgraded.close();
@@ -92,7 +94,7 @@ test("health endpoints distinguish liveness and readiness", async () => {
     const ready = await readyResponse.json();
     assert.equal(readyResponse.status, 200);
     assert.equal(ready.status, "ready");
-    assert.equal(ready.schemaVersion, 10);
+    assert.equal(ready.schemaVersion, 11);
     assert.deepEqual(ready.queue, { active: 0, queued: 0, concurrency: 2, accepting: true });
     assert.equal(typeof ready.dependencies.git.available, "boolean");
   } finally {

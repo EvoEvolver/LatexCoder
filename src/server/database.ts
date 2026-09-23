@@ -137,14 +137,15 @@ export class StateDatabase {
       expiresAt: Number(row.expires_at),
       usedAt: row.used_at as string | null,
       usedBy: row.used_by as string | null,
+      reusable: Boolean(row.reusable),
     };
   }
 
-  createInvitation(invitation: { tokenHash: string; createdBy: string; createdAt: string; expiresAt: number }) {
+  createInvitation(invitation: { tokenHash: string; createdBy: string; createdAt: string; expiresAt: number; reusable: boolean }) {
     this.db.prepare(`
-      INSERT INTO invitations (token_hash, created_by, created_at, expires_at)
-      VALUES (?, ?, ?, ?)
-    `).run(invitation.tokenHash, invitation.createdBy, invitation.createdAt, invitation.expiresAt);
+      INSERT INTO invitations (token_hash, created_by, created_at, expires_at, reusable)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(invitation.tokenHash, invitation.createdBy, invitation.createdAt, invitation.expiresAt, Number(invitation.reusable));
   }
 
   consumeInvitation(tokenHash: string, username: string, usedAt: string) {

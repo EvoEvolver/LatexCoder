@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 10;
+export const LATEST_SCHEMA_VERSION = 11;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -236,6 +236,15 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS project_tags_tag_idx ON project_tags(tag COLLATE NOCASE, project_id);
         CREATE INDEX IF NOT EXISTS project_members_archive_idx ON project_members(username, archived, joined_at);
       `);
+    },
+  },
+  {
+    version: 11,
+    name: "reusable invitations",
+    up(database) {
+      if (!hasColumn(database, "invitations", "reusable")) {
+        database.exec("ALTER TABLE invitations ADD COLUMN reusable INTEGER NOT NULL DEFAULT 0 CHECK (reusable IN (0, 1));");
+      }
     },
   },
 ];

@@ -184,6 +184,25 @@ test("invite-only users and project capability sessions enforce access boundarie
     });
     assert.equal(reused.status, 404);
 
+    const reusableInvitationResponse = await fetch(`${base}/v1/invitations`, {
+      method: "POST",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ reusable: true }),
+    });
+    assert.equal(reusableInvitationResponse.status, 201);
+    const reusableInvitation = (await reusableInvitationResponse.json()).invitation;
+    assert.equal(reusableInvitation.reusable, true);
+    const reusableDetails = await (await fetch(`${base}${reusableInvitation.path}`.replace("/register/", "/v1/invitations/"))).json();
+    assert.equal(reusableDetails.invitation.reusable, true);
+    for (const username of ["reusable.one", "reusable.two"]) {
+      const reusableRegistration = await fetch(`${base}/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: reusableInvitation.token, username, password: "another secure password" }),
+      });
+      assert.equal(reusableRegistration.status, 201);
+    }
+
     const memberProjectsBeforeCreate = await fetch(`${base}/v1/projects`, { headers: { Cookie: memberCookie } });
     assert.deepEqual((await memberProjectsBeforeCreate.json()).projects, []);
     assert.equal((await fetch(`${base}/v1/project?project=${initialProject}`, { headers: { Cookie: memberCookie } })).status, 401);
@@ -410,8 +429,8 @@ test("invite-only users and project capability sessions enforce access boundarie
 
     const database = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
     const users = database.prepare("SELECT username, display_name, password_hash FROM users ORDER BY username").all() as any[];
-    assert.deepEqual(users.map(user => user.username), ["admin", "member.one"]);
-    assert.deepEqual(users.map(user => user.display_name), ["Admin Editor", "member.one"]);
+    assert.deepEqual(users.map(user => user.username), ["admin", "member.one", "reusable.one", "reusable.two"]);
+    assert.deepEqual(users.map(user => user.display_name), ["Admin Editor", "member.one", "reusable.one", "reusable.two"]);
     assert.ok(users.every(user => user.password_hash && user.password_hash !== adminPassword && user.password_hash !== "another secure password"));
     const storedProject = database.prepare("SELECT owner_username FROM projects WHERE id = ?").get(project.id) as any;
     assert.equal(storedProject.owner_username, "member.one");

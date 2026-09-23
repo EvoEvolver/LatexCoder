@@ -181,7 +181,7 @@ const elementIds = [
   "active-file-label", "add-comment", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
-  "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
+  "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-file-list",
@@ -228,6 +228,9 @@ const elements = createElementRegistry(elementIds, {
   git_commit: HTMLButtonElement,
   git_refresh: HTMLButtonElement,
   git_resolve: HTMLButtonElement,
+  invite_regenerate: HTMLButtonElement,
+  invite_reusable: HTMLButtonElement,
+  invite_single: HTMLButtonElement,
   refresh_structure: HTMLButtonElement,
 });
 
@@ -3176,13 +3179,38 @@ async function enterProjectDashboard(replace = false) {
   showProjectsPage(false);
 }
 
-async function createInvitation() {
+type InvitationMode = "single" | "reusable";
+let invitationMode: InvitationMode = "single";
+let invitationRequestVersion = 0;
+
+function syncInvitationMode(): void {
+  for (const [button, mode] of [[elements.invite_single, "single"], [elements.invite_reusable, "reusable"]] as const) {
+    const selected = invitationMode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", String(selected));
+  }
+  elements.invite_description.textContent = invitationMode === "single"
+    ? "This link can register one account and expires in seven days. The new user can manage projects and invite others."
+    : "This link can register multiple accounts for seven days. New users can manage projects and invite others.";
+}
+
+async function createInvitation(mode: InvitationMode = invitationMode): Promise<void> {
+  invitationMode = mode;
+  const requestVersion = ++invitationRequestVersion;
+  syncInvitationMode();
   try {
-    const result = await request<{ invitation: { path: string } }>("v1/invitations", { method: "POST" });
+    const result = await request<{ invitation: { path: string } }>("v1/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reusable: mode === "reusable" }),
+    });
+    if (requestVersion !== invitationRequestVersion) return;
     elements.invite_link.value = `${window.location.origin}${result.invitation.path}`;
     if (!elements.invite_dialog.open) elements.invite_dialog.showModal();
     elements.invite_link.select();
-  } catch (error) { showToast(error.message); }
+  } catch (error) {
+    if (requestVersion === invitationRequestVersion) showToast(error.message);
+  }
 }
 
 elements.display_name.value = localStorage.getItem("paper-display-name") || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
@@ -3281,9 +3309,11 @@ elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret()
   showToast(error.message);
   if (!elements.access_secret_dialog.open) elements.access_secret_dialog.showModal();
 }));
-elements.invite_user.addEventListener("click", createInvitation);
-onDynamicClick("editor-invite-user", createInvitation);
-elements.invite_regenerate.addEventListener("click", createInvitation);
+elements.invite_user.addEventListener("click", () => void createInvitation("single"));
+onDynamicClick("editor-invite-user", () => void createInvitation("single"));
+elements.invite_regenerate.addEventListener("click", () => void createInvitation());
+elements.invite_single.addEventListener("click", () => void createInvitation("single"));
+elements.invite_reusable.addEventListener("click", () => void createInvitation("reusable"));
 elements.invite_close.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_done.addEventListener("click", () => elements.invite_dialog.close());
 elements.invite_dialog.addEventListener("cancel", (event: Event) => {

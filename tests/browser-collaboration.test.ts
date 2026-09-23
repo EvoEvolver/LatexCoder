@@ -439,6 +439,16 @@ test("login, invitations, and capability links separate members from guests", as
 
     await page.locator("#invite-user").click();
     await page.locator("#invite-dialog").waitFor();
+    assert.equal(await page.locator("#invite-single").getAttribute("aria-checked"), "true");
+    assert.match(await page.locator("#invite-description").textContent(), /one account/);
+    const defaultInvitationLink = await page.locator("#invite-link").inputValue();
+    await page.locator("#invite-reusable").click();
+    await page.waitForFunction(previous => (document.querySelector("#invite-link") as HTMLInputElement).value !== previous, defaultInvitationLink);
+    assert.equal(await page.locator("#invite-reusable").getAttribute("aria-checked"), "true");
+    assert.match(await page.locator("#invite-description").textContent(), /multiple accounts/);
+    const reusableInvitationLink = await page.locator("#invite-link").inputValue();
+    await page.locator("#invite-single").click();
+    await page.waitForFunction(previous => (document.querySelector("#invite-link") as HTMLInputElement).value !== previous, reusableInvitationLink);
     const invitationLink = await page.locator("#invite-link").inputValue();
     assert.match(invitationLink, new RegExp(`^${base}/register/[A-Za-z0-9_-]+$`));
     await page.locator("#invite-close").click();

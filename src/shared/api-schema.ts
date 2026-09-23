@@ -6,6 +6,7 @@ export const projectNameSchema = z.string().trim().min(1).max(120);
 
 export const loginRequestSchema = z.strictObject({ username: usernameSchema, password: z.string() });
 export const registerRequestSchema = z.strictObject({ token: z.string().min(1), username: usernameSchema, password: passwordSchema });
+export const createInvitationRequestSchema = z.strictObject({ reusable: z.boolean().default(false) });
 export const updateProfileRequestSchema = z.strictObject({ displayName: z.string().trim().min(1).max(80) });
 export const createProjectRequestSchema = z.strictObject({ name: projectNameSchema });
 export const updateProjectRequestSchema = createProjectRequestSchema;

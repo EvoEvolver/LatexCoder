@@ -498,8 +498,9 @@ LaTeX Coder is a filesystem-backed collaborative LaTeX editor for trusted teams.
 ## Projects
 
 \`GET /v1/auth/me\` returns the current member. Members sign in through
-\`POST /v1/auth/login\`. \`POST /v1/invitations\` creates a single-use,
-seven-day registration link; invited users register through
+\`POST /v1/auth/login\`. \`POST /v1/invitations\` creates a seven-day
+registration link; it is single-use by default, or reusable when sent
+\`{"reusable":true}\`. Invited users register through
 \`POST /v1/auth/register\`.
 
 Member authentication is required for \`GET /v1/projects\` and project creation.

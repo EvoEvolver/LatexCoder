@@ -116,7 +116,8 @@ LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' pnpm start
 Open <http://127.0.0.1:8090>. On an empty data directory, sign in as `admin`
 with `LATEXCODER_ADMIN_PASSWORD`. The password must contain at least 10
 characters and is used only to create the first account. Existing users can
-then issue single-use registration links, which expire after seven days.
+then issue registration links that expire after seven days. Links are
+single-use by default and can optionally remain reusable until they expire.
 
 For local development:
 
