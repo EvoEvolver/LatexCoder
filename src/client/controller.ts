@@ -184,7 +184,7 @@ const elementIds = [
   "copy-invite-link", "current-user", "invite-close", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
-  "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-dirty", "git-file-list",
+  "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
 ] as const;
@@ -1792,7 +1792,6 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       }
       if (update.docChanged) {
         queueReviewRender();
-        elements.git_dirty.hidden = false;
         markPdfStale();
         state.compileDiagnostics = state.compileDiagnostics.filter(diagnostic => diagnostic.path !== state.activeFile);
         scheduleStaticDiagnostics();
@@ -2983,7 +2982,6 @@ setInterval(() => {
 
 function renderGitStatus(gitState: GitState): void {
   state.git = gitState;
-  elements.git_dirty.hidden = !gitState.dirty;
   elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"}`;
   elements.git_change_count.textContent = String(gitState.files.length);
   elements.git_file_list.replaceChildren();

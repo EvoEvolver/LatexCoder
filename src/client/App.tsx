@@ -169,7 +169,7 @@ export function AppShell() {
             </DropdownMenu>
 
             <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild><Button id="history-menu" className="h-7 gap-1.5 rounded px-2 text-xs font-medium" variant="ghost">History<span id="git-dirty" className="git-dirty size-1.5 rounded-full bg-amber-600" hidden /></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button id="history-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">History</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuLabel>Version control</DropdownMenuLabel>
                 <DropdownMenuItem id="git-button"><Icon name="git-branch" />Version History…</DropdownMenuItem>
