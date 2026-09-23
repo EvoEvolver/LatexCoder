@@ -8,3 +8,6 @@ public/pdf.worker.min.mjs
 # Local browser validation artifacts
 output/playwright/
 .playwright-cli/
+
+# Generated feature-tour videos stay local.
+/docs/videos/*.mp4
