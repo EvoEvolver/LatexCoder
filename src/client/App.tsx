@@ -154,6 +154,22 @@ export function AppShell() {
         </main>
       </div>
 
+      <div id="share-confirm-page" className="grid min-h-dvh place-items-center bg-muted/60 p-6" hidden>
+        <main className="w-full max-w-md space-y-5">
+          <div className="flex justify-center"><Brand prominent /></div>
+          <Card>
+            <CardHeader className="pb-4">
+              <h1 id="share-confirm-title" className="font-serif text-2xl font-semibold">Join project?</h1>
+              <p id="share-confirm-project" className="text-base font-medium" />
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <p id="share-confirm-description" className="text-sm leading-relaxed text-muted-foreground" />
+              <div className="flex justify-end gap-2"><Button id="share-confirm-cancel" variant="outline" type="button">Back to projects</Button><Button id="share-confirm-submit" type="button"><Icon name="user-plus" /><span>Join project</span></Button></div>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+
       <div id="projects-page" className="projects-page min-h-dvh overflow-auto bg-muted/40" hidden>
         <header className="projects-header flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-65rem)/2))]">
           <button id="projects-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder" aria-haspopup="dialog"><Brand /></button>

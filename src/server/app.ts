@@ -521,8 +521,9 @@ and clean editor URLs. A guest first opens \`/share/<project-id>/<secret>\` to
 establish a project-scoped session. That session authorizes only the selected
 project and does not expose the owner's dashboard. Signing in alone never grants
 access to another member's projects. A signed-in user who opens a valid share
-link joins as a persistent registered collaborator. Each registered member gets
-a different personal secret from \`POST /v1/project/share?project=<id>\`;
+link confirms before joining as a persistent viewer or collaborator. Each
+registered member gets a different personal secret from
+\`POST /v1/project/share?project=<id>\`;
 rotating it does not revoke another member's links or project membership.
 
 Each project's source directory is an independent Git repository whose live

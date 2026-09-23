@@ -526,7 +526,32 @@ test("login, invitations, and capability links separate members from guests", as
     assert.equal(await invited.locator("#new-project").isVisible(), true);
     assert.equal(await invited.locator(".project-row").count(), 0);
 
+    await invited.goto(viewLink);
+    await invited.locator("#share-confirm-page").waitFor();
+    assert.equal(await invited.locator("#share-confirm-title").textContent(), "Add this project?");
+    assert.match(await invited.locator("#share-confirm-description").textContent(), /view-only access/);
+    await invited.locator("#share-confirm-cancel").click();
+    await invited.waitForURL(`${base}/projects`);
+    assert.equal(await invited.locator(".project-row").count(), 0);
+
+    await invited.goto(viewLink);
+    await invited.locator("#share-confirm-submit").click();
+    await invited.waitForURL(`${base}/projects/${projectId}`);
+    await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Viewing live");
+
     await invited.goto(shareLink);
+    await invited.locator("#share-confirm-page").waitFor();
+    assert.equal(await invited.locator("#share-confirm-title").textContent(), "Upgrade project access?");
+    assert.match(await invited.locator("#share-confirm-description").textContent(), /currently have view-only access/);
+    assert.equal((await invited.locator("#share-confirm-submit").textContent()).trim(), "Upgrade access");
+    assert.equal((await invited.locator("#share-confirm-cancel").textContent()).trim(), "Keep view access");
+    await invited.locator("#share-confirm-cancel").click();
+    await invited.waitForURL(`${base}/projects/${projectId}`);
+    await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Viewing live");
+
+    await invited.goto(shareLink);
+    await invited.locator("#share-confirm-page").waitFor();
+    await invited.locator("#share-confirm-submit").click();
     await invited.waitForURL(`${base}/projects/${projectId}`);
     await invited.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     assert.equal(await invited.locator("#back-projects").isVisible(), true);

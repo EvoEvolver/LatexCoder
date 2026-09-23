@@ -184,6 +184,7 @@ const elementIds = [
   "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
+  "share-confirm-cancel", "share-confirm-description", "share-confirm-page", "share-confirm-project", "share-confirm-submit", "share-confirm-title",
   "git-change-count", "git-close", "git-commit", "git-conflict", "git-conflict-branch", "git-dialog", "git-file-list",
   "git-access-close", "git-access-dialog", "git-access-done", "git-history", "git-message", "git-refresh", "git-resolve", "git-summary",
   "toast", "toggle-files", "toggle-files-column", "toggle-output-column", "upload-input", "selection-actions", "selection-accept", "selection-comment", "structure-document", "structure-list", "structure-pane", "structure-resize", "structure-view", "open-structure", "refresh-structure", "workspace-view-switch",
@@ -233,6 +234,8 @@ const elements = createElementRegistry(elementIds, {
   invite_single: HTMLButtonElement,
   refresh_structure: HTMLButtonElement,
   selection_comment: HTMLButtonElement,
+  share_confirm_cancel: HTMLButtonElement,
+  share_confirm_submit: HTMLButtonElement,
 });
 
 const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-option]")];
@@ -2637,6 +2640,66 @@ function routeInvitationToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function routeProjectShare(): { projectId: string; token: string } | null {
+  const match = window.location.pathname.match(/^\/share\/([^/]+)\/([^/]+)$/);
+  return match ? { projectId: decodeURIComponent(match[1]), token: decodeURIComponent(match[2]) } : null;
+}
+
+type ProjectJoinDetails = {
+  projectId: string;
+  projectName: string;
+  requestedRole: "viewer" | "collaborator";
+  currentRole: "owner" | "viewer" | "collaborator" | null;
+  action: "join" | "upgrade" | "open";
+};
+
+function projectJoinApiPath(share: { projectId: string; token: string }): string {
+  return `v1/project/join/${encodeURIComponent(share.projectId)}/${encodeURIComponent(share.token)}`;
+}
+
+async function enterJoinedProject(projectId: string): Promise<void> {
+  await refreshProjects(projectId);
+  window.history.replaceState({}, "", projectPageUrl(projectId));
+  await openProjectPage(projectId, false);
+}
+
+async function showProjectShareConfirmation(share: { projectId: string; token: string }): Promise<void> {
+  stopProjectEvents();
+  disconnectEditor();
+  elements.auth_page.hidden = true;
+  elements.projects_page.hidden = true;
+  elements.editor_page.hidden = true;
+  elements.share_confirm_page.hidden = false;
+  elements.share_confirm_submit.hidden = false;
+  elements.share_confirm_submit.disabled = true;
+  elements.share_confirm_cancel.textContent = "Back to projects";
+  delete elements.share_confirm_cancel.dataset.projectId;
+  elements.share_confirm_project.textContent = "Checking project access...";
+  elements.share_confirm_description.textContent = "";
+  document.title = "Project invitation · LaTeX Coder";
+  try {
+    const { join } = await request<{ join: ProjectJoinDetails }>(projectJoinApiPath(share));
+    if (join.action === "open") return enterJoinedProject(join.projectId);
+    const upgrading = join.action === "upgrade";
+    elements.share_confirm_title.textContent = upgrading ? "Upgrade project access?" : "Add this project?";
+    elements.share_confirm_project.textContent = join.projectName;
+    elements.share_confirm_description.textContent = upgrading
+      ? "You currently have view-only access. This link grants editing and collaboration access."
+      : join.requestedRole === "viewer"
+        ? "This project will be added to your account with view-only access."
+        : "This project will be added to your account with editing and collaboration access.";
+    elements.share_confirm_submit.querySelector("span")!.textContent = upgrading ? "Upgrade access" : "Add project";
+    elements.share_confirm_cancel.textContent = upgrading ? "Keep view access" : "Back to projects";
+    if (upgrading) elements.share_confirm_cancel.dataset.projectId = join.projectId;
+    elements.share_confirm_submit.disabled = false;
+  } catch (error) {
+    elements.share_confirm_title.textContent = "Link unavailable";
+    elements.share_confirm_project.textContent = "This project could not be opened";
+    elements.share_confirm_description.textContent = error.message;
+    elements.share_confirm_submit.hidden = true;
+  }
+}
+
 let projectEventSource: EventSource | null = null;
 function stopProjectEvents(): void {
   projectEventSource?.close();
@@ -2683,6 +2746,7 @@ function showAuthPage(mode = "login", description = "") {
   disconnectEditor();
   elements.projects_page.hidden = true;
   elements.editor_page.hidden = true;
+  elements.share_confirm_page.hidden = true;
   elements.auth_page.hidden = false;
   elements.auth_error.hidden = true;
   elements.auth_error.textContent = "";
@@ -2715,6 +2779,7 @@ function showProjectsPage(push = true) {
   elements.editor_page.hidden = true;
   elements.projects_page.hidden = false;
   elements.auth_page.hidden = true;
+  elements.share_confirm_page.hidden = true;
   if (push && window.location.pathname !== "/projects") window.history.pushState({}, "", "/projects");
   document.title = "Projects · LaTeX Coder";
   void refreshProjects().catch(error => showToast(error.message));
@@ -2734,6 +2799,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   }
   elements.projects_page.hidden = true;
   elements.auth_page.hidden = true;
+  elements.share_confirm_page.hidden = true;
   elements.editor_page.hidden = false;
   state.projectId = projectId;
   elements.project_name.textContent = project.name;
@@ -3272,6 +3338,27 @@ elements.auth_form.addEventListener("submit", async (event: Event) => {
     elements.auth_error.hidden = false;
   } finally {
     elements.auth_submit.disabled = false;
+  }
+});
+elements.share_confirm_cancel.addEventListener("click", () => {
+  const projectId = elements.share_confirm_cancel.dataset.projectId;
+  if (projectId) {
+    void enterJoinedProject(projectId).catch(error => showToast(error.message));
+    return;
+  }
+  window.history.replaceState({}, "", "/projects");
+  void enterProjectDashboard(false);
+});
+elements.share_confirm_submit.addEventListener("click", async () => {
+  const share = routeProjectShare();
+  if (!share) return;
+  elements.share_confirm_submit.disabled = true;
+  try {
+    const result = await request<{ project: { id: string } }>(projectJoinApiPath(share), { method: "POST" });
+    await enterJoinedProject(result.project.id);
+  } catch (error) {
+    showToast(error.message);
+    elements.share_confirm_submit.disabled = false;
   }
 });
 onDynamicClick("back-projects", () => showProjectsPage());
@@ -3931,6 +4018,15 @@ window.addEventListener("beforeunload", () => {
   resetFilePreview();
 });
 async function routeApp() {
+  const projectShare = routeProjectShare();
+  if (projectShare) {
+    if (!state.user) {
+      showAuthPage("login", "Sign in to add this shared project to your account.");
+      return;
+    }
+    await showProjectShareConfirmation(projectShare);
+    return;
+  }
   const invitationToken = routeInvitationToken();
   if (invitationToken) {
     try {

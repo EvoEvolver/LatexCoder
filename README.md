@@ -26,7 +26,8 @@ stores application state, and every project is a real Git repository on `main`.
 
 - Edit simultaneously with live cursors and presence.
 - Share a project with a View or Edit capability link. Guests do not need an
-  account; signed-in recipients become persistent collaborators.
+  account; signed-in recipients confirm before joining persistently as viewers
+  or collaborators.
 - Comment, reply, and suggest changes inline. Review data is encoded as LaTeX
   macros, so an agent can read and edit it instead of interacting with an
   opaque UI-only review layer.
@@ -139,8 +140,10 @@ is renamed.
 
 Guests enter through `/share/<project-id>/<secret>`. The secret is exchanged for
 a 24-hour, project-scoped HttpOnly session before redirecting to the clean
-project URL. Rotating a collaborator's secret invalidates that person's old
-Browser, Agent, and Git links without affecting other members.
+project URL. Signed-in users see a confirmation page before adding a project or
+upgrading View access to Edit access. Rotating a collaborator's secret
+invalidates that person's old Browser, Agent, and Git links without affecting
+other members.
 
 New projects can be created from ZIP archives. ZIP upload inside an existing
 project adds files without overwriting existing paths. Imports reject path

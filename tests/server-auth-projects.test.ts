@@ -324,7 +324,21 @@ test("invite-only users and project capability sessions enforce access boundarie
     })).status, 401);
 
     const viewJoinResponse = await fetch(`${base}${share.viewPath}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
-    assert.equal(viewJoinResponse.status, 303);
+    assert.equal(viewJoinResponse.status, 200);
+    assert.match(viewJoinResponse.headers.get("content-type"), /^text\/html/);
+    const viewToken = share.viewPath.split("/").at(-1);
+    const viewJoinApi = `${base}/v1/project/join/${project.id}/${viewToken}`;
+    const viewJoinDetails = await (await fetch(viewJoinApi, { headers: { Cookie: adminCookie } })).json();
+    assert.deepEqual(viewJoinDetails.join, {
+      projectId: project.id,
+      projectName: "Shared Capability",
+      requestedRole: "viewer",
+      currentRole: null,
+      action: "join",
+    });
+    const membersBeforeViewConfirmation = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: memberCookie } })).json();
+    assert.deepEqual(membersBeforeViewConfirmation.members.map(member => [member.username, member.role]), [["member.one", "owner"]]);
+    assert.equal((await fetch(viewJoinApi, { method: "POST", headers: { Cookie: adminCookie } })).status, 200);
     const registeredViewerProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
     assert.equal(registeredViewerProject.status, 200);
     assert.deepEqual((await registeredViewerProject.json()).project.permissions, { manage: false, edit: false, collaborate: false });
@@ -337,7 +351,14 @@ test("invite-only users and project capability sessions enforce access boundarie
     assert.deepEqual(viewerMembers.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "viewer"]]);
 
     const joinResponse = await fetch(`${base}${share.editPath}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
-    assert.equal(joinResponse.status, 303);
+    assert.equal(joinResponse.status, 200);
+    const editToken = share.editPath.split("/").at(-1);
+    const editJoinApi = `${base}/v1/project/join/${project.id}/${editToken}`;
+    const editJoinDetails = await (await fetch(editJoinApi, { headers: { Cookie: adminCookie } })).json();
+    assert.equal(editJoinDetails.join.action, "upgrade");
+    assert.equal(editJoinDetails.join.currentRole, "viewer");
+    assert.equal(editJoinDetails.join.requestedRole, "collaborator");
+    assert.equal((await fetch(editJoinApi, { method: "POST", headers: { Cookie: adminCookie } })).status, 200);
     const adminProjectsAfterJoin = await (await fetch(`${base}/v1/projects`, { headers: { Cookie: adminCookie } })).json();
     assert.deepEqual(adminProjectsAfterJoin.projects.map(item => item.id).sort(), [initialProject, project.id].sort());
     await fetch(`${base}/v1/project?project=${initialProject}&opened=1`, { headers: { Cookie: adminCookie } });

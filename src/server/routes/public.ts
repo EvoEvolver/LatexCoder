@@ -2,6 +2,20 @@ import { apiError } from "../core.ts";
 import { listFiles } from "../project-files.ts";
 import type { PublicRouteContext, RouteApp } from "./types.ts";
 
+function shareAccess(context: PublicRouteContext, runtime: Awaited<ReturnType<PublicRouteContext["loadProject"]>>, token: unknown) {
+  const editShare = context.findEditShare(runtime, token);
+  const viewShare = context.findViewShare(runtime, token);
+  const share = editShare || viewShare;
+  if (!share) throw apiError("share_link_invalid", "project share link is invalid", 403);
+  return { share, accessMode: editShare ? "edit" as const : "view" as const };
+}
+
+function joinAction(currentRole: string | null, accessMode: "view" | "edit"): "join" | "upgrade" | "open" {
+  if (!currentRole) return "join";
+  if (currentRole === "viewer" && accessMode === "edit") return "upgrade";
+  return "open";
+}
+
 export function registerPublicRoutes(app: RouteApp, context: PublicRouteContext): void {
   app.get("/v1/project/events", context.streamProjectEvents);
   app.get("/", (request, response) => {
@@ -32,15 +46,44 @@ export function registerPublicRoutes(app: RouteApp, context: PublicRouteContext)
   app.get("/share/:projectId/:token", async (request, response, next) => {
     try {
       const runtime = await context.loadProject(request.params.projectId);
-      const editShare = context.findEditShare(runtime, request.params.token);
-      const viewShare = context.findViewShare(runtime, request.params.token);
-      const share = editShare || viewShare;
-      if (!share) throw apiError("share_link_invalid", "project share link is invalid", 403);
-      const accessMode = editShare ? "edit" : "view";
+      const { share, accessMode } = shareAccess(context, runtime, request.params.token);
       const user = context.currentUser(request);
-      if (user) context.database.addProjectMember(runtime.id, user.username, accessMode === "edit" ? "collaborator" : "viewer");
-      else context.issueProjectSession(request, response, runtime.id, share.id, accessMode);
+      if (user) {
+        const membership = context.database.getProjectMember(runtime.id, user.username);
+        if (joinAction(membership?.role || null, accessMode) !== "open") {
+          response.setHeader("Cache-Control", "no-store");
+          return response.sendFile(`${context.appDir}/dist/index.html`);
+        }
+      } else context.issueProjectSession(request, response, runtime.id, share.id, accessMode);
       response.redirect(303, `/projects/${encodeURIComponent(runtime.id)}`);
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/project/join/:projectId/:token", async (request, response, next) => {
+    try {
+      const user = context.currentUser(request);
+      if (!user) throw apiError("authentication_required", "sign in to add this project to your account", 401);
+      const runtime = await context.loadProject(request.params.projectId);
+      const { accessMode } = shareAccess(context, runtime, request.params.token);
+      const membership = context.database.getProjectMember(runtime.id, user.username);
+      response.json({ join: {
+        projectId: runtime.id,
+        projectName: runtime.metadata.name,
+        requestedRole: accessMode === "edit" ? "collaborator" : "viewer",
+        currentRole: membership?.role || null,
+        action: joinAction(membership?.role || null, accessMode),
+      } });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/project/join/:projectId/:token", async (request, response, next) => {
+    try {
+      const user = context.currentUser(request);
+      if (!user) throw apiError("authentication_required", "sign in to add this project to your account", 401);
+      const runtime = await context.loadProject(request.params.projectId);
+      const { accessMode } = shareAccess(context, runtime, request.params.token);
+      const membership = context.database.getProjectMember(runtime.id, user.username);
+      const action = joinAction(membership?.role || null, accessMode);
+      if (action !== "open") context.database.addProjectMember(runtime.id, user.username, accessMode === "edit" ? "collaborator" : "viewer");
+      response.json({ project: { id: runtime.id, role: context.database.getProjectMember(runtime.id, user.username)!.role }, action });
     } catch (error) { next(error); }
   });
   app.get(["/agent/:projectId/:token", "/agent/:projectId/:token/propose"], async (request, response, next) => {
