@@ -1,7 +1,13 @@
 import { withoutComments } from "./references.ts";
 
 export type SourceRange = { path: string; from: number; to: number };
-export type StructureSummary = { title: string; line: number; range: SourceRange; commandRange: SourceRange };
+export type StructureSummary = {
+  title: string;
+  line: number;
+  range: SourceRange;
+  commandRange: SourceRange;
+  macroRange: SourceRange;
+};
 
 export type StructureInsertion = {
   at: number;
@@ -31,6 +37,7 @@ export type StructurePoint = StructureNodeBase & {
   type: "point";
   kind: "paragraph";
   summaryRange: SourceRange;
+  macroRange: SourceRange;
   children: [];
 };
 
@@ -255,10 +262,28 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
     let localHeading: StructureHeading | null = null;
     let previousParagraph: StructurePoint | null = null;
     let paragraphFloor = 0;
+    let annotationEnd = -1;
+    let annotationGroup: Array<StructureSummary | StructurePoint> = [];
+
+    function addToAnnotationGroup(annotation: StructureSummary | StructurePoint, parsed: ParsedCommand): void {
+      const continues = annotationGroup.length > 0 && clean.slice(annotationEnd, parsed.start).trim() === "";
+      if (!continues) annotationGroup = [];
+      annotationGroup.push(annotation);
+      annotationEnd = parsed.end;
+      const from = annotationGroup[0].commandRange.from;
+      const macroRange = { path: filePath, from, to: parsed.end };
+      for (const member of annotationGroup) member.macroRange = macroRange;
+    }
+
+    function resetAnnotationGroup(): void {
+      annotationEnd = -1;
+      annotationGroup = [];
+    }
 
     for (let index = 0; index < commands.length; index++) {
       const parsed = commands[index];
       if (parsed.command === "input" || parsed.command === "include") {
+        resetAnnotationGroup();
         const child = includedPath(filePath, parsed.argument.value, sources);
         if (child) visit(child);
         paragraphFloor = parsed.end;
@@ -267,6 +292,7 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
       }
 
       if (parsed.level !== null) {
+        resetAnnotationGroup();
         while (headingStack.length && headingStack.at(-1)!.level >= parsed.level) headingStack.pop();
         const nextBoundary = commands.slice(index + 1).find(candidate => candidate.level !== null && candidate.level <= parsed.level)?.start ?? source.length;
         const body = trimRange(source, parsed.end, nextBoundary);
@@ -293,20 +319,30 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
       }
 
       if (parsed.command === "sectiontldr") {
-        if (currentHeading) {
-          currentHeading.summary = {
+        const directlyBelowHeading = Boolean(
+          currentHeading
+          && localHeading === currentHeading
+          && clean.slice(currentHeading.commandRange.to, parsed.start).trim() === "",
+        );
+        if (currentHeading && directlyBelowHeading) {
+          const summary: StructureSummary = {
             title: displayTitle(source.slice(parsed.argument.from, parsed.argument.to)),
             line: lineAt(source, parsed.start),
             range: { path: filePath, from: parsed.argument.from, to: parsed.argument.to },
             commandRange: { path: filePath, from: parsed.start, to: parsed.end },
+            macroRange: { path: filePath, from: parsed.start, to: parsed.end },
           };
+          currentHeading.summary = summary;
+          addToAnnotationGroup(summary, parsed);
           if (localHeading === currentHeading) {
             const nextBoundary = commands.slice(index + 1).find(candidate => candidate.level !== null && candidate.level <= currentHeading!.level)?.start ?? source.length;
             currentHeading.sourceRange = { path: filePath, ...trimRange(source, parsed.end, nextBoundary) };
           }
+          paragraphFloor = parsed.end;
+          previousParagraph = null;
+        } else {
+          resetAnnotationGroup();
         }
-        paragraphFloor = parsed.end;
-        previousParagraph = null;
         continue;
       }
 
@@ -325,10 +361,17 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
         line: lineAt(source, parsed.start),
         commandRange: { path: filePath, from: parsed.start, to: parsed.end },
         summaryRange: { path: filePath, from: parsed.argument.from, to: parsed.argument.to },
+        macroRange: { path: filePath, from: parsed.start, to: parsed.end },
         sourceRange: body,
         children: [],
       };
       append(point);
+      addToAnnotationGroup(point, parsed);
+      if (currentHeading?.summary && annotationGroup[0] === currentHeading.summary && localHeading === currentHeading) {
+        const nextBoundary = commands.slice(index + 1)
+          .find(candidate => candidate.level !== null && candidate.level <= currentHeading!.level)?.start ?? source.length;
+        currentHeading.sourceRange = { path: filePath, ...trimRange(source, parsed.end, nextBoundary) };
+      }
       previousParagraph = point;
     }
     visiting.delete(filePath);

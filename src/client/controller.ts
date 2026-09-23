@@ -98,6 +98,7 @@ import {
   type StructureEntry,
   type StructureHeading,
   type StructureInsertion,
+  type StructurePoint,
   type StructureSummary,
 } from "../shared/structure.ts";
 import type { BuildDiagnostic } from "../shared/compile-errors.ts";
@@ -567,7 +568,7 @@ async function refreshStructure(): Promise<void> {
   try {
     const texFiles = state.files.filter(file => file.text && /\.tex$/i.test(file.path));
     const pairs = await Promise.all(texFiles.map(async file => {
-      if (file.path === state.activeFile && state.view && state.provider?.synced) return [file.path, state.view.state.doc.toString()] as const;
+      if (file.path === state.activeFile && editorSession?.synced) return [file.path, editorSession.text.toString()] as const;
       const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
       if (!response.ok) throw new Error(`Could not read ${file.path}`);
       return [file.path, await response.text()] as const;
@@ -697,7 +698,98 @@ function treeWriterMacroSelection(source: string): { anchor: number; head: numbe
   return open >= 0 && close > open ? { anchor: open + 1, head: close } : undefined;
 }
 
-function treeWriterNode(entry: StructureEntry, depth: number): HTMLElement {
+function sameSourceRange(left: SourceRange, right: SourceRange): boolean {
+  return left.path === right.path && left.from === right.from && left.to === right.to;
+}
+
+function treeWriterTldrList(titles: readonly string[]): HTMLUListElement {
+  const list = document.createElement("ul");
+  list.className = "tree-writer-tldr-list";
+  for (const title of titles) {
+    const item = document.createElement("li");
+    item.textContent = title;
+    list.append(item);
+  }
+  return list;
+}
+
+function treeWriterPointGroup(points: readonly StructurePoint[], depth: number): HTMLElement {
+  const first = points[0];
+  const last = points.at(-1)!;
+  const section = document.createElement("section");
+  section.className = "tree-writer-node tree-writer-tldr-group";
+  section.dataset.treeNode = first.id;
+  section.style.setProperty("--tree-depth", String(Math.min(depth, 6)));
+
+  const row = document.createElement("div");
+  row.className = "tree-writer-tldr-row";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "tree-writer-tldr-button";
+  button.dataset.structureType = "point";
+  button.dataset.structureKind = "paragraph";
+  button.dataset.treeLeaf = "true";
+  button.setAttribute("aria-expanded", "false");
+  button.append(treeWriterTldrList(points.map(point => point.title)));
+  row.append(button);
+
+  const editorPanel = treeWriterPanel(`tldr:${first.id}`);
+  if (state.projectCanEdit) {
+    const sourceButton = treeWriterIconButton("code-2", "Edit TL;DR source");
+    sourceButton.dataset.treeEditorTrigger = `tldr:${first.id}`;
+    sourceButton.addEventListener("click", () => {
+      void openTreeWriterRange({
+        id: `tldr:${first.id}:source`,
+        label: "Editing TL;DR source",
+        range: first.macroRange,
+        selectMacroArgument: points.length === 1,
+      }, sourceButton, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
+    });
+    row.append(sourceButton);
+    row.append(treeWriterAddMenu(structureInsertions(last), insertion => {
+      void insertTreeWriterNode(insertion, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
+    }));
+  }
+  section.append(row, editorPanel.panel);
+
+  button.addEventListener("click", () => {
+    if (treeWriterNodeId === `tldr:${first.id}:body`) {
+      closeTreeWriterEditor();
+      return;
+    }
+    void openTreeWriterRange({
+      id: `tldr:${first.id}:body`,
+      label: "Editing source text",
+      range: first.sourceRange,
+    }, button, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
+  });
+  return section;
+}
+
+function appendTreeWriterEntries(host: HTMLElement, entries: readonly StructureEntry[], depth: number): void {
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry.type === "heading") {
+      host.append(treeWriterNode(entry, depth));
+      continue;
+    }
+    const points = [entry];
+    while (
+      entries[index + 1]?.type === "point"
+      && sameSourceRange((entries[index + 1] as StructurePoint).macroRange, entry.macroRange)
+    ) {
+      points.push(entries[++index] as StructurePoint);
+    }
+    host.append(treeWriterPointGroup(points, depth));
+  }
+}
+
+function treeWriterNode(entry: StructureHeading, depth: number): HTMLElement {
+  const summaryPoints = entry.summary
+    ? entry.children.filter((child): child is StructurePoint => child.type === "point" && sameSourceRange(child.macroRange, entry.summary!.macroRange))
+    : [];
+  const groupedIds = new Set(summaryPoints.map(point => point.id));
+  const remainingChildren = entry.children.filter(child => !groupedIds.has(child.id));
   const section = document.createElement("section");
   section.className = "tree-writer-node";
   section.dataset.treeNode = entry.id;
@@ -710,11 +802,11 @@ function treeWriterNode(entry: StructureEntry, depth: number): HTMLElement {
   button.className = "tree-writer-node-button";
   button.dataset.structureType = entry.type;
   button.dataset.structureKind = entry.kind;
-  button.dataset.treeLeaf = String(entry.children.length === 0);
+  button.dataset.treeLeaf = String(remainingChildren.length === 0);
   const chevron = document.createElement("span");
   chevron.className = "tree-writer-chevron";
   chevron.textContent = "›";
-  chevron.hidden = entry.children.length === 0;
+  chevron.hidden = remainingChildren.length === 0;
   const label = document.createElement("span");
   label.className = "tree-writer-label";
   label.textContent = entry.title;
@@ -743,22 +835,19 @@ function treeWriterNode(entry: StructureEntry, depth: number): HTMLElement {
   }
   section.append(row);
 
-  if (entry.type === "heading" && entry.summary) {
+  if (entry.summary) {
     const summaryRow = document.createElement("div");
-    summaryRow.className = "tree-writer-summary-row";
-    const summary = document.createElement("p");
-    summary.className = "tree-writer-summary";
-    summary.textContent = entry.summary.title;
-    summaryRow.append(summary);
+    summaryRow.className = "tree-writer-summary-row tree-writer-tldr-row";
+    summaryRow.append(treeWriterTldrList([entry.summary.title, ...summaryPoints.map(point => point.title)]));
     if (state.projectCanEdit) {
-      const summaryButton = treeWriterIconButton("code-2", "Edit section TL;DR source");
+      const summaryButton = treeWriterIconButton("code-2", "Edit TL;DR source");
       summaryButton.dataset.treeEditorTrigger = `${entry.id}:summary`;
       summaryButton.addEventListener("click", () => {
         void openTreeWriterRange({
           id: `${entry.id}:summary`,
-          label: "Editing \\sectiontldr source",
-          range: entry.summary!.commandRange,
-          selectMacroArgument: true,
+          label: "Editing TL;DR source",
+          range: entry.summary!.macroRange,
+          selectMacroArgument: summaryPoints.length === 0,
         }, summaryButton, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
       });
       summaryRow.append(summaryButton);
@@ -767,11 +856,11 @@ function treeWriterNode(entry: StructureEntry, depth: number): HTMLElement {
   }
   section.append(editorPanel.panel);
 
-  if (entry.children.length) {
+  if (remainingChildren.length) {
     const children = document.createElement("div");
     children.className = "tree-writer-children";
     children.hidden = true;
-    for (const child of entry.children) children.append(treeWriterNode(child, depth + 1));
+    appendTreeWriterEntries(children, remainingChildren, depth + 1);
     button.setAttribute("aria-expanded", "false");
     button.addEventListener("click", () => {
       const expanded = button.getAttribute("aria-expanded") === "true";
@@ -951,7 +1040,7 @@ function renderStructure(): void {
   }
   const tree = document.createElement("div");
   tree.className = "tree-writer-tree";
-  for (const entry of structureEntries) tree.append(treeWriterNode(entry, 0));
+  appendTreeWriterEntries(tree, structureEntries, 0);
   elements.structure_document.append(tree);
   createIcons({ icons: ICONS });
 }

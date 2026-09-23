@@ -289,6 +289,29 @@ Details \tldr{The method combines two stages.}`;
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: remote, headers: { "Content-Type": "text/plain" } });
     await page.waitForFunction(() => document.querySelector(".tree-writer-editor .cm-content")?.textContent?.includes("Remote details."));
     await page.waitForFunction(() => globalThis.__paperE2E.state.view?.state.doc.toString().includes("Remote details."));
+    await page.locator("#refresh-structure").click();
+    await page.locator(".tree-writer-node-button", { hasText: "Overview" }).first().click();
+    await page.locator(".tree-writer-node-button", { hasText: "Method" }).first().click();
+
+    let tldrGroup = page.locator("section.tree-writer-tldr-group").filter({ hasText: "The method combines two stages." }).first();
+    await tldrGroup.locator(":scope > .tree-writer-tldr-row").getByLabel("Add node", { exact: true }).click();
+    await tldrGroup.getByRole("button", { name: "Add TL;DR", exact: true }).click();
+    const insertedTldr = tldrGroup.locator(".tree-writer-editor .cm-content");
+    await insertedTldr.waitFor();
+    await page.keyboard.insertText("A second method point.");
+    await tldrGroup.getByRole("button", { name: "Done", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#structure-document")?.textContent?.includes("A second method point."));
+    await page.locator(".tree-writer-node-button", { hasText: "Overview" }).first().click();
+    await page.locator(".tree-writer-node-button", { hasText: "Method" }).first().click();
+    tldrGroup = page.locator("section.tree-writer-tldr-group").filter({ hasText: "A second method point." }).first();
+    assert.deepEqual(await tldrGroup.locator(".tree-writer-tldr-list li").allTextContents(), [
+      "The method combines two stages.",
+      "A second method point.",
+    ]);
+    assert.equal(await tldrGroup.getByRole("button", { name: "Edit TL;DR source", exact: true }).count(), 1);
+    await tldrGroup.locator(".tree-writer-tldr-button").click();
+    await page.waitForFunction(() => document.querySelector(".tree-writer-editor .cm-content")?.textContent?.includes("Remote details."));
+    assert.equal(await tldrGroup.getByText(/The Tree was refreshed because the source changed/).count(), 0);
 
     let overviewNode = page.locator(".tree-writer-node").filter({ has: page.locator(".tree-writer-node-button", { hasText: "Overview" }) }).first();
     await overviewNode.getByRole("button", { name: "Edit section source", exact: true }).click();
@@ -323,7 +346,7 @@ Details \tldr{The method combines two stages.}`;
     const after = await page.locator("#structure-pane").boundingBox();
     assert.ok(after && after.height > before.height + 50);
     await page.reload();
-    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 9);
+    await page.waitForFunction(() => document.querySelectorAll("#structure-list .structure-item").length === 10);
     const restored = await page.locator("#structure-pane").boundingBox();
     assert.ok(restored && Math.abs(restored.height - after.height) < 2);
     await page.screenshot({ path: "/tmp/latexcoder-structure-panel.png" });

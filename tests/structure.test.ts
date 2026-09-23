@@ -92,3 +92,30 @@ Body.
   assert.equal(nestedTldr?.at, nestedSource.indexOf("\\subsection"));
   assert.equal(nestedTldr?.template, "\n\\tldr{}\n");
 });
+
+test("consecutive TL;DR macros share one source range and misplaced section summaries are ignored", () => {
+  const source = String.raw`\section{Analysis}
+\sectiontldr{Section summary.}
+\tldr{First point.}
+\tldr{Second point.}
+
+Body text.
+\sectiontldr{This is misplaced.}`;
+  const roots = projectStructure("main.tex", new Map([["main.tex", source]]));
+  const heading = roots[0];
+  assert.ok(heading?.type === "heading");
+  assert.equal(heading.summary?.title, "Section summary.");
+  const points = heading.children.filter(entry => entry.type === "point");
+  assert.deepEqual(points.map(point => point.title), ["First point.", "Second point."]);
+  assert.ok(heading.summary);
+  assert.deepEqual(points[0].macroRange, heading.summary.macroRange);
+  assert.deepEqual(points[1].macroRange, heading.summary.macroRange);
+  assert.equal(
+    source.slice(heading.summary.macroRange.from, heading.summary.macroRange.to),
+    "\\sectiontldr{Section summary.}\n\\tldr{First point.}\n\\tldr{Second point.}",
+  );
+  assert.equal(
+    source.slice(heading.sourceRange.from, heading.sourceRange.to),
+    "Body text.\n\\sectiontldr{This is misplaced.}",
+  );
+});

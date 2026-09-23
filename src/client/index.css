@@ -154,8 +154,13 @@ html[data-auth-state="registered"] [data-guest-only] { display: none !important;
 .tree-writer-chevron { width: 12px; flex: 0 0 12px; color: var(--muted-foreground); font-size: 18px; line-height: 1; text-align: center; transition: transform 120ms; }
 .tree-writer-node-button[aria-expanded="true"] > .tree-writer-chevron { transform: rotate(90deg); }
 .tree-writer-label { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
-.tree-writer-summary-row { display: flex; align-items: start; gap: 4px; margin: -2px 8px 5px calc(28px + var(--tree-depth) * 12px); }
-.tree-writer-summary { flex: 1 1 auto; min-width: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
+.tree-writer-summary-row { margin: 0 8px 6px calc(28px + var(--tree-depth) * 12px); }
+.tree-writer-tldr-row { display: flex; align-items: start; gap: 4px; min-width: 0; }
+.tree-writer-tldr-button { flex: 1 1 auto; min-width: 0; padding: 3px 4px 4px calc(28px + var(--tree-depth) * 12px); border-radius: 4px; text-align: left; }
+.tree-writer-tldr-button:hover, .tree-writer-tldr-button[aria-expanded="true"] { background: var(--accent); }
+.tree-writer-tldr-button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tree-writer-tldr-list { display: grid; flex: 1 1 auto; min-width: 0; gap: 2px; padding-left: 16px; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; list-style: disc; }
+.tree-writer-tldr-list li { padding-left: 1px; overflow-wrap: anywhere; }
 .tree-writer-children { margin-left: calc(10px + var(--tree-depth) * 2px); border-left: 1px solid var(--border); }
 .tree-writer-editor-panel { margin: 3px 8px 10px calc(28px + var(--tree-depth) * 12px); overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--editor-background); box-shadow: 0 2px 8px oklch(.2 .01 145 / .06); }
 .tree-writer-editor-toolbar { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 11px; }
