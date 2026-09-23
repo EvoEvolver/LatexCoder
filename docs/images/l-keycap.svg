@@ -23,17 +23,7 @@
       <stop offset="0" stop-color="#f8faf6" />
       <stop offset="1" stop-color="#e2e5df" />
     </linearGradient>
-    <filter id="shadow" x="-30%" y="-80%" width="170%" height="260%" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="15" />
-    </filter>
-    <filter id="contact-shadow" x="-30%" y="-100%" width="170%" height="300%" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="5" />
-    </filter>
   </defs>
-
-  <!-- The upper-left light source casts the key's soft shadow to the lower right. -->
-  <ellipse cx="292" cy="418" rx="180" ry="33" transform="rotate(4 292 418)" fill="#222824" opacity="0.3" filter="url(#shadow)" />
-  <ellipse cx="270" cy="397" rx="154" ry="16" fill="#1e2420" opacity="0.3" filter="url(#contact-shadow)" />
 
   <!-- The shell flares outward toward its base, producing a true keycap trapezoid. -->
   <path d="M96 250 C94 266 108 282 127 282 L104 399 Q79 395 81 371 Z" fill="url(#left)" />
