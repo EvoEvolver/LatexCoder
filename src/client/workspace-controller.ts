@@ -24,6 +24,12 @@ type StoredLayout = {
   structureHeight?: number;
 };
 
+const COLUMN_HANDLE_WIDTH = 8;
+const MIN_FILES_WIDTH = 180;
+const MIN_OUTPUT_WIDTH = 320;
+const COMPACT_EDITOR_WIDTH = 240;
+const MIN_EDITOR_WIDTH = 360;
+
 export class WorkspaceController {
   private desktopOutputOpen = false;
   private filesHidden = false;
@@ -76,6 +82,15 @@ export class WorkspaceController {
     this.elements.openPdf.setAttribute("aria-expanded", String(open));
   }
 
+  private editorMinimum(width: number): number {
+    const filesMinimum = this.filesHidden ? 0 : MIN_FILES_WIDTH;
+    const outputMinimum = this.outputHidden ? 0 : MIN_OUTPUT_WIDTH;
+    return Math.max(COMPACT_EDITOR_WIDTH, Math.min(
+      MIN_EDITOR_WIDTH,
+      width - filesMinimum - outputMinimum - COLUMN_HANDLE_WIDTH * 2,
+    ));
+  }
+
   private update(): void {
     const mobile = this.narrow.matches;
     const mobileOutputOpen = this.elements.outputPane.classList.contains("mobile-open");
@@ -99,10 +114,18 @@ export class WorkspaceController {
       this.elements.filesPane.style.gridTemplateRows = `44px minmax(96px,1fr) 8px ${this.structureHeight}px`;
     }
     if (width && !mobile) {
-      this.filesWidth = Math.max(180, Math.min(this.filesWidth, width - 580));
-      const remaining = width - (this.filesHidden ? 0 : this.filesWidth) - 16;
-      const output = Math.max(320, Math.min(remaining - 240, this.outputWidth ?? remaining * 0.46));
-      this.elements.workspace.style.gridTemplateColumns = `${this.filesHidden ? 0 : this.filesWidth}px 8px minmax(0,1fr) 8px ${this.outputHidden ? 0 : output}px`;
+      const handlesWidth = COLUMN_HANDLE_WIDTH * 2;
+      const outputMinimum = this.outputHidden ? 0 : MIN_OUTPUT_WIDTH;
+      const editorMinimum = this.editorMinimum(width);
+      const filesMaximum = width - editorMinimum - outputMinimum - handlesWidth;
+      this.filesWidth = Math.max(MIN_FILES_WIDTH, Math.min(this.filesWidth, filesMaximum));
+      const filesWidth = this.filesHidden ? 0 : this.filesWidth;
+      const remaining = width - filesWidth - handlesWidth;
+      const output = Math.max(MIN_OUTPUT_WIDTH, Math.min(
+        remaining - editorMinimum,
+        this.outputWidth ?? remaining * 0.46,
+      ));
+      this.elements.workspace.style.gridTemplateColumns = `${filesWidth}px ${COLUMN_HANDLE_WIDTH}px minmax(${editorMinimum}px,1fr) ${COLUMN_HANDLE_WIDTH}px ${this.outputHidden ? 0 : output}px`;
     }
     this.elements.toggleFiles.title = mobile ? "Files" : this.filesHidden ? "Show files" : "Hide files";
     this.elements.toggleFiles.setAttribute("aria-expanded", String(mobile ? this.elements.filesPane.classList.contains("mobile-open") : !this.filesHidden));
@@ -159,8 +182,12 @@ export class WorkspaceController {
         this.filesWidth += delta;
       } else {
         if (this.outputHidden) return;
-        const remaining = this.elements.workspace.clientWidth - (this.filesHidden ? 0 : this.filesWidth) - 16;
-        this.outputWidth = Math.max(320, Math.min(remaining - 240, this.elements.outputPane.getBoundingClientRect().width - delta));
+        const width = this.elements.workspace.clientWidth;
+        const remaining = width - (this.filesHidden ? 0 : this.filesWidth) - COLUMN_HANDLE_WIDTH * 2;
+        this.outputWidth = Math.max(MIN_OUTPUT_WIDTH, Math.min(
+          remaining - this.editorMinimum(width),
+          this.elements.outputPane.getBoundingClientRect().width - delta,
+        ));
       }
       this.update();
     };

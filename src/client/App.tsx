@@ -229,7 +229,7 @@ export function AppShell() {
               <nav id="structure-list" className="min-h-0 overflow-auto p-1.5" aria-label="Document tree entries"><p className="px-2 py-3 text-xs text-muted-foreground">Loading tree…</p></nav>
             </section>
           </aside>
-          <div id="files-resize" role="separator" aria-label="Resize files" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden">
+          <div id="files-resize" role="separator" aria-label="Resize files" aria-orientation="vertical" tabIndex={0} className="group relative z-10 flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden">
             <Button id="toggle-files-column" className="z-10 h-5 w-3 shrink-0 p-0 text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground" variant="ghost" size="icon" type="button" title="Hide files" aria-controls="files-pane" aria-expanded="true"><span data-collapse-icon><ChevronLeft className="size-2.5" aria-hidden="true" /></span><span data-expand-icon hidden><ChevronRight className="size-2.5" aria-hidden="true" /></span></Button>
           </div>
 
@@ -254,7 +254,7 @@ export function AppShell() {
               </aside>
             </div>
           </section>
-          <div id="output-resize" role="separator" aria-label="Resize editor and PDF" aria-orientation="vertical" tabIndex={0} className="group flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden">
+          <div id="output-resize" role="separator" aria-label="Resize editor and PDF" aria-orientation="vertical" tabIndex={0} className="group relative z-10 flex w-2 touch-none cursor-col-resize items-center justify-center bg-muted/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary max-[760px]:hidden">
             <Button id="toggle-output-column" className="z-10 h-5 w-3 shrink-0 p-0 text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground" variant="ghost" size="icon" type="button" title="Hide PDF" aria-controls="output-pane" aria-expanded="true"><span data-collapse-icon><ChevronRight className="size-2.5" aria-hidden="true" /></span><span data-expand-icon hidden><ChevronLeft className="size-2.5" aria-hidden="true" /></span></Button>
           </div>
 

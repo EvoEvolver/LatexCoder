@@ -107,6 +107,18 @@ test("workspace panels resize, collapse from arrow handles, and switch the singl
     await drag("#output-resize", -60);
     assert.ok(await width("#output-pane") > output + 50);
     const resizedOutput = await width("#output-pane");
+    await drag("#output-resize", -1000);
+    const widestOutput = await page.locator("#output-pane").boundingBox();
+    const protectedEditor = await page.locator("#editor-pane").boundingBox();
+    const protectedHandle = await page.locator("#output-resize").boundingBox();
+    assert.ok(protectedEditor.width >= 360, `PDF resizing must preserve the editor minimum width: ${protectedEditor.width}`);
+    assert.ok(Math.abs(protectedHandle.x - protectedEditor.x - protectedEditor.width) < 1, "PDF resize handle must remain on the editor boundary");
+    assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("#output-resize")?.id, {
+      x: protectedHandle.x + protectedHandle.width / 2,
+      y: protectedHandle.y + protectedHandle.height / 2,
+    }), "output-resize");
+    await drag("#output-resize", widestOutput.width - resizedOutput);
+    assert.ok(Math.abs(await width("#output-pane") - resizedOutput) < 1, "PDF width should remain adjustable after reaching its maximum");
     assert.equal(await page.locator("#workspace-view-switch").isVisible(), false);
     await page.locator("#toggle-files-column").click();
     assert.equal(await page.locator("#file-list").isVisible(), false);
