@@ -104,13 +104,26 @@ function displayTitle(value: string): string {
   for (let pass = 0; pass < 4; pass++) {
     title = title.replace(/\\(?:textbf|textit|texttt|textrm|textsf|emph|mbox)\*?\s*\{([^{}]*)\}/g, "$1");
   }
-  return title
+  const escaped: string[] = [];
+  title = title
+    .replace(/\\([#$%&_{}])/g, (_match, character: string) => {
+      const token = `\u0001${escaped.length}\u0002`;
+      escaped.push(character);
+      return token;
+    })
+    .replace(/\\\\/g, " ")
+    .replace(/\\ /g, " ");
+  title = title
     .replace(/\\texorpdfstring\s*\{([^{}]*)\}\s*\{[^{}]*\}/g, "$1")
     .replace(/\\[a-zA-Z@]+\*?/g, "")
     .replace(/[{}]/g, "")
     .replace(/~/g, " ")
     .replace(/\s+/g, " ")
-    .trim() || "Untitled";
+    .trim();
+  for (let index = 0; index < escaped.length; index++) {
+    title = title.replaceAll(`\u0001${index}\u0002`, escaped[index]);
+  }
+  return title || "Untitled";
 }
 
 function normalizeProjectPath(value: string): string | null {

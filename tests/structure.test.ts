@@ -41,9 +41,19 @@ test("project structure resolves root-relative includes before file-relative inc
 });
 
 test("paper titles support optional arguments and nested formatting", () => {
-  assert.equal(documentTitle(String.raw`\title[Short]{A \textbf{Structured} Paper}`), "A Structured Paper");
+  assert.equal(documentTitle(String.raw`\title[Short]{A \textbf{Structured} R\&D Paper}`), "A Structured R&D Paper");
   assert.equal(documentTitle("% \\title{Ignored}\n\\title{Visible title}"), "Visible title");
   assert.equal(documentTitle("\\section{No title}"), null);
+});
+
+test("Tree labels decode basic escaped LaTeX characters", () => {
+  const source = String.raw`\section{Loss\_aware \& robust \{draft\}}
+Evidence. \tldr{A 50\% gain is result \#1 and costs \$5.}`;
+  const entries = flattenStructure(projectStructure("main.tex", new Map([["main.tex", source]])));
+  assert.deepEqual(entries.map(entry => entry.title), [
+    "Loss_aware & robust {draft}",
+    "A 50% gain is result #1 and costs $5.",
+  ]);
 });
 
 test("leaf nodes own exact editable source ranges without annotation macros", () => {
