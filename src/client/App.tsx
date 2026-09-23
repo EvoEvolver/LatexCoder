@@ -106,6 +106,31 @@ function Brand({ prominent = false }: { prominent?: boolean }) {
   );
 }
 
+function AboutDialog() {
+  return (
+    <dialog id="about-dialog" className={cn(dialogClass, "w-[min(27rem,calc(100%-1.5rem))]")}>
+      <div className="p-5">
+        <DialogHeader title="About" closeId="about-close" />
+        <div className="flex flex-col items-center px-3 pb-2 text-center">
+          <img src={keycapUrl} alt="" className="size-20 object-contain" />
+          <h2 className="mt-3 font-serif text-2xl font-semibold">LaTeX Coder</h2>
+          <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">A self-hosted LaTeX workspace where people, coding agents, and Git work on the same paper.</p>
+          <div className="mt-4 flex flex-wrap justify-center gap-1.5 text-[11px] text-muted-foreground" aria-label="Project technologies">
+            <span className="rounded border bg-muted px-2 py-1">TypeScript</span>
+            <span className="rounded border bg-muted px-2 py-1">Yjs</span>
+            <span className="rounded border bg-muted px-2 py-1">Git</span>
+            <span className="rounded border bg-muted px-2 py-1">SQLite</span>
+          </div>
+        </div>
+        <footer className="mt-5 flex items-center justify-between border-t pt-4">
+          <span className="text-xs text-muted-foreground">Open source · MIT License</span>
+          <Button variant="outline" size="sm" asChild><a id="about-github" href="https://github.com/EvoEvolver/LatexCoder" target="_blank" rel="noreferrer"><Icon name="git-branch" />GitHub</a></Button>
+        </footer>
+      </div>
+    </dialog>
+  );
+}
+
 export function AppShell() {
   return (
     <>
@@ -131,7 +156,7 @@ export function AppShell() {
 
       <div id="projects-page" className="projects-page min-h-dvh overflow-auto bg-muted/40" hidden>
         <header className="projects-header flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-65rem)/2))]">
-          <Brand />
+          <button id="projects-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder" aria-haspopup="dialog"><Brand /></button>
           <div className="projects-account flex items-center gap-2">
             <Button id="account-button" variant="ghost" size="sm"><Icon name="user-round" /><span id="current-user" className="max-w-36 truncate max-sm:hidden" /></Button>
             <Button id="invite-user" variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden">Invite</span></Button>
@@ -154,7 +179,7 @@ export function AppShell() {
         <header id="editor-topbar" className="topbar relative flex min-w-0 items-center border-b bg-background px-1.5 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
           <div id="topbar-actions" className="flex h-full shrink-0 items-center">
             <IconButton id="back-projects" icon="arrow-left" title="All projects" className="mr-0.5 size-7" />
-            <img src={keycapUrl} alt="LaTeX Coder" className="mx-0.5 size-7 shrink-0 object-contain" />
+            <Button id="editor-about" className="mx-0.5 size-7 shrink-0 p-0" variant="ghost" size="icon" type="button" title="About LaTeX Coder" aria-haspopup="dialog"><img src={keycapUrl} alt="LaTeX Coder" className="size-7 object-contain" /></Button>
             <nav className="flex h-full shrink-0 items-center" aria-label="Application menu">
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild><Button id="project-menu" className="h-7 rounded px-2 text-xs font-medium" variant="ghost">Project</Button></DropdownMenuTrigger>
@@ -292,6 +317,7 @@ export function AppShell() {
         <code id="line-context-reference" className="block truncate border-b px-2 py-2 text-[11px] text-muted-foreground" />
         <Button id="copy-line-reference" role="menuitem" variant="ghost" size="sm" className="mt-1 w-full justify-start rounded-sm px-2 text-xs"><Icon name="copy" />Copy path and line</Button>
       </div>
+      <AboutDialog />
       <dialog id="search-dialog" className={cn(dialogClass, "w-[min(44rem,calc(100%-1.5rem))]")}><div className="p-5"><DialogHeader title="Search and replace" closeId="search-close" /><form id="search-form" className="flex flex-wrap items-center gap-2"><Input id="search-query" className="min-w-0 flex-1" aria-label="Search project" placeholder="Search project" maxLength={512} required /><Button type="submit" size="icon" title="Search"><Icon name="search" /></Button><div className="flex w-full gap-4 text-xs"><label className="flex items-center gap-2"><input id="search-case" type="checkbox" />Match case</label><label className="flex items-center gap-2"><input id="search-regex" type="checkbox" />Regular expression</label></div></form><div className="mt-3 flex flex-wrap gap-2"><Input id="replace-text" className="min-w-0 flex-1" aria-label="Replacement text" placeholder="Replacement text" /><select id="replace-scope" aria-label="Replace scope" className="h-9 rounded-md border bg-background px-2 text-xs"><option value="file">Current file</option><option value="project">Entire project</option></select><Button id="replace-preview" variant="outline" size="sm">Preview</Button><Button id="replace-apply" size="sm" hidden>Apply replacements</Button></div><p id="search-status" className="my-3 text-xs text-muted-foreground" role="status" /><div id="search-results" className="max-h-[55dvh] overflow-auto" /></div></dialog>
       <dialog id="settings-dialog" className={dialogClass}>
         <form id="settings-form" className="space-y-4 p-5">

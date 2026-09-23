@@ -3573,6 +3573,12 @@ async function newFolder(prefix = "") {
   catch (error) { showToast(error.message); }
 }
 
+const aboutDialog = document.getElementById("about-dialog") as HTMLDialogElement;
+for (const id of ["projects-about", "editor-about"]) {
+  document.getElementById(id)!.addEventListener("click", () => aboutDialog.showModal());
+}
+document.getElementById("about-close")!.addEventListener("click", () => aboutDialog.close());
+
 const settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
 onDynamicClick("project-settings", async () => {
   try {

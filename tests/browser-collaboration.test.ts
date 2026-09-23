@@ -419,6 +419,17 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#projects-page").waitFor();
     const projectMark = page.locator("#projects-page .brand img");
     assert.equal(await projectMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
+    await page.locator("#projects-about").click();
+    await page.locator("#about-dialog").waitFor();
+    assert.equal(await page.locator("#about-github").getAttribute("href"), "https://github.com/EvoEvolver/LatexCoder");
+    assert.match(await page.locator("#about-dialog").textContent(), /people, coding agents, and Git/);
+    await page.screenshot({ path: "/tmp/latexcoder-about.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const aboutBounds = await page.locator("#about-dialog").boundingBox();
+    assert.ok(aboutBounds && aboutBounds.x >= 0 && aboutBounds.x + aboutBounds.width <= 390, `About dialog must fit the mobile viewport: ${JSON.stringify(aboutBounds)}`);
+    await page.screenshot({ path: "/tmp/latexcoder-about-mobile.png" });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator("#about-close").click();
     assert.equal(await page.locator("#current-user").textContent(), "admin");
     assert.equal(await page.locator("#new-project").isVisible(), true);
     await page.locator("#account-button").click();
@@ -437,12 +448,16 @@ test("login, invitations, and capability links separate members from guests", as
 
     await page.locator(".project-row").first().click();
     assert.equal(await page.locator("#guest-name-field").isHidden(), true);
-    const editorMark = page.locator("#editor-topbar img[alt='LaTeX Coder']");
+    const editorMark = page.locator("#editor-about img[alt='LaTeX Coder']");
     assert.equal(await editorMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
     const backBounds = await page.locator("#back-projects").boundingBox();
     const markBounds = await editorMark.boundingBox();
     const projectBounds = await page.locator("#project-menu").boundingBox();
     assert.ok(backBounds && markBounds && projectBounds && backBounds.x < markBounds.x && markBounds.x < projectBounds.x);
+    await page.locator("#editor-about").click();
+    await page.locator("#about-dialog").waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator("#about-dialog").waitFor({ state: "hidden" });
     await page.locator("#account-menu").click();
     assert.equal(await page.locator("#editor-account-button").isVisible(), true);
     assert.match(await page.locator("#editor-account-button").textContent(), /Account Settings/);
