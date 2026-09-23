@@ -155,7 +155,7 @@ test("automatic compilation is debounced and errors navigate to source", async (
     assert.equal(await page.locator("#build-log").isVisible(), true);
     assert.equal(await page.locator("#pdf-view").isVisible(), false);
     assert.equal(await page.locator("#diagnostic-navigation").count(), 0);
-    assert.equal(await page.locator(".cm-diagnostic-marker.error").count(), 1);
+    assert.equal(await page.locator(".cm-lineNumbers .cm-diagnostic-line.error").count(), 1);
     assert.equal(await page.locator(".cm-diagnostic-range.error").count(), 1);
     await page.screenshot({ path: "/tmp/latexcoder-log-desktop.png" });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -345,8 +345,8 @@ test("inline diagnostics cover citations, references, and labels without a toolb
     });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    await page.waitForFunction(() => document.querySelectorAll(".cm-diagnostic-marker.warning").length === 3);
-    assert.equal(await page.locator(".cm-diagnostic-marker.warning").count(), 3);
+    await page.waitForFunction(() => document.querySelectorAll(".cm-lineNumbers .cm-diagnostic-line.warning").length === 3);
+    assert.equal(await page.locator(".cm-lineNumbers .cm-diagnostic-line.warning").count(), 3);
     assert.equal(await page.locator(".cm-diagnostic-range.warning").count(), 3);
     await page.locator(".cm-diagnostic-range.warning").first().hover();
     await page.locator(".cm-diagnostic-tooltip").waitFor();

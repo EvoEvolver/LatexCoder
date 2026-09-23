@@ -21,13 +21,13 @@ import {
   drawSelection,
   dropCursor,
   EditorView,
-  gutter,
   GutterMarker,
   highlightActiveLine,
   highlightActiveLineGutter,
   highlightSpecialChars,
   hoverTooltip,
   keymap,
+  lineNumberMarkers,
   lineNumbers,
   rectangularSelection,
   type DecorationSet,
@@ -1430,54 +1430,53 @@ async function followReference(link: ReferenceLink) {
 type PositionedDiagnostic = BuildDiagnostic & { from: number; to: number };
 const setEditorDiagnostics = StateEffect.define<PositionedDiagnostic[]>();
 
-class DiagnosticGutterMarker extends GutterMarker {
+class DiagnosticLineNumberMarker extends GutterMarker {
   readonly elementClass: string = "";
-  constructor(readonly diagnostic: PositionedDiagnostic) {
+  constructor(readonly severity: PositionedDiagnostic["severity"]) {
     super();
-    this.elementClass = `cm-diagnostic-marker ${diagnostic.severity}`;
-  }
-  toDOM(): Node {
-    const marker = document.createElement("span");
-    marker.textContent = "!";
-    marker.title = this.diagnostic.message;
-    marker.setAttribute("aria-label", this.diagnostic.message);
-    return marker;
+    this.elementClass = `cm-diagnostic-line ${severity}`;
   }
 }
 
-const editorDiagnosticField = StateField.define<PositionedDiagnostic[]>({
-  create: () => [],
-  update(diagnostics, transaction) {
-    for (const effect of transaction.effects) if (effect.is(setEditorDiagnostics)) return effect.value;
-    if (!transaction.docChanged) return diagnostics;
-    return diagnostics.map(diagnostic => ({
+type EditorDiagnosticState = {
+  diagnostics: PositionedDiagnostic[];
+  lineMarkers: RangeSet<GutterMarker>;
+};
+
+function diagnosticLineMarkers(state: EditorState, diagnostics: PositionedDiagnostic[]): RangeSet<GutterMarker> {
+  const byLine = new Map<number, PositionedDiagnostic["severity"]>();
+  for (const diagnostic of diagnostics) {
+    const line = state.doc.lineAt(diagnostic.from).from;
+    const existing = byLine.get(line);
+    if (!existing || (existing === "warning" && diagnostic.severity === "error")) byLine.set(line, diagnostic.severity);
+  }
+  return RangeSet.of([...byLine.entries()].map(([line, severity]) => new DiagnosticLineNumberMarker(severity).range(line)), true);
+}
+
+const editorDiagnosticField = StateField.define<EditorDiagnosticState>({
+  create: () => ({ diagnostics: [], lineMarkers: RangeSet.empty }),
+  update(value, transaction) {
+    let diagnostics = value.diagnostics;
+    for (const effect of transaction.effects) if (effect.is(setEditorDiagnostics)) diagnostics = effect.value;
+    if (transaction.docChanged && diagnostics === value.diagnostics) diagnostics = diagnostics.map(diagnostic => ({
       ...diagnostic,
       from: transaction.changes.mapPos(diagnostic.from),
       to: transaction.changes.mapPos(diagnostic.to),
     }));
+    return { diagnostics, lineMarkers: diagnosticLineMarkers(transaction.state, diagnostics) };
   },
-  provide: field => EditorView.decorations.from(field, diagnostics => Decoration.set(diagnostics.map(diagnostic =>
-    Decoration.mark({
-      class: `cm-diagnostic-range ${diagnostic.severity}`,
-      attributes: { title: diagnostic.message },
-    }).range(diagnostic.from, diagnostic.to)), true)),
-});
-
-const editorDiagnosticGutter = gutter({
-  class: "cm-diagnostic-gutter",
-  markers(view) {
-    const byLine = new Map<number, PositionedDiagnostic>();
-    for (const diagnostic of view.state.field(editorDiagnosticField)) {
-      const line = view.state.doc.lineAt(diagnostic.from).from;
-      const existing = byLine.get(line);
-      if (!existing || (existing.severity === "warning" && diagnostic.severity === "error")) byLine.set(line, diagnostic);
-    }
-    return RangeSet.of([...byLine.entries()].map(([line, diagnostic]) => new DiagnosticGutterMarker(diagnostic).range(line)), true);
-  },
+  provide: field => [
+    EditorView.decorations.from(field, value => Decoration.set(value.diagnostics.map(diagnostic =>
+      Decoration.mark({
+        class: `cm-diagnostic-range ${diagnostic.severity}`,
+        attributes: { title: diagnostic.message },
+      }).range(diagnostic.from, diagnostic.to)), true)),
+    lineNumberMarkers.from(field, value => value.lineMarkers),
+  ],
 });
 
 const editorDiagnosticTooltip = hoverTooltip((view, position) => {
-  const diagnostics = view.state.field(editorDiagnosticField).filter(diagnostic => position >= diagnostic.from && position <= diagnostic.to);
+  const diagnostics = view.state.field(editorDiagnosticField).diagnostics.filter(diagnostic => position >= diagnostic.from && position <= diagnostic.to);
   if (!diagnostics.length) return null;
   return {
     pos: diagnostics[0].from,
@@ -1544,19 +1543,6 @@ class BlameAuthorWidget extends WidgetType {
   ignoreEvent(): boolean { return true; }
 }
 
-class BlameGutterMarker extends GutterMarker {
-  readonly elementClass = "cm-blame-marker";
-  constructor(readonly blame: BlameRun) { super(); }
-  toDOM(): Node {
-    const marker = document.createElement("span");
-    marker.textContent = this.blame.authorName.slice(0, 2).toUpperCase();
-    marker.style.backgroundColor = colorFor(this.blame.authorId || this.blame.authorName);
-    marker.title = `${this.blame.authorName} · ${this.blame.commit ? this.blame.commit.slice(0, 7) : "Uncommitted"}`;
-    marker.setAttribute("aria-label", marker.title);
-    return marker;
-  }
-}
-
 const editorBlameField = StateField.define<BlameRun[]>({
   create: () => [],
   update(runs, transaction) {
@@ -1609,30 +1595,6 @@ class BlameDecorationsPlugin {
 
 const editorBlameDecorations = ViewPlugin.fromClass(BlameDecorationsPlugin, {
   decorations: plugin => plugin.decorations,
-});
-
-const editorBlameGutter = gutter({
-  class: "cm-blame-gutter",
-  markers(view) {
-    const scores = new Map<number, Map<BlameRun, number>>();
-    for (const run of view.state.field(editorBlameField)) {
-      if (run.authorId === "legacy") continue;
-      const start = view.state.doc.lineAt(Math.min(run.from, view.state.doc.length));
-      const finish = view.state.doc.lineAt(Math.min(run.to, view.state.doc.length));
-      for (let number = start.number; number <= finish.number; number++) {
-        const line = view.state.doc.line(number);
-        const overlap = Math.max(0, Math.min(run.to, line.to + 1) - Math.max(run.from, line.from));
-        if (!overlap) continue;
-        const lineScores = scores.get(line.from) || new Map<BlameRun, number>();
-        lineScores.set(run, (lineScores.get(run) || 0) + overlap);
-        scores.set(line.from, lineScores);
-      }
-    }
-    return RangeSet.of([...scores].sort((left, right) => left[0] - right[0]).map(([line, lineScores]) => {
-      const primary = [...lineScores].sort((left, right) => right[1] - left[1])[0][0];
-      return new BlameGutterMarker(primary).range(line);
-    }), true);
-  },
 });
 
 let blameRequestVersion = 0;
@@ -1739,8 +1701,6 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
         },
       },
     }),
-    editorDiagnosticGutter,
-    editorBlameGutter,
     editorBlameField,
     editorBlameModeField,
     editorBlameDecorations,
@@ -1810,13 +1770,10 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
       ".cm-content": { minWidth: "0", padding: "12px 0", caretColor: "var(--primary)" },
       ".cm-line": { padding: "0 14px" },
-      ".cm-diagnostic-gutter": { width: "15px" },
-      ".cm-diagnostic-marker": { display: "grid", width: "12px", height: "12px", marginTop: "4px", placeItems: "center", borderRadius: "50%", backgroundColor: "#b42318", color: "white", fontSize: "8px", fontWeight: "800", cursor: "help" },
-      ".cm-blame-gutter": { width: "25px" },
-      ".cm-blame-marker": { display: "grid", width: "20px", height: "16px", marginTop: "2px", placeItems: "center", borderRadius: "3px", color: "white", fontSize: "7px", fontWeight: "750", cursor: "help", opacity: "0.78" },
+      ".cm-lineNumbers .cm-gutterElement.cm-diagnostic-line.error": { color: "#d92d20", fontWeight: "750" },
+      ".cm-lineNumbers .cm-gutterElement.cm-diagnostic-line.warning": { color: "#b7791f", fontWeight: "700" },
       ".cm-blame-author": { display: "inline-flex", height: "16px", margin: "0 5px 0 2px", padding: "0 5px", alignItems: "center", borderRadius: "3px", backgroundColor: "var(--blame-color)", color: "white", fontFamily: "ui-sans-serif, sans-serif", fontSize: "9px", fontWeight: "700", lineHeight: "16px", verticalAlign: "1px", whiteSpace: "nowrap", cursor: "help" },
       ".cm-blame-range": { borderRadius: "2px", backgroundColor: "color-mix(in srgb, var(--blame-color) 16%, transparent)", boxShadow: "inset 0 -2px 0 color-mix(in srgb, var(--blame-color) 72%, transparent)", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone", cursor: "help" },
-      ".cm-diagnostic-marker.warning": { backgroundColor: "#b7791f" },
       ".cm-diagnostic-range.error": { textDecoration: "underline wavy #d92d20", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
       ".cm-diagnostic-range.warning": { textDecoration: "underline wavy #d28a16", textUnderlineOffset: "3px", textDecorationThickness: "1px" },
       ".cm-diagnostic-tooltip": { maxWidth: "360px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: "6px", backgroundColor: "var(--card)", boxShadow: "0 10px 28px rgb(0 0 0 / 25%)", color: "var(--card-foreground)", fontFamily: "ui-sans-serif, sans-serif", fontSize: "11px" },
