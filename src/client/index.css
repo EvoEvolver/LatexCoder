@@ -132,15 +132,35 @@ html[data-auth-state="registered"] [data-guest-only] { display: none !important;
 
 .tree-writer-tree { display: grid; gap: 2px; }
 .tree-writer-node { min-width: 0; }
-.tree-writer-node-button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 8px 5px calc(8px + var(--tree-depth) * 12px); border-radius: 4px; text-align: left; }
+.tree-writer-overview { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.tree-writer-add-root { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); font-size: 12px; font-weight: 500; }
+.tree-writer-add-root:hover { background: var(--accent); }
+.tree-writer-add-root svg { width: 14px; height: 14px; }
+.tree-writer-node-row { display: flex; align-items: center; min-width: 0; border-radius: 4px; }
+.tree-writer-node-row:hover { background: var(--accent); }
+.tree-writer-node-button { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; min-height: 34px; padding: 5px 4px 5px calc(8px + var(--tree-depth) * 12px); border-radius: 4px; text-align: left; }
 .tree-writer-node-button:hover, .tree-writer-node-button[aria-expanded="true"] { background: var(--accent); }
 .tree-writer-node-button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tree-writer-icon-button { display: grid; flex: 0 0 26px; width: 26px; height: 26px; place-items: center; border-radius: 4px; color: var(--muted-foreground); }
+.tree-writer-icon-button:hover, .tree-writer-icon-button[aria-pressed="true"], .tree-writer-add-menu[open] > .tree-writer-icon-button { background: var(--background); color: var(--foreground); }
+.tree-writer-icon-button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tree-writer-icon-button svg { width: 13px; height: 13px; }
+.tree-writer-add-menu { position: relative; flex: 0 0 26px; margin-right: 4px; }
+.tree-writer-add-menu > summary { list-style: none; cursor: pointer; }
+.tree-writer-add-menu > summary::-webkit-details-marker { display: none; }
+.tree-writer-add-menu-content { position: absolute; z-index: 20; top: 29px; right: 0; display: grid; width: max-content; min-width: 150px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); box-shadow: 0 8px 24px oklch(.15 .01 145 / .16); }
+.tree-writer-add-menu-content button { min-height: 30px; padding: 5px 8px; border-radius: 4px; text-align: left; font-size: 12px; }
+.tree-writer-add-menu-content button:hover, .tree-writer-add-menu-content button:focus-visible { background: var(--accent); outline: none; }
 .tree-writer-chevron { width: 12px; flex: 0 0 12px; color: var(--muted-foreground); font-size: 18px; line-height: 1; text-align: center; transition: transform 120ms; }
 .tree-writer-node-button[aria-expanded="true"] > .tree-writer-chevron { transform: rotate(90deg); }
 .tree-writer-label { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
-.tree-writer-summary { margin: -2px 12px 5px calc(28px + var(--tree-depth) * 12px); color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
+.tree-writer-summary-row { display: flex; align-items: start; gap: 4px; margin: -2px 8px 5px calc(28px + var(--tree-depth) * 12px); }
+.tree-writer-summary { flex: 1 1 auto; min-width: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
 .tree-writer-children { margin-left: calc(10px + var(--tree-depth) * 2px); border-left: 1px solid var(--border); }
 .tree-writer-editor-panel { margin: 3px 8px 10px calc(28px + var(--tree-depth) * 12px); overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--editor-background); box-shadow: 0 2px 8px oklch(.2 .01 145 / .06); }
+.tree-writer-editor-toolbar { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 11px; }
+.tree-writer-done { min-height: 24px; padding: 0 7px; border-radius: 4px; color: var(--foreground); font-size: 11px; font-weight: 500; }
+.tree-writer-done:hover { background: var(--accent); }
 .tree-writer-editor-status { padding: 10px 12px; color: var(--muted-foreground); font-size: 12px; }
 .tree-writer-editor .cm-editor { min-height: 7rem; }
 @media (prefers-reduced-motion: reduce) { .tree-writer-chevron { transition: none; } }

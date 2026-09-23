@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flattenStructure, projectStructure } from "../src/shared/structure.ts";
+import { flattenStructure, projectStructure, rootStructureInsertion, structureInsertions } from "../src/shared/structure.ts";
 
 test("project structure follows includes from the main document in source order", () => {
   const sources = new Map([
@@ -61,4 +61,34 @@ Leaf source with \cite{paper}.
   assert.ok(leaf);
   assert.equal(source.slice(leaf.sourceRange.from, leaf.sourceRange.to), "Leaf source with \\cite{paper}.");
   assert.equal(roots[0].type === "heading" ? roots[0].summary?.title : null, "The analysis has two claims.");
+});
+
+test("TreeWriter additions map to editable LaTeX templates at stable source boundaries", () => {
+  const source = String.raw`\documentclass{article}
+\begin{document}
+\section{Analysis}
+Body.
+\section{Next}
+\end{document}`;
+  const roots = projectStructure("main.tex", new Map([["main.tex", source]]));
+  const analysis = roots[0];
+  assert.ok(analysis);
+  const insertions = structureInsertions(analysis);
+  assert.deepEqual(insertions.map(insertion => [insertion.label, insertion.template]), [
+    ["Add section TL;DR", "\n\\sectiontldr{}"],
+    ["Add subsection", "\n\n\\subsection{}\n"],
+    ["Add TL;DR", "\n\\tldr{}"],
+  ]);
+  assert.equal(insertions[1].at, source.indexOf("\n\\section{Next}"));
+
+  const root = rootStructureInsertion("main.tex", source);
+  assert.equal(root.at, source.indexOf("\\end{document}"));
+  assert.equal(root.template, "\\section{}\n");
+
+  const nestedSource = "\\section{Parent}\nIntro.\n\\subsection{Child}\nDetails.";
+  const parent = projectStructure("main.tex", new Map([["main.tex", nestedSource]]))[0];
+  assert.ok(parent);
+  const nestedTldr = structureInsertions(parent).find(insertion => insertion.label === "Add TL;DR");
+  assert.equal(nestedTldr?.at, nestedSource.indexOf("\\subsection"));
+  assert.equal(nestedTldr?.template, "\n\\tldr{}\n");
 });

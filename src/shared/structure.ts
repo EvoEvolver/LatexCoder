@@ -1,7 +1,14 @@
 import { withoutComments } from "./references.ts";
 
 export type SourceRange = { path: string; from: number; to: number };
-export type StructureSummary = { title: string; line: number; range: SourceRange };
+export type StructureSummary = { title: string; line: number; range: SourceRange; commandRange: SourceRange };
+
+export type StructureInsertion = {
+  at: number;
+  label: string;
+  path: string;
+  template: string;
+};
 
 type StructureNodeBase = {
   id: string;
@@ -37,6 +44,15 @@ const LEVELS: Record<StructureHeading["kind"], number> = {
   subsubsection: 4,
   paragraph: 5,
   subparagraph: 6,
+};
+
+const CHILD_HEADING: Partial<Record<StructureHeading["kind"], StructureHeading["kind"]>> = {
+  part: "chapter",
+  chapter: "section",
+  section: "subsection",
+  subsection: "subsubsection",
+  subsubsection: "paragraph",
+  paragraph: "subparagraph",
 };
 
 type ParsedArgument = { value: string; from: number; to: number; end: number };
@@ -163,6 +179,60 @@ export function flattenStructure(entries: readonly StructureEntry[]): StructureE
   return result;
 }
 
+export function structureInsertions(entry: StructureEntry): StructureInsertion[] {
+  if (entry.type === "point") {
+    return [{
+      at: entry.commandRange.to,
+      label: "Add TL;DR",
+      path: entry.path,
+      template: "\n\\tldr{}",
+    }];
+  }
+  const at = entry.sourceRange.to;
+  const firstNestedHeading = entry.children
+    .filter((child): child is StructureHeading => child.type === "heading" && child.path === entry.path)
+    .sort((left, right) => left.commandRange.from - right.commandRange.from)[0];
+  const tldrAt = firstNestedHeading?.commandRange.from ?? at;
+  const insertions: StructureInsertion[] = [];
+  if (!entry.summary) {
+    insertions.push({
+      at: entry.commandRange.to,
+      label: "Add section TL;DR",
+      path: entry.path,
+      template: "\n\\sectiontldr{}",
+    });
+  }
+  const child = CHILD_HEADING[entry.kind];
+  if (child) {
+    insertions.push({
+      at,
+      label: `Add ${child}`,
+      path: entry.path,
+      template: `\n\n\\${child}{}\n`,
+    });
+  }
+  insertions.push({
+    at: tldrAt,
+    label: "Add TL;DR",
+    path: entry.path,
+    template: firstNestedHeading ? "\n\\tldr{}\n" : "\n\\tldr{}",
+  });
+  return insertions;
+}
+
+export function rootStructureInsertion(main: string, source: string): StructureInsertion {
+  const endDocument = /\\end\s*\{document\}/g;
+  let match: RegExpExecArray | null;
+  let at = source.length;
+  while ((match = endDocument.exec(source))) at = match.index;
+  return {
+    at,
+    label: "Add section",
+    path: main,
+    template: `${at > 0 && source[at - 1] !== "\n" ? "\n" : ""}\\section{}\n`,
+  };
+}
+
 export function projectStructure(main: string, sources: ReadonlyMap<string, string>): StructureEntry[] {
   const roots: StructureEntry[] = [];
   const visiting = new Set<string>();
@@ -228,6 +298,7 @@ export function projectStructure(main: string, sources: ReadonlyMap<string, stri
             title: displayTitle(source.slice(parsed.argument.from, parsed.argument.to)),
             line: lineAt(source, parsed.start),
             range: { path: filePath, from: parsed.argument.from, to: parsed.argument.to },
+            commandRange: { path: filePath, from: parsed.start, to: parsed.end },
           };
           if (localHeading === currentHeading) {
             const nextBoundary = commands.slice(index + 1).find(candidate => candidate.level !== null && candidate.level <= currentHeading!.level)?.start ?? source.length;

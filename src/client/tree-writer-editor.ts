@@ -1,7 +1,7 @@
 import { defaultKeymap } from "@codemirror/commands";
 import { defaultHighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import * as Y from "yjs";
 
@@ -14,6 +14,7 @@ type TreeWriterEditorOptions = {
   text: Y.Text;
   undoManager?: Y.UndoManager;
   onInvalidated: () => void;
+  selection?: { anchor: number; head?: number };
 };
 
 type LocalChange = { from: number; to: number; insert: string };
@@ -59,6 +60,9 @@ export class TreeWriterEditor {
       parent: options.host,
       state: EditorState.create({
         doc: initial,
+        selection: options.selection
+          ? EditorSelection.single(options.selection.anchor, options.selection.head ?? options.selection.anchor)
+          : undefined,
         extensions: [
           EditorState.readOnly.of(!options.editable),
           EditorView.editable.of(options.editable),
@@ -104,6 +108,15 @@ export class TreeWriterEditor {
 
   focus(): void {
     this.view.focus();
+    if (this.options.selection) {
+      this.view.dispatch({
+        selection: EditorSelection.single(
+          this.options.selection.anchor,
+          this.options.selection.head ?? this.options.selection.anchor,
+        ),
+        scrollIntoView: true,
+      });
+    }
   }
 
   destroy(): void {
