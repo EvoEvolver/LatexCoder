@@ -625,13 +625,22 @@ test("version history shows agent diffs and restores files through a custom conf
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     const original = await fetch(`${base}/v1/files?path=main.tex`);
     const source = await original.text();
+    const changedWord = source.match(/[A-Za-z]{6,}/)?.[0];
+    assert.ok(changedWord);
+    const editedSource = source.replace(changedWord, "HistoryReplacement")
+      + `\n% Agent checked the equation E = mc^2 ${"and documented a deliberately long explanation ".repeat(12)}\n`;
     const edited = await fetch(`${base}/v1/files/edit?path=main.tex&agentId=researcher&agentName=Research%20agent`, {
-      method: "POST", headers: { "X-Base-SHA256": original.headers.get("x-content-sha256")! }, body: source + "\n% Agent checked the equation E = mc^2\n",
+      method: "POST", headers: { "X-Base-SHA256": original.headers.get("x-content-sha256")! }, body: editedSource,
     });
     assert.equal(edited.status, 200);
     await chooseAppMenu(page, "history", "#git-button");
     await page.locator("#history-agents").click();
     await page.waitForFunction(() => document.querySelector("#history-diff")?.textContent?.includes("+% Agent checked"));
+    assert.equal((await page.locator(".diff-word-removed").allTextContents()).join(""), changedWord);
+    assert.equal((await page.locator(".diff-word-added").allTextContents()).join(""), "HistoryReplacement");
+    const longLine = page.locator(".diff-added", { hasText: "deliberately long explanation" });
+    assert.ok((await longLine.boundingBox())!.height > 30, "long diff lines should wrap instead of scrolling horizontally");
+    assert.equal(await page.locator("#history-diff").evaluate(element => element.scrollWidth <= element.clientWidth + 1), true);
     assert.match(await page.locator("#history-meta").textContent(), /Research agent/);
     assert.equal(await page.locator("#git-history .version-row").count(), 1);
     await page.screenshot({ path: "/tmp/latexcoder-version-history-light.png" });

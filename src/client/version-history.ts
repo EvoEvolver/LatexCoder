@@ -1,3 +1,5 @@
+import { diffWordsWithSpace } from "diff";
+
 type Version = { id: string; shortId: string; date: string; subject: string; metadata?: { kind?: string; agentName?: string; mode?: string } };
 type ChangedFile = { path: string; added: number | null; removed: number | null };
 type Detail = { version: Version; files: ChangedFile[]; currentRevision: string; structure: { foldersAdded: string[]; foldersRemoved: string[]; main: { before: string; after: string } | null } };
@@ -9,6 +11,49 @@ type Dependencies = {
   editable(): boolean;
 };
 const node = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+type ParsedDiffLine = {
+  text: string;
+  kind: "added" | "removed" | "context" | "hunk";
+  before: string;
+  after: string;
+  counterpart?: string;
+};
+
+function appendWordDiff(code: HTMLElement, line: ParsedDiffLine): void {
+  const marker = line.kind === "added" ? "+" : line.kind === "removed" ? "-" : "";
+  if (!line.counterpart || !marker) {
+    code.textContent = line.text || " ";
+    return;
+  }
+  code.append(document.createTextNode(marker));
+  const removed = line.kind === "removed" ? line.text.slice(1) : line.counterpart.slice(1);
+  const added = line.kind === "added" ? line.text.slice(1) : line.counterpart.slice(1);
+  for (const part of diffWordsWithSpace(removed, added)) {
+    if ((line.kind === "removed" && part.added) || (line.kind === "added" && part.removed)) continue;
+    if ((line.kind === "removed" && part.removed) || (line.kind === "added" && part.added)) {
+      const changed = document.createElement("mark");
+      changed.className = line.kind === "removed" ? "diff-word-removed" : "diff-word-added";
+      changed.textContent = part.value;
+      code.append(changed);
+    } else code.append(document.createTextNode(part.value));
+  }
+}
+
+function pairChangedLines(lines: ParsedDiffLine[]): void {
+  for (let index = 0; index < lines.length;) {
+    if (lines[index].kind !== "removed") { index += 1; continue; }
+    const removedStart = index;
+    while (index < lines.length && lines[index].kind === "removed") index += 1;
+    const addedStart = index;
+    while (index < lines.length && lines[index].kind === "added") index += 1;
+    const pairs = Math.min(addedStart - removedStart, index - addedStart);
+    for (let offset = 0; offset < pairs; offset += 1) {
+      lines[removedStart + offset].counterpart = lines[addedStart + offset].text;
+      lines[addedStart + offset].counterpart = lines[removedStart + offset].text;
+    }
+  }
+}
 
 export function createVersionHistory(deps: Dependencies) {
   let agentOnly = false, cursor: string | null = null, selected: Detail | null = null, file = "";
@@ -42,17 +87,24 @@ export function createVersionHistory(deps: Dependencies) {
       if (epoch !== fileGeneration || project !== deps.project()) return;
       diff.replaceChildren();
       let oldLine = 0, newLine = 0, inHunk = false;
+      const lines: ParsedDiffLine[] = [];
       for (const text of result.patch.split("\n")) {
         if (!inHunk && /^(diff --git |index |--- |\+\+\+ |new file mode |deleted file mode )/.test(text)) continue;
-        const line = document.createElement("span"); line.className = "version-diff-line";
         const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
         let before = "", after = "";
-        if (header) { inHunk = true; oldLine = Number(header[1]); newLine = Number(header[2]); line.classList.add("diff-hunk"); }
-        else if (inHunk && text.startsWith("+")) { line.classList.add("diff-added"); after = String(newLine++); }
-        else if (inHunk && text.startsWith("-")) { line.classList.add("diff-removed"); before = String(oldLine++); }
+        let kind: ParsedDiffLine["kind"] = "context";
+        if (header) { inHunk = true; oldLine = Number(header[1]); newLine = Number(header[2]); kind = "hunk"; }
+        else if (inHunk && text.startsWith("+")) { kind = "added"; after = String(newLine++); }
+        else if (inHunk && text.startsWith("-")) { kind = "removed"; before = String(oldLine++); }
         else if (text.startsWith(" ")) { before = String(oldLine++); after = String(newLine++); }
-        for (const value of [before, after]) { const gutter = document.createElement("span"); gutter.className = "diff-line-number"; gutter.textContent = value; gutter.setAttribute("aria-hidden", "true"); line.append(gutter); }
-        const code = document.createElement("span"); code.textContent = text || " "; line.append(code); diff.append(line);
+        lines.push({ text, kind, before, after });
+      }
+      pairChangedLines(lines);
+      for (const parsed of lines) {
+        const line = document.createElement("span");
+        line.className = `version-diff-line diff-${parsed.kind}`;
+        for (const value of [parsed.before, parsed.after]) { const gutter = document.createElement("span"); gutter.className = "diff-line-number"; gutter.textContent = value; gutter.setAttribute("aria-hidden", "true"); line.append(gutter); }
+        const code = document.createElement("span"); code.className = "diff-code"; appendWordDiff(code, parsed); line.append(code); diff.append(line);
       }
       if (!result.patch) diff.textContent = "No textual changes in this file.";
       node("history-diff-note").textContent = result.truncated ? "Large diff truncated. Clone the project to inspect the complete change." : "− removed  /  + added";

@@ -210,11 +210,15 @@ html.dark .icon-folder, html.dark .icon-folder-open { color: oklch(.73 .055 235)
 .version-diff-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .4rem 1rem; font-size: .7rem; border-block: 1px solid var(--border); }
 #history-file-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .version-diff { margin: 0; overflow: auto; flex: 1; min-height: 4rem; padding: .5rem 0; font-size: .72rem; line-height: 1.7; background: var(--editor-background); color: var(--editor-foreground); tab-size: 4; }
-.version-diff-line { display: flex; min-width: 100%; width: max-content; padding-right: 1rem; }
+.version-diff-line { display: flex; width: 100%; min-width: 0; padding-right: 1rem; }
 .diff-line-number { display: inline-block; flex: 0 0 3rem; width: 3rem; padding-right: .75rem; text-align: right; user-select: none; opacity: .55; }
+.diff-code { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff-added { background: var(--editor-insertion); color: var(--editor-insertion-foreground); }
 .diff-removed { background: var(--editor-deletion); color: var(--editor-deletion-foreground); }
 .diff-hunk { color: var(--syntax-keyword); background: var(--accent); }
+.diff-word-added, .diff-word-removed { border-radius: 2px; padding: 0 1px; color: inherit; font: inherit; }
+.diff-word-added { background: color-mix(in srgb, #188064 35%, transparent); box-shadow: inset 0 -1px 0 #188064; }
+.diff-word-removed { background: color-mix(in srgb, #d92d20 28%, transparent); box-shadow: inset 0 -1px 0 #d92d20; }
 .version-restore { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .75rem 1rem; border-top: 1px solid var(--border); }
 #history-diff-note { font-size: .65rem; color: var(--muted-foreground); }
 .version-browser button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
