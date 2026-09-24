@@ -444,6 +444,14 @@ test("project dashboard searches titles and tags and archives per user", async (
     await page.locator("#projects-page").waitFor();
 
     const taggedRow = page.locator(".project-row", { hasText: "Quantum Notes" });
+    const biologyRow = page.locator(".project-row", { hasText: "Biology Draft" });
+    await taggedRow.locator('summary[aria-label="Project actions"]').click();
+    assert.equal(await taggedRow.locator("details.context-menu").getAttribute("open"), "");
+    await biologyRow.locator('summary[aria-label="Project actions"]').click();
+    assert.equal(await taggedRow.locator("details.context-menu").getAttribute("open"), null);
+    assert.equal(await biologyRow.locator("details.context-menu").getAttribute("open"), "");
+    await page.locator("#project-search").click();
+    assert.equal(await biologyRow.locator("details.context-menu").getAttribute("open"), null);
     await taggedRow.locator("summary").click();
     await taggedRow.getByRole("button", { name: "Edit tags" }).click();
     await page.locator("#action-input").fill("Research, Quantum, research");

@@ -2486,6 +2486,20 @@ let projectSearchQuery = "";
 let selectedProjectTag = "";
 let projectArchiveView: "active" | "archived" = "active";
 
+function closeProjectActionMenus(except?: HTMLDetailsElement): void {
+  elements.project_list.querySelectorAll<HTMLDetailsElement>("details.context-menu[open]").forEach(menu => {
+    if (menu !== except) menu.open = false;
+  });
+}
+
+document.addEventListener("click", event => {
+  const menu = (event.target as Element).closest<HTMLDetailsElement>("#project-list details.context-menu");
+  closeProjectActionMenus(menu || undefined);
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") closeProjectActionMenus();
+});
+
 function projectTagButton(tag: string, selected: boolean): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
@@ -2565,7 +2579,10 @@ function renderProjects() {
     }
     const menu = document.createElement("details");
     menu.className = "context-menu relative";
-    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-44 rounded-md border bg-card p-1 shadow-xl"></div>';
+    menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" aria-label="Project actions" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-44 rounded-md border bg-card p-1 shadow-xl"></div>';
+    menu.addEventListener("toggle", () => {
+      if (menu.open) closeProjectActionMenus(menu);
+    });
     const panel = menu.querySelector("div");
     const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
       ...(project.permissions?.edit ? [["tag", "Edit tags", () => editProjectTags(project)]] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
