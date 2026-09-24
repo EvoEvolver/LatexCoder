@@ -69,6 +69,11 @@ export class WorkspaceController {
 
   get isNarrow(): boolean { return this.narrow.matches; }
   get isOutputHidden(): boolean { return this.outputHidden; }
+  get isOutputViewOpen(): boolean {
+    return this.narrow.matches
+      ? this.elements.outputPane.classList.contains("mobile-open")
+      : this.outputHidden && this.desktopOutputOpen;
+  }
 
   setMobileFilesOpen(open: boolean): void {
     this.elements.filesPane.classList.toggle("mobile-open", open);

@@ -103,6 +103,47 @@ test("PDF preview fits page width or a whole page", async () => {
   });
 });
 
+test("Tree headings navigate within PDF-only view", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const source = String.raw`\documentclass{article}
+\begin{document}
+\section{Overview}
+Opening text.
+\section{Target section}
+Target text.
+\end{document}`;
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
+      data: source,
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelectorAll('#structure-list [data-structure-type="heading"]').length === 2);
+    await page.route("**/v1/build/pdf*", route => route.fulfill({
+      contentType: "application/pdf",
+      headers: { "X-LaTeX-Coder-Source-Revision": "tree-revision" },
+      body: previewPdf(),
+    }));
+    await page.route("**/v1/build/position*", async route => {
+      const request = route.request().postDataJSON();
+      assert.equal(request.path, "main.tex");
+      assert.equal(request.line, 5);
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ page: 1, x: 80, y: 120, revision: "tree-revision" }),
+      });
+    });
+
+    await page.locator("#toggle-output-column").click();
+    await page.locator("#open-pdf").click();
+    assert.equal(await page.locator("#editor-pane").isVisible(), false);
+    await page.locator('#structure-list [data-structure-type="heading"]', { hasText: "Target section" }).click();
+    await page.locator("#pdf-source-marker").waitFor();
+    assert.equal(await page.locator("#output-pane").isVisible(), true);
+    assert.equal(await page.locator("#editor-pane").isVisible(), false);
+  });
+});
+
 test("mobile editor can open, compile, view, and close the PDF preview", async () => {
   await withEditor(async ({ page, base }) => {
     await page.setViewportSize({ width: 390, height: 844 });

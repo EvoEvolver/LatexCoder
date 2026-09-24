@@ -623,7 +623,7 @@ function structureSourceButton(entry: StructureEntry, level: number): HTMLButton
   button.dataset.structureType = entry.type;
   button.dataset.structureKind = entry.kind;
   button.style.paddingLeft = `${8 + Math.min(4, level) * 6}px`;
-  button.addEventListener("click", () => { void revealSource(entry).catch(error => showToast(error.message)); });
+  button.addEventListener("click", () => { void revealTreePosition(entry).catch(error => showToast(error.message)); });
   return button;
 }
 
@@ -641,7 +641,7 @@ function structureSummaryButton(heading: StructureHeading, summary: StructureSum
   text.className = "line-clamp-2";
   text.textContent = summary.title;
   button.append(bullet, text);
-  button.addEventListener("click", () => { void revealSource({ path: heading.path, line: summary.line }).catch(error => showToast(error.message)); });
+  button.addEventListener("click", () => { void revealTreePosition({ path: heading.path, line: summary.line }).catch(error => showToast(error.message)); });
   return button;
 }
 
@@ -4163,6 +4163,28 @@ async function revealSource(destination: { path: string; line: number; from?: nu
   const selection = { anchor: line.from + Math.min(line.length, destination.from || 0), head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0) };
   view.dispatch({ selection, effects: EditorView.scrollIntoView(selection.anchor, { y: "center" }) });
   view.focus();
+}
+
+async function revealTreePosition(destination: { path: string; line: number; from?: number; to?: number }): Promise<void> {
+  if (!workspaceController.isOutputViewOpen) {
+    await revealSource(destination);
+    return;
+  }
+  const project = state.projectId;
+  await openFile(destination.path);
+  const view = state.view;
+  const provider = state.provider;
+  if (!view || !provider) return;
+  const deadline = Date.now() + 5000;
+  while (!provider.synced && state.view === view && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+  if (state.projectId !== project || state.view !== view || !provider.synced) return;
+  const line = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, destination.line)));
+  const selection = {
+    anchor: line.from + Math.min(line.length, destination.from || 0),
+    head: line.from + Math.min(line.length, destination.to ?? destination.from ?? 0),
+  };
+  view.dispatch({ selection });
+  await goToPdf(view);
 }
 
 const searchDialog = document.getElementById("search-dialog") as HTMLDialogElement;
