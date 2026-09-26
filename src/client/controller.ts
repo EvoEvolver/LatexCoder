@@ -330,6 +330,10 @@ let editorSession: EditorSession | null = null;
 
 function updateSyncStatus() {
   if (!state.provider) return;
+  if (state.projectCanEdit && editorSession && !editorSession.canEdit) {
+    elements.sync_state.textContent = "Loading document";
+    return;
+  }
   const connected = state.provider.wsconnected;
   elements.sync_state.textContent = !connected ? state.unsaved ? "Offline - unsynced edits" : "Reconnecting"
     : !state.provider.synced ? "Synchronizing"
@@ -1708,11 +1712,9 @@ function scheduleStaticDiagnostics(): void {
   staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
 }
 
-function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">, editable = true): Extension[] {
+function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
-    EditorState.readOnly.of(!editable),
-    EditorView.editable.of(editable),
     lineNumbers({
       domEventHandlers: {
         contextmenu(view, line, event) {
@@ -2151,6 +2153,7 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   state.provider = session.provider;
   state.persistence = session.persistence;
   state.view = session.view;
+  updateSyncStatus();
   applyEditorDiagnostics();
   setAwareness();
 }
@@ -4390,7 +4393,10 @@ if (testMode) {
       state.doc = doc;
       state.provider = provider as unknown as WebsocketProvider;
       state.view = new EditorView({
-        state: EditorState.create({ doc: "", extensions: editorExtensions(ytext, provider) }),
+        state: EditorState.create({
+          doc: "",
+          extensions: [EditorState.readOnly.of(false), EditorView.editable.of(true), ...editorExtensions(ytext, provider)],
+        }),
         parent: elements.editor,
       });
       // Insert only after the binding is attached, so yCollab mirrors the

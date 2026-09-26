@@ -99,6 +99,50 @@ test("collaborative undo preserves remote edits and offline changes recover afte
   });
 });
 
+test("cold-cache editor stays read-only until a delayed initial sync completes", async () => {
+  await withEditor(async ({ base, browser }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 900,
+      downloadThroughput: 1024 * 1024,
+      uploadThroughput: 1024 * 1024,
+      connectionType: "cellular3g",
+    });
+    try {
+      await page.goto(`${base}/?e2e=1`);
+      await page.waitForFunction(() => globalThis.__paperE2E?.state?.view, undefined, { timeout: 30_000 });
+      await page.evaluate(() => Object.assign(globalThis, { __coldCacheView: globalThis.__paperE2E.state.view }));
+      assert.equal(await page.locator(".cm-content").getAttribute("contenteditable"), "false");
+      assert.equal(await page.locator("#sync-state").textContent(), "Loading document");
+      await page.locator(".cm-content").focus();
+      await page.keyboard.insertText("MUST NOT APPEAR");
+      assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), "");
+
+      await page.waitForFunction(() => globalThis.__paperE2E.state.provider?.synced, undefined, { timeout: 15_000 });
+      await page.waitForFunction(() => document.querySelector(".cm-content")?.getAttribute("contenteditable") === "true");
+      const source = await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString());
+      assert.ok(source.length > 0);
+      assert.doesNotMatch(source, /MUST NOT APPEAR/);
+      assert.equal(await page.evaluate(() => (
+        globalThis as typeof globalThis & { __coldCacheView: unknown }
+      ).__coldCacheView === globalThis.__paperE2E.state.view), true);
+      await page.waitForFunction(async () => await globalThis.__paperE2E.state.persistence?.get("server-hydrated") === "1");
+
+      await page.reload();
+      await page.waitForFunction(() => globalThis.__paperE2E?.state?.view, undefined, { timeout: 30_000 });
+      await page.waitForFunction(() => document.querySelector(".cm-content")?.getAttribute("contenteditable") === "true");
+      assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.provider.synced), false);
+      assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), source);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
 test("real collaborative page creates and accepts an insertion suggestion", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);

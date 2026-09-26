@@ -1,4 +1,4 @@
-import { EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -18,7 +18,7 @@ export type EditorSessionOptions = {
   authorId: string;
   authorName: string;
   editable: boolean;
-  extensions: (text: Y.Text, provider: WebsocketProvider, editable: boolean) => Extension[];
+  extensions: (text: Y.Text, provider: WebsocketProvider) => Extension[];
   parent: HTMLElement;
   persistenceKey: string;
   room: string;
@@ -34,13 +34,15 @@ export class EditorSession {
   readonly text: Y.Text;
   readonly view: EditorView;
 
+  private readonly editability = new Compartment();
   private disposed = false;
+  private editingEnabled = false;
   private nonce = 0;
 
   constructor(private readonly options: EditorSessionOptions) {
     this.doc = new Y.Doc();
     this.provider = new WebsocketProvider(options.socketUrl, options.room, this.doc, {
-      connect: true,
+      connect: false,
       params: {
         saved: "1",
         authorId: options.authorId,
@@ -50,7 +52,10 @@ export class EditorSession {
     this.text = this.doc.getText("content");
     this.persistence = options.editable ? new IndexeddbPersistence(options.persistenceKey, this.doc) : null;
     this.view = new EditorView({
-      state: EditorState.create({ doc: "", extensions: options.extensions(this.text, this.provider, options.editable) }),
+      state: EditorState.create({
+        doc: "",
+        extensions: [this.editability.of(editability(false)), ...options.extensions(this.text, this.provider)],
+      }),
       parent: options.parent,
     });
 
@@ -62,18 +67,23 @@ export class EditorSession {
       }
     };
     this.doc.on("update", (_update, origin) => {
-      if (this.disposed || !options.editable || origin === this.provider) return;
+      if (this.disposed || !options.editable || origin === this.provider || origin === this.persistence) return;
       this.nonce += 1;
       this.requestSave();
     });
     this.provider.on("status", this.options.callbacks.onStatusChange);
     this.provider.on("sync", this.handleSync);
     this.provider.awareness.on("change", this.options.callbacks.onAwarenessChange);
-    this.options.callbacks.onUnsavedChange(options.editable);
+    this.options.callbacks.onUnsavedChange(false);
+    void this.initialize();
   }
 
   get synced(): boolean {
     return this.provider.synced;
+  }
+
+  get canEdit(): boolean {
+    return this.editingEnabled;
   }
 
   requestSave(): void {
@@ -102,8 +112,38 @@ export class EditorSession {
 
   private readonly handleSync = (synced: boolean): void => {
     if (this.disposed || !synced) return;
-    if (this.options.editable) this.requestSave();
+    if (this.options.editable) {
+      this.enableEditing();
+      void this.persistence?.set("server-hydrated", "1").catch(error => console.error("Could not mark editor cache as hydrated", error));
+      this.requestSave();
+    }
     else this.options.callbacks.onStatusChange();
     this.options.callbacks.onSynced();
   };
+
+  private async initialize(): Promise<void> {
+    if (!this.persistence) {
+      this.provider.connect();
+      return;
+    }
+    try {
+      await this.persistence.whenSynced;
+      if (this.disposed) return;
+      if (await this.persistence.get("server-hydrated") === "1") this.enableEditing();
+    } catch (error) {
+      console.error("Could not hydrate editor cache", error);
+    }
+    if (!this.disposed) this.provider.connect();
+  }
+
+  private enableEditing(): void {
+    if (this.disposed || this.editingEnabled || !this.options.editable) return;
+    this.editingEnabled = true;
+    this.view.dispatch({ effects: this.editability.reconfigure(editability(true)) });
+    this.options.callbacks.onStatusChange();
+  }
+}
+
+function editability(editable: boolean): Extension {
+  return [EditorState.readOnly.of(!editable), EditorView.editable.of(editable)];
 }
