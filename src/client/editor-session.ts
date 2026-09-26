@@ -114,7 +114,6 @@ export class EditorSession {
     if (this.disposed || !synced) return;
     if (this.options.editable) {
       this.enableEditing();
-      void this.persistence?.set("server-hydrated", "1").catch(error => console.error("Could not mark editor cache as hydrated", error));
       this.requestSave();
     }
     else this.options.callbacks.onStatusChange();
@@ -129,7 +128,6 @@ export class EditorSession {
     try {
       await this.persistence.whenSynced;
       if (this.disposed) return;
-      if (await this.persistence.get("server-hydrated") === "1") this.enableEditing();
     } catch (error) {
       console.error("Could not hydrate editor cache", error);
     }

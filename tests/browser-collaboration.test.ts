@@ -130,13 +130,39 @@ test("cold-cache editor stays read-only until a delayed initial sync completes",
       assert.equal(await page.evaluate(() => (
         globalThis as typeof globalThis & { __coldCacheView: unknown }
       ).__coldCacheView === globalThis.__paperE2E.state.view), true);
-      await page.waitForFunction(async () => await globalThis.__paperE2E.state.persistence?.get("server-hydrated") === "1");
+
+      const projectId = await page.evaluate(() => globalThis.__paperE2E.state.projectId);
+      await page.evaluate(() => globalThis.__paperE2E.state.provider.disconnect());
+      const replacement = `${source.slice(0, -1)}${source.endsWith("X") ? "Y" : "X"}`;
+      await page.request.put(`${base}/v1/files?project=${projectId}&path=main.tex`, {
+        data: replacement,
+        headers: { "Content-Type": "text/plain" },
+      });
+      await page.request.put(`${base}/v1/files?project=${projectId}&path=main.tex`, {
+        data: source,
+        headers: { "Content-Type": "text/plain" },
+      });
 
       await page.reload();
       await page.waitForFunction(() => globalThis.__paperE2E?.state?.view, undefined, { timeout: 30_000 });
-      await page.waitForFunction(() => document.querySelector(".cm-content")?.getAttribute("contenteditable") === "true");
+      assert.equal(await page.locator(".cm-content").getAttribute("contenteditable"), "false");
       assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.provider.synced), false);
       assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), source);
+      await page.locator(".cm-content").focus();
+      await page.keyboard.press("Backspace");
+      assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), source);
+
+      await page.waitForFunction(() => globalThis.__paperE2E.state.provider?.synced, undefined, { timeout: 15_000 });
+      await page.waitForFunction(() => document.querySelector(".cm-content")?.getAttribute("contenteditable") === "true");
+      await page.evaluate(() => {
+        const view = globalThis.__paperE2E.state.view;
+        view.dispatch({ selection: { anchor: view.state.doc.length } });
+        view.focus();
+      });
+      await page.keyboard.press("Backspace");
+      await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+      await page.waitForTimeout(500);
+      assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), source.slice(0, -1));
     } finally {
       await context.close();
     }
