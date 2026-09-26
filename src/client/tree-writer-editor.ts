@@ -1,4 +1,3 @@
-import { defaultKeymap } from "@codemirror/commands";
 import { defaultHighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
@@ -6,6 +5,7 @@ import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import * as Y from "yjs";
 
 import type { SourceRange } from "../shared/structure.ts";
+import { editorDefaultKeymap } from "./editor-keymap.ts";
 
 type TreeWriterEditorOptions = {
   editable: boolean;
@@ -76,7 +76,7 @@ export class TreeWriterEditor {
             { key: "Mod-z", run: () => { options.undoManager?.undo(); return Boolean(options.undoManager); } },
             { key: "Mod-Shift-z", run: () => { options.undoManager?.redo(); return Boolean(options.undoManager); } },
             { key: "Mod-y", run: () => { options.undoManager?.redo(); return Boolean(options.undoManager); } },
-            ...defaultKeymap,
+            ...editorDefaultKeymap,
           ]),
           EditorView.updateListener.of(update => {
             if (!update.docChanged || this.applyingRemote || this.disposed) return;

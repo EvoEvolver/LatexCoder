@@ -619,6 +619,18 @@ test("consecutive Backspace deletions stay in one review block", async () => {
   });
 });
 
+test("Alt+Arrow does not reorder editor lines", async () => {
+  await withEditor(async ({ page }) => {
+    const source = "First line\nSecond line\nThird line";
+    await createEditor(page, source);
+    await setCursor(page, source.indexOf("Second"));
+    await page.keyboard.press("Alt+ArrowUp");
+    assert.equal((await editorState(page)).doc, source);
+    await page.keyboard.press("Alt+ArrowDown");
+    assert.equal((await editorState(page)).doc, source);
+  });
+});
+
 test("version history shows agent diffs and restores files through a custom confirmation", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);

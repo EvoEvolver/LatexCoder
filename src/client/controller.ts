@@ -2,7 +2,7 @@ import { createVersionHistory } from "./version-history";
 import { createFileTabs } from "./file-tabs.ts";
 import { createFileTree } from "./file-tree.ts";
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
-import { defaultKeymap, indentWithTab, selectAll } from "@codemirror/commands";
+import { indentWithTab, selectAll } from "@codemirror/commands";
 import {
   bracketMatching,
   foldGutter,
@@ -112,6 +112,7 @@ import { createElementRegistry, optionalElement } from "./dom.ts";
 import { PdfController } from "./pdf-controller.ts";
 import { WorkspaceController } from "./workspace-controller.ts";
 import { TreeWriterEditor } from "./tree-writer-editor.ts";
+import { editorDefaultKeymap } from "./editor-keymap.ts";
 import { sourceEditorInteractions, sourceModifierIsMeta, sourceModifierLabel, sourceModifierPressed } from "./source-editor-interactions.ts";
 import type {
   AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
@@ -1764,7 +1765,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     editorDiagnosticTooltip,
     protectReviewStorage,
     EditorView.clipboardOutputFilter.of(source => stripReviewStorage(source)),
-    keymap.of([...yUndoManagerKeymap, ...defaultKeymap, ...searchKeymap, indentWithTab]),
+    keymap.of([...yUndoManagerKeymap, ...editorDefaultKeymap, ...searchKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
       if (update.docChanged || update.selectionSet) {
