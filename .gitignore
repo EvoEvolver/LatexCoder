@@ -4,6 +4,7 @@ public/app.js
 public/pdf.worker.min.mjs
 .treer/
 .latexcoder/
+.DS_Store
 
 # Local browser validation artifacts
 output/playwright/
