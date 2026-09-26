@@ -13,6 +13,44 @@ import { createPaperServer } from "../src/server/main.ts";
 
 import { withEditor, LIPSUM, chooseAppMenu, toggleBlame, openRootFileMenu, selectionContextMenu, realLatexmk, previewPdf, createEditor, setCursor, editorState, dragSelect } from "./helpers/browser.ts";
 
+test("PDF view restores page anchor, fit mode, and zoom after reload", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.route("**/v1/compile*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ build: { log: "Done" } }) }));
+    await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf(3, 300, 600) }));
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator("#compile-button").click();
+    await page.locator("#pdf-document canvas").nth(2).waitFor();
+    await page.locator("#pdf-fit-page").click();
+    await page.locator("#pdf-zoom-in").click();
+    await page.locator("#pdf-zoom-in").click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "page" && Math.abs(globalThis.__paperE2E.state.pdfZoom - 1.3) < 0.01);
+    await page.evaluate(() => {
+      const view = document.querySelector<HTMLElement>("#pdf-view");
+      const canvas = document.querySelector<HTMLCanvasElement>('#pdf-document canvas[data-page="2"]');
+      view.scrollTop = canvas.offsetTop + canvas.clientHeight * 0.35 - view.clientHeight / 2;
+      view.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(250);
+
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator("#compile-button").click();
+    await page.locator("#pdf-document canvas").nth(2).waitFor();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.pdfFitMode === "page" && Math.abs(globalThis.__paperE2E.state.pdfZoom - 1.3) < 0.01);
+    const restored = await page.evaluate(() => {
+      const view = document.querySelector<HTMLElement>("#pdf-view");
+      const center = view.scrollTop + view.clientHeight / 2;
+      const canvases = [...document.querySelectorAll<HTMLCanvasElement>("#pdf-document canvas")];
+      const canvas = canvases.find(candidate => center >= candidate.offsetTop && center <= candidate.offsetTop + candidate.clientHeight);
+      return { page: Number(canvas?.dataset.page), ratio: canvas ? (center - canvas.offsetTop) / canvas.clientHeight : -1 };
+    });
+    assert.equal(restored.page, 2);
+    assert.ok(Math.abs(restored.ratio - 0.35) < 0.03);
+    assert.equal(await page.locator("#pdf-fit-page").getAttribute("aria-pressed"), "true");
+  });
+});
+
 test("PDF navigation vertically centers the destination source line", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();

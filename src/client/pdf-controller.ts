@@ -1,5 +1,6 @@
 import { getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/build/pdf.mjs";
 import type { PdfBox, PdfPosition, SourcePosition } from "./types.ts";
+import { loadPdfView, savePdfView, type PdfViewState } from "./view-state.ts";
 
 type PdfElements = {
   contextMenu: HTMLElement;
@@ -17,7 +18,9 @@ type PdfControllerOptions = {
   elements: PdfElements;
   modifierLabel: string;
   modifierPressed: (event: MouseEvent) => boolean;
+  onViewStateChange: () => void;
   pdfUrl: () => URL;
+  projectId: () => string;
   sourceAt: (page: number, x: number, y: number, revision: string | null) => Promise<SourcePosition>;
   revealSource: (position: SourcePosition) => Promise<void>;
   showError: (message: string) => void;
@@ -34,8 +37,11 @@ export class PdfController {
   private renderVersion = 0;
   private requestVersion = 0;
   private resizeFrame = 0;
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private sourceRevisionValue: string | null = null;
   private zoom = 1;
+  private activeProjectId = "";
+  private pendingRestore: PdfViewState | null = null;
   private contextAction: (() => Promise<void>) | null = null;
   private readonly resizeObserver: ResizeObserver;
 
@@ -62,7 +68,10 @@ export class PdfController {
       if (!options.elements.contextMenu.contains(event.target as Node)) this.closeContextMenu();
     }, true);
     document.addEventListener("keydown", event => { if (event.key === "Escape") this.closeContextMenu(); });
-    options.elements.view.addEventListener("scroll", () => this.closeContextMenu());
+    options.elements.view.addEventListener("scroll", () => {
+      this.closeContextMenu();
+      this.scheduleSave();
+    });
     window.addEventListener("resize", () => this.closeContextMenu());
   }
 
@@ -73,7 +82,12 @@ export class PdfController {
   get sourceRevision(): string | null { return this.sourceRevisionValue; }
   get currentZoom(): number { return this.zoom; }
 
+  persistView(): void { this.saveView(); }
+
   async reset(): Promise<void> {
+    this.saveView();
+    this.activeProjectId = "";
+    this.pendingRestore = null;
     this.requestVersion += 1;
     this.renderVersion += 1;
     cancelAnimationFrame(this.resizeFrame);
@@ -83,6 +97,7 @@ export class PdfController {
     this.highlights = null;
     this.sourceRevisionValue = null;
     this.priorityPage = undefined;
+    clearTimeout(this.saveTimer);
     this.closeContextMenu();
     this.options.elements.freshness.hidden = true;
     this.options.elements.document.replaceChildren();
@@ -94,11 +109,13 @@ export class PdfController {
   setFitMode(mode: "width" | "page"): void {
     this.fitMode = mode;
     this.zoom = 1;
+    this.options.onViewStateChange();
     void this.render();
   }
 
   zoomBy(delta: number): void {
     this.zoom = Math.max(0.5, Math.min(2, this.zoom + delta));
+    this.options.onViewStateChange();
     void this.render();
   }
 
@@ -115,6 +132,7 @@ export class PdfController {
 
   async show(force = false, priorityPage?: number): Promise<void> {
     this.closeContextMenu();
+    this.prepareProject();
     if (force) this.priorityPage = priorityPage;
     const requestVersion = ++this.requestVersion;
     const downloadUrl = this.options.pdfUrl();
@@ -158,6 +176,8 @@ export class PdfController {
     if (priorityPage) this.priorityPage = priorityPage;
     const pdf = this.documentProxy;
     if (!pdf) return;
+    const anchor = priorityPage ? null : this.captureAnchor() || this.pendingRestore;
+    if (priorityPage) this.pendingRestore = null;
     const version = ++this.renderVersion;
     const firstPage = await pdf.getPage(1);
     const base = firstPage.getViewport({ scale: 1 });
@@ -225,6 +245,10 @@ export class PdfController {
     this.options.elements.document.replaceChildren(fragment);
     this.options.elements.document.hidden = false;
     this.options.elements.empty.hidden = true;
+    if (anchor) {
+      this.restoreAnchor(anchor);
+      this.pendingRestore = null;
+    }
     if (priorityPage && renders[priorityPage - 1]) {
       await renders[priorityPage - 1]();
       void (async () => {
@@ -239,6 +263,7 @@ export class PdfController {
     if (version !== this.renderVersion) return;
     this.options.elements.status.textContent = "PDF ready";
     this.renderHighlights();
+    this.scheduleSave();
   }
 
   async revealPosition(position: PdfPosition, revealedOutput: boolean): Promise<void> {
@@ -282,6 +307,60 @@ export class PdfController {
     this.contextAction = null;
   }
 
+  private prepareProject(): void {
+    const projectId = this.options.projectId();
+    if (!projectId || projectId === this.activeProjectId) return;
+    this.saveView();
+    this.activeProjectId = projectId;
+    const stored = loadPdfView(projectId);
+    if (!stored) return;
+    this.fitMode = stored.fitMode;
+    this.zoom = stored.zoom;
+    this.pendingRestore = stored;
+    this.options.onViewStateChange();
+  }
+
+  private captureAnchor(): PdfViewState | null {
+    const view = this.options.elements.view;
+    const canvases = [...this.options.elements.document.querySelectorAll<HTMLCanvasElement>("canvas[data-page]")];
+    if (!canvases.length) return null;
+    const centerY = view.scrollTop + view.clientHeight / 2;
+    const centerX = view.scrollLeft + view.clientWidth / 2;
+    const canvas = canvases.find(candidate => centerY >= candidate.offsetTop && centerY <= candidate.offsetTop + candidate.clientHeight)
+      || canvases.reduce((closest, candidate) => (
+        Math.abs(candidate.offsetTop + candidate.clientHeight / 2 - centerY)
+          < Math.abs(closest.offsetTop + closest.clientHeight / 2 - centerY) ? candidate : closest
+      ));
+    return {
+      fitMode: this.fitMode,
+      page: Number(canvas.dataset.page || 1),
+      xRatio: clamp((centerX - canvas.offsetLeft) / Math.max(1, canvas.clientWidth), 0, 1),
+      yRatio: clamp((centerY - canvas.offsetTop) / Math.max(1, canvas.clientHeight), 0, 1),
+      zoom: this.zoom,
+    };
+  }
+
+  private restoreAnchor(anchor: PdfViewState): void {
+    const canvas = this.options.elements.document.querySelector<HTMLCanvasElement>(`canvas[data-page="${anchor.page}"]`);
+    if (!canvas) return;
+    const view = this.options.elements.view;
+    view.scrollTo({
+      top: Math.max(0, canvas.offsetTop + canvas.clientHeight * anchor.yRatio - view.clientHeight / 2),
+      left: Math.max(0, canvas.offsetLeft + canvas.clientWidth * anchor.xRatio - view.clientWidth / 2),
+      behavior: "auto",
+    });
+  }
+
+  private scheduleSave(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.saveView(), 150);
+  }
+
+  private saveView(): void {
+    const anchor = this.captureAnchor();
+    if (this.activeProjectId && anchor) savePdfView(this.activeProjectId, anchor);
+  }
+
   private openContextMenu(event: MouseEvent): void {
     this.options.beforeOpenContextMenu();
     const menu = this.options.elements.contextMenu;
@@ -312,4 +391,8 @@ export class PdfController {
       documentElement.append(marker);
     }
   }
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
 }

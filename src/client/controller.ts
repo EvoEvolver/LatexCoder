@@ -114,6 +114,7 @@ import { WorkspaceController } from "./workspace-controller.ts";
 import { TreeWriterEditor } from "./tree-writer-editor.ts";
 import { editorDefaultKeymap } from "./editor-keymap.ts";
 import { sourceEditorInteractions, sourceModifierIsMeta, sourceModifierLabel, sourceModifierPressed } from "./source-editor-interactions.ts";
+import { loadEditorScroll, saveEditorScroll } from "./view-state.ts";
 import type {
   AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -327,6 +328,8 @@ let autoCompileTimer: ReturnType<typeof setTimeout>;
 let compileRunning = false;
 let compileQueued = false;
 let editorSession: EditorSession | null = null;
+let editorScrollCleanup: (() => void) | null = null;
+let editorScrollTimer: ReturnType<typeof setTimeout> | undefined;
 
 function updateSyncStatus() {
   if (!state.provider) return;
@@ -1830,6 +1833,10 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
 }
 
 function disconnectEditor() {
+  saveCurrentEditorScroll();
+  editorScrollCleanup?.();
+  editorScrollCleanup = null;
+  clearTimeout(editorScrollTimer);
   closeTreeWriterEditor();
   closeEditorContextMenu();
   if (editorSession) editorSession.dispose();
@@ -1852,6 +1859,36 @@ function disconnectEditor() {
   state.doc = null;
   state.selectionSuggestionIds = [];
   elements.selection_actions.hidden = true;
+}
+
+function bindEditorScroll(view: EditorView, projectId: string, path: string): void {
+  const save = () => saveEditorScroll(projectId, path, {
+    top: view.scrollDOM.scrollTop,
+    left: view.scrollDOM.scrollLeft,
+  });
+  const onScroll = () => {
+    clearTimeout(editorScrollTimer);
+    editorScrollTimer = setTimeout(save, 150);
+  };
+  view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
+  editorScrollCleanup = () => view.scrollDOM.removeEventListener("scroll", onScroll);
+}
+
+function saveCurrentEditorScroll(): void {
+  if (!state.view || !state.projectId || !state.activeFile) return;
+  saveEditorScroll(state.projectId, state.activeFile, {
+    top: state.view.scrollDOM.scrollTop,
+    left: state.view.scrollDOM.scrollLeft,
+  });
+}
+
+function restoreEditorScroll(view: EditorView, projectId: string, path: string): void {
+  const saved = loadEditorScroll(projectId, path);
+  if (!saved) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (state.view !== view || state.projectId !== projectId || state.activeFile !== path) return;
+    view.scrollDOM.scrollTo({ top: saved.top, left: saved.left, behavior: "auto" });
+  }));
 }
 
 function setBlameMode(enabled: boolean): void {
@@ -2120,6 +2157,7 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
     guestAuthorId = `guest-${crypto.randomUUID()}`;
     localStorage.setItem("latexcoder-guest-author-id", guestAuthorId);
   }
+  let scrollRestored = false;
   const session = new EditorSession({
     socketUrl: socketUrl(`v1/collab/${encodeURIComponent(state.projectId)}`),
     room: encodeRoom(relativePath),
@@ -2140,6 +2178,10 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
       onUnsavedChange: unsaved => { state.unsaved = unsaved; },
       onSynced: () => {
         if (editorSession !== session) return;
+        if (!scrollRestored) {
+          scrollRestored = true;
+          restoreEditorScroll(session.view, state.projectId, relativePath);
+        }
         renderReviews();
         scheduleStaticDiagnostics();
         applyEditorDiagnostics();
@@ -2153,6 +2195,7 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   state.provider = session.provider;
   state.persistence = session.persistence;
   state.view = session.view;
+  bindEditorScroll(session.view, state.projectId, relativePath);
   updateSyncStatus();
   applyEditorDiagnostics();
   setAwareness();
@@ -3084,7 +3127,9 @@ const pdfController = new PdfController({
   },
   modifierLabel: sourceModifierLabel,
   modifierPressed: sourceModifierPressed,
+  onViewStateChange: updatePdfFitButtons,
   pdfUrl: () => projectApiUrl("v1/build/pdf"),
+  projectId: () => state.projectId,
   sourceAt: async (page, x, y, revision) => {
     const projectId = state.projectId;
     const destination = await request<SourcePosition>("v1/build/source", {
@@ -3109,6 +3154,7 @@ Object.defineProperties(state, {
 
 async function showPdf(force = false, priorityPage?: number) {
   await pdfController.show(force, priorityPage);
+  updatePdfFitButtons();
   await refreshPdfStatus();
 }
 
@@ -4328,6 +4374,7 @@ document.querySelectorAll<HTMLElement>("[data-output]:not([data-output=review])"
   if (button.dataset.output === "pdf" || button.dataset.output === "review" || button.dataset.output === "log") selectOutput(button.dataset.output);
 }));
 window.addEventListener("beforeunload", () => {
+  pdfController.persistView();
   disconnectEditor();
   resetFilePreview();
 });

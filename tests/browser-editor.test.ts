@@ -13,6 +13,30 @@ import { createPaperServer } from "../src/server/main.ts";
 
 import { withEditor, LIPSUM, chooseAppMenu, toggleBlame, openRootFileMenu, selectionContextMenu, realLatexmk, previewPdf, createEditor, setCursor, editorState, dragSelect } from "./helpers/browser.ts";
 
+test("source files restore independent scroll positions across switching and reload", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const source = (prefix: string) => Array.from({ length: 240 }, (_, index) => `${prefix} line ${index + 1}`).join("\n");
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: source("Main"), headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=notes.tex`, { data: source("Notes"), headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+
+    await page.evaluate(() => { globalThis.__paperE2E.state.view.scrollDOM.scrollTop = 900; });
+    await page.locator("#file-list").getByText("notes.tex", { exact: true }).click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "notes.tex" && globalThis.__paperE2E.state.provider?.synced);
+    await page.evaluate(() => { globalThis.__paperE2E.state.view.scrollDOM.scrollTop = 420; });
+    await page.locator("#file-list").getByText("main.tex", { exact: true }).click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "main.tex" && Math.abs(globalThis.__paperE2E.state.view.scrollDOM.scrollTop - 900) < 3);
+
+    await page.reload();
+    await page.waitForFunction(() => globalThis.__paperE2E?.state?.activeFile === "main.tex" && globalThis.__paperE2E.state.provider?.synced);
+    await page.waitForFunction(() => Math.abs(globalThis.__paperE2E.state.view.scrollDOM.scrollTop - 900) < 3);
+    await page.locator("#file-list").getByText("notes.tex", { exact: true }).click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "notes.tex" && Math.abs(globalThis.__paperE2E.state.view.scrollDOM.scrollTop - 420) < 3);
+  });
+});
+
 test("Review opens beside source independently of PDF and closes back to full editor width", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
