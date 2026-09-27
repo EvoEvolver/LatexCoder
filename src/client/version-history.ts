@@ -1,6 +1,7 @@
 import { diffWordsWithSpace } from "diff";
 
-type Version = { id: string; shortId: string; date: string; subject: string; metadata?: { kind?: string; agentName?: string; mode?: string } };
+type Version = { id: string; shortId: string; date: string; subject: string; labels: string[]; metadata?: { kind?: string; agentName?: string; mode?: string } };
+type VersionFilter = "all" | "agent" | "labeled";
 type ChangedFile = { path: string; added: number | null; removed: number | null };
 type Detail = { version: Version; files: ChangedFile[]; currentRevision: string; structure: { foldersAdded: string[]; foldersRemoved: string[]; main: { before: string; after: string } | null } };
 type Dependencies = {
@@ -56,22 +57,64 @@ function pairChangedLines(lines: ParsedDiffLine[]): void {
 }
 
 export function createVersionHistory(deps: Dependencies) {
-  let agentOnly = false, cursor: string | null = null, selected: Detail | null = null, file = "";
+  let filter: VersionFilter = "all", cursor: string | null = null, selected: Detail | null = null, file = "";
   let generation = 0, selectionGeneration = 0, fileGeneration = 0, restoring = false;
   const list = node("git-history"), error = node("history-error"), diff = node("history-diff");
   const restore = node<HTMLButtonElement>("history-restore"), restoreFile = node<HTMLButtonElement>("history-restore-file");
   const more = node<HTMLButtonElement>("history-more"), versionCount = node("history-version-count");
+  const labelForm = node<HTMLFormElement>("history-label-form"), labelInput = node<HTMLInputElement>("history-label-input");
   function fail(reason: unknown) { error.textContent = reason instanceof Error ? reason.message : "Could not load version history. Try refreshing."; error.hidden = false; }
   function clearPreview() {
     node("history-preview").setAttribute("aria-busy", "false");
     selected = null; file = ""; selectionGeneration++; fileGeneration++;
     restore.disabled = true; restoreFile.hidden = true;
+    labelForm.hidden = true;
+    node("history-labels").replaceChildren();
     node("history-title").textContent = "Select a version";
     node("history-meta").textContent = "Inspect changes before restoring. Restores always preserve your current work.";
     node("history-structure").hidden = true;
     node("history-files").replaceChildren(); diff.replaceChildren(); error.hidden = true;
     node("history-file-label").textContent = "Changes compared with the previous version";
     node("history-diff-note").textContent = "";
+  }
+  function labelBadge(value: string, removable: boolean): HTMLElement {
+    const badge = document.createElement("span");
+    badge.className = "inline-flex max-w-full items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-foreground";
+    const text = document.createElement("span"); text.className = "truncate"; text.textContent = value; badge.append(text);
+    if (removable) {
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "text-muted-foreground hover:text-foreground";
+      remove.textContent = "x"; remove.title = `Remove ${value}`; remove.setAttribute("aria-label", `Remove label ${value}`);
+      remove.addEventListener("click", () => void changeLabel(value, true)); badge.append(remove);
+    }
+    return badge;
+  }
+  function showSelectedLabels(): void {
+    const container = node("history-labels"); container.replaceChildren();
+    if (!selected) return;
+    for (const label of selected.version.labels) container.append(labelBadge(label, deps.editable()));
+    labelForm.hidden = !deps.editable();
+  }
+  function showRowLabels(version: Version, container: HTMLElement): void {
+    container.replaceChildren(...version.labels.map(label => labelBadge(label, false)));
+    container.hidden = version.labels.length === 0;
+  }
+  async function changeLabel(label: string, remove: boolean): Promise<void> {
+    if (!selected || !deps.editable()) return;
+    const version = selected.version, project = deps.project();
+    error.hidden = true;
+    try {
+      const result = await deps.request<{ labels: string[] }>(`v1/history/${version.id}/labels`, {
+        method: remove ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      if (!selected || selected.version.id !== version.id || project !== deps.project()) return;
+      selected.version.labels = result.labels;
+      showSelectedLabels();
+      const rowLabels = list.querySelector<HTMLElement>(`[data-version="${version.id}"] .version-labels`);
+      if (rowLabels) showRowLabels(selected.version, rowLabels);
+      if (filter === "labeled" && !result.labels.length) await refresh();
+    } catch (reason) { if (project === deps.project()) fail(reason); }
   }
   async function showFile(path: string) {
     if (!selected || restoring) return;
@@ -123,6 +166,7 @@ export function createVersionHistory(deps: Dependencies) {
       const detail = await deps.request<Detail>(`v1/history/${version.id}`);
       if (epoch !== selectionGeneration || project !== deps.project()) return;
       selected = detail;
+      showSelectedLabels();
       const structure = detail.structure;
       const structureText = [structure.foldersAdded.length ? `Folders added: ${structure.foldersAdded.join(", ")}` : "", structure.foldersRemoved.length ? `Folders removed: ${structure.foldersRemoved.join(", ")}` : "", structure.main ? `Main document: ${structure.main.before} → ${structure.main.after}` : ""].filter(Boolean).join(" · ");
       node("history-structure").textContent = structureText;
@@ -147,7 +191,7 @@ export function createVersionHistory(deps: Dependencies) {
     if (!append) { cursor = null; list.replaceChildren(); clearPreview(); list.textContent = "Loading versions…"; versionCount.textContent = ""; }
     more.disabled = true; error.hidden = true;
     try {
-      const result = await deps.request<{ items: Version[]; next: string | null; total: number }>(`v1/history?agent=${agentOnly ? "1" : "0"}${append && cursor ? `&before=${cursor}` : ""}`);
+      const result = await deps.request<{ items: Version[]; next: string | null; total: number }>(`v1/history?filter=${filter}${append && cursor ? `&before=${cursor}` : ""}`);
       if (epoch !== generation || project !== deps.project()) return;
       versionCount.textContent = `${result.total} ${result.total === 1 ? "version" : "versions"}`;
       if (!append) list.replaceChildren();
@@ -156,9 +200,10 @@ export function createVersionHistory(deps: Dependencies) {
         const title = document.createElement("strong"); title.textContent = version.subject;
         const subtitle = document.createElement("span"); subtitle.textContent = `${new Date(version.date).toLocaleString()} · ${version.shortId}`;
         const kind = document.createElement("small"); kind.textContent = version.metadata?.kind === "agent" ? `Agent · ${version.metadata.agentName || "Coding agent"}` : version.metadata?.kind === "restore" ? "Restored version" : "Checkpoint";
-        button.append(kind, title, subtitle); button.addEventListener("click", () => void select(version)); list.append(button);
+        const labels = document.createElement("span"); labels.className = "version-labels flex flex-wrap gap-1"; showRowLabels(version, labels);
+        button.append(kind, title, subtitle, labels); button.addEventListener("click", () => void select(version)); list.append(button);
       }
-      if (!list.childElementCount) list.textContent = agentOnly ? "No agent edits yet. Checked API edits appear here automatically." : "No saved versions yet.";
+      if (!list.childElementCount) list.textContent = filter === "agent" ? "No agent edits yet. Checked API edits appear here automatically." : filter === "labeled" ? "No labeled versions yet. Add a label to a saved version to keep it easy to find." : "No saved versions yet.";
       cursor = result.next; more.hidden = !cursor;
       if (!append && result.items.length) await select(result.items[0]);
     } catch (reason) { if (epoch === generation && project === deps.project()) { if (!append) list.textContent = "History unavailable"; fail(reason); } }
@@ -177,12 +222,22 @@ export function createVersionHistory(deps: Dependencies) {
     } catch (reason) { fail(reason); }
     finally { restoring = false; restore.textContent = "Restore this version"; restore.disabled = !selected; restoreFile.disabled = false; }
   }
-  node("history-all").addEventListener("click", () => filter(false));
-  node("history-agents").addEventListener("click", () => filter(true));
-  function filter(value: boolean) {
+  node("history-all").addEventListener("click", () => setFilter("all"));
+  node("history-agents").addEventListener("click", () => setFilter("agent"));
+  node("history-labeled").addEventListener("click", () => setFilter("labeled"));
+  function setFilter(value: VersionFilter) {
     if (restoring) return;
-    agentOnly = value; node("history-all").setAttribute("aria-pressed", String(!value)); node("history-agents").setAttribute("aria-pressed", String(value)); void refresh();
+    filter = value;
+    for (const name of ["all", "agents", "labeled"] as const) node(`history-${name}`).setAttribute("aria-pressed", String(value === (name === "agents" ? "agent" : name)));
+    void refresh();
   }
+  labelForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const value = labelInput.value;
+    if (!value.trim()) return;
+    labelInput.value = "";
+    void changeLabel(value, false);
+  });
   more.addEventListener("click", () => void refresh(true));
   restore.addEventListener("click", () => void restoreSelected(false));
   restoreFile.addEventListener("click", () => void restoreSelected(true));

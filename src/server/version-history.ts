@@ -8,6 +8,8 @@ import { apiError, safeRelativePath } from "./core.ts";
 const execute = promisify(execFile);
 const metadataPrefix = "Latexcoder-Version: ";
 export type VersionMetadata = { kind: "checkpoint" | "agent" | "restore"; main: string; folders?: string[]; agentId?: string; agentName?: string; mode?: string; restoredFrom?: string };
+export type VersionFilter = "all" | "agent" | "labeled";
+export type VersionLabels = ReadonlyMap<string, readonly string[]>;
 export function versionMessage(subject: string, metadata: VersionMetadata): string {
   return `${subject}\n\n${metadataPrefix}${JSON.stringify(metadata)}`;
 }
@@ -57,19 +59,30 @@ export async function latestVersionWithMetadata(directory: string, ref = "HEAD")
 export async function versionFolders(directory: string, commit: string): Promise<string[]> {
   return (await readGit(directory, ["ls-tree", "-r", "-d", "--name-only", "-z", commit])).split("\0").filter(Boolean);
 }
-export async function listVersions(directory: string, before?: unknown, agentOnly = false) {
+export async function listVersions(directory: string, before: unknown, filter: VersionFilter, labels: VersionLabels) {
   const ref = before ? `${await historyCommit(directory, before)}^` : "main";
+  if (filter === "labeled") {
+    const [history, allHistory] = await Promise.all([
+      readGit(directory, ["log", "--first-parent", "--format=%H", ref, "--"]),
+      readGit(directory, ["log", "--first-parent", "--format=%H", "main", "--"]),
+    ]);
+    const matching = history.trim().split("\n").filter(id => id && labels.has(id));
+    const total = allHistory.trim().split("\n").filter(id => id && labels.has(id)).length;
+    const ids = matching.slice(0, 31);
+    const items = await Promise.all(ids.slice(0, 30).map(async id => ({ ...await versionInfo(directory, id), labels: [...(labels.get(id) || [])] })));
+    return { items, next: ids.length > 30 ? items.at(-1)!.id : null, total };
+  }
   // A root commit has no parent; the previous page will never emit it as a cursor.
   const args = ["log", "--first-parent", "-31", "--format=%H"];
-  if (agentOnly) args.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
+  if (filter === "agent") args.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
   const countArgs = ["rev-list", "--count", "--first-parent"];
-  if (agentOnly) countArgs.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
+  if (filter === "agent") countArgs.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
   const [history, count] = await Promise.all([
     readGit(directory, [...args, ref, "--"]),
     readGit(directory, [...countArgs, "main", "--"]),
   ]);
   const ids = history.trim().split("\n").filter(Boolean);
-  const items = await Promise.all(ids.slice(0, 30).map(id => versionInfo(directory, id)));
+  const items = await Promise.all(ids.slice(0, 30).map(async id => ({ ...await versionInfo(directory, id), labels: [...(labels.get(id) || [])] })));
   return { items, next: ids.length > 30 ? items.at(-1)!.id : null, total: Number(count.trim()) };
 }
 export async function versionFiles(directory: string, id: string) {

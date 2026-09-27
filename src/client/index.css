@@ -189,7 +189,8 @@ html.dark .icon-folder, html.dark .icon-folder-open { color: oklch(.73 .055 235)
 .version-timeline { display: flex; flex-direction: column; min-height: 0; background: var(--muted); border-right: 1px solid var(--border); }
 .version-filters { display: flex; gap: .25rem; padding: .65rem; }
 .version-filters [aria-pressed=true] { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px oklch(0.2 0.01 145 / .08); }
-.version-help { margin: 0; padding: 0 .8rem .75rem; font-size: .7rem; line-height: 1.5; color: var(--muted-foreground); }
+.version-summary { display: flex; align-items: flex-start; gap: .5rem; padding: 0 .8rem .75rem; }
+.version-help { margin: 0; flex: 1; font-size: .7rem; line-height: 1.5; color: var(--muted-foreground); }
 .version-list { overflow: auto; min-height: 0; flex: 1; padding: .25rem .5rem; font-size: .8rem; }
 .version-row { display: flex; width: 100%; flex-direction: column; gap: .25rem; text-align: left; border: 1px solid transparent; border-radius: .35rem; padding: .65rem; margin-bottom: .25rem; cursor: pointer; }
 .version-row:hover { background: var(--accent); }
@@ -226,6 +227,7 @@ html.dark .icon-folder, html.dark .icon-folder-open { color: oklch(.73 .055 235)
   .version-browser { grid-template-columns: 1fr; grid-template-rows: 9rem minmax(0, 1fr); height: 65vh; min-height: 28rem; }
   .version-timeline { max-height: none; border-right: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .version-preview { min-height: 0; }
+  .version-summary { padding-bottom: .4rem; }
   .version-help { display: none; }
   .version-preview-heading, .version-restore { padding: .6rem; }
 }

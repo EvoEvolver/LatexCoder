@@ -46,7 +46,7 @@ test("agent edits have isolated persistent diffs and restoring preserves the cur
     assert.equal(edited.status, 200, await edited.clone().text());
     const { edit } = await edited.json();
     assert.match(edit.version, /^[a-f0-9]{40}$/);
-    const history = await api("v1/history?agent=1");
+    const history = await api("v1/history?filter=agent");
     assert.equal(history.items.length, 1);
     assert.equal(history.items[0].metadata.agentName, "Research agent");
     const details = await api(`v1/history/${edit.version}`);
@@ -55,7 +55,7 @@ test("agent edits have isolated persistent diffs and restoring preserves the cur
     assert.match(diff.patch, /-Human baseline/);
     assert.match(diff.patch, /\+Agent formula/);
     await restart();
-    assert.equal((await api("v1/history?agent=1")).items[0].id, edit.version);
+    assert.equal((await api("v1/history?filter=agent")).items[0].id, edit.version);
     await put("main.tex", "Later human work\n");
     const restored = await restore(edit.version);
     assert.equal(await read("main.tex"), "Agent formula $E=mc^2$\n");
@@ -126,6 +126,31 @@ test("history paginates all saved versions without duplicates", async () => {
   });
 });
 
+test("version labels persist, support multiple labels and filter reachable history", async () => {
+  await fixture(async ({ api, put, checkpoint, fetch, restart }) => {
+    await put("main.tex", "First labeled draft\n");
+    const first = await checkpoint("First draft");
+    await put("main.tex", "Second labeled draft\n");
+    const second = await checkpoint("Second draft");
+    await api(`v1/history/${first}/labels`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "arxiv-v1" }) });
+    await api(`v1/history/${first}/labels`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "submitted" }) });
+    await api(`v1/history/${first}/labels`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "ARXIV-V1" }) });
+    let labeled = await api("v1/history?filter=labeled");
+    assert.equal(labeled.total, 1);
+    assert.equal(labeled.items[0].id, first);
+    assert.deepEqual(labeled.items[0].labels, ["arxiv-v1", "submitted"]);
+    assert.deepEqual((await api(`v1/history/${first}`)).version.labels, ["arxiv-v1", "submitted"]);
+    assert.deepEqual((await api("v1/history")).items.find(item => item.id === second).labels, []);
+    await restart();
+    assert.deepEqual((await api("v1/history?filter=labeled")).items[0].labels, ["arxiv-v1", "submitted"]);
+    await api(`v1/history/${first}/labels`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "ARXIV-V1" }) });
+    labeled = await api("v1/history?filter=labeled");
+    assert.deepEqual(labeled.items[0].labels, ["submitted"]);
+    const invalid = await fetch(`v1/history/${first}/labels`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "x".repeat(41) }) });
+    assert.equal(invalid.status, 400);
+  });
+});
+
 test("agent asset operations and patches are attributed, and invalid drafts remain restorable", async () => {
   await fixture(async ({ api, post, put, read, restore, checkpoint, fetch }) => {
     await put("main.tex", "\\revbg{unfinished review storage\n");
@@ -134,7 +159,7 @@ test("agent asset operations and patches are attributed, and invalid drafts rema
     const upload = await fetch("v1/files?path=figures/chart.png&agentId=plotter&agentName=Plotter", { method: "PUT", body: new Uint8Array([137, 80, 78, 71]) });
     assert.equal(upload.status, 201);
     await post("v1/files/folder?agentId=plotter&agentName=Plotter", { path: "empty-agent-folder" });
-    let history = await api("v1/history?agent=1");
+    let history = await api("v1/history?filter=agent");
     assert.equal(history.items.length, 2);
     assert.equal(history.total, 2);
     assert.equal(history.items[0].metadata.agentName, "Plotter");
@@ -143,7 +168,7 @@ test("agent asset operations and patches are attributed, and invalid drafts rema
     assert.deepEqual(changes.files.map(file => file.path), ["figures/chart.png"]);
     const current = await fetch("v1/files?path=main.tex");
     await post("v1/files/patch?path=main.tex", { baseSha256: current.headers.get("x-content-sha256"), agent: { id: "ag_proofreader", name: "Proofreader" }, changes: [{ from: 0, to: 5, insert: "Revised" }] });
-    history = await api("v1/history?agent=1");
+    history = await api("v1/history?filter=agent");
     assert.equal(history.items[0].metadata.agentName, "Proofreader");
     await restore(draft);
     assert.equal(await read("main.tex"), "\\revbg{unfinished review storage\n");

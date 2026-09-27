@@ -4,15 +4,32 @@ import path from "node:path";
 
 import { apiError, safeRelativePath } from "../core.ts";
 import { listFolders } from "../project-files.ts";
-import { historyCommit, historyRevision, listVersions, versionDiff, versionFiles, versionInfo, versionStructure } from "../version-history.ts";
+import { historyCommit, historyRevision, listVersions, versionDiff, versionFiles, versionInfo, versionStructure, type VersionFilter } from "../version-history.ts";
 import type { HistoryRouteContext, RouteApp } from "./types.ts";
 
 export function registerHistoryRoutes(app: RouteApp, context: HistoryRouteContext): void {
+  const labelsFor = (projectId: string): Map<string, string[]> => {
+    const labels = new Map<string, string[]>();
+    for (const entry of context.database.listVersionLabels(projectId)) {
+      const values = labels.get(entry.versionId) || [];
+      values.push(entry.label);
+      labels.set(entry.versionId, values);
+    }
+    return labels;
+  };
+  const cleanLabel = (value: unknown): string => {
+    if (typeof value !== "string") throw apiError("invalid_version_label", "Enter a label");
+    const label = value.trim().replace(/\s+/g, " ");
+    if (!label || label.length > 40) throw apiError("invalid_version_label", "Labels must be between 1 and 40 characters");
+    return label;
+  };
   app.get("/v1/history", async (request, response, next) => {
     try {
       const runtime = await context.resolveProject(request);
+      const requested = request.query.filter;
+      const filter: VersionFilter = requested === "agent" || requested === "labeled" ? requested : "all";
       response.setHeader("Cache-Control", "no-store");
-      response.json(await context.withGitReader(runtime, () => listVersions(runtime.projectDir, request.query.before, request.query.agent === "1")));
+      response.json(await context.withGitReader(runtime, () => listVersions(runtime.projectDir, request.query.before, filter, labelsFor(runtime.id))));
     } catch (error) { next(error); }
   });
   app.get("/v1/history/:version", async (request, response, next) => {
@@ -22,10 +39,31 @@ export function registerHistoryRoutes(app: RouteApp, context: HistoryRouteContex
         const id = await historyCommit(runtime.projectDir, request.params.version);
         if (request.query.path !== undefined) return versionDiff(runtime.projectDir, id, request.query.path);
         runtime.collaboration.flush();
-        return { version: await versionInfo(runtime.projectDir, id), files: await versionFiles(runtime.projectDir, id), structure: await versionStructure(runtime.projectDir, id), currentRevision: await historyRevision(runtime.projectDir, runtime.build.main) };
+        return { version: { ...await versionInfo(runtime.projectDir, id), labels: labelsFor(runtime.id).get(id) || [] }, files: await versionFiles(runtime.projectDir, id), structure: await versionStructure(runtime.projectDir, id), currentRevision: await historyRevision(runtime.projectDir, runtime.build.main) };
       });
       response.setHeader("Cache-Control", "no-store");
       response.json(result);
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/history/:version/labels", context.json({ limit: "4kb" }), async (request, response, next) => {
+    try {
+      const runtime = await context.resolveProject(request);
+      const id = await context.withGitReader(runtime, () => historyCommit(runtime.projectDir, request.params.version));
+      const label = cleanLabel(request.body?.label);
+      const existing = labelsFor(runtime.id).get(id) || [];
+      if (existing.length >= 12 && !existing.some(value => value.toLocaleLowerCase() === label.toLocaleLowerCase())) {
+        throw apiError("version_label_limit", "A version can have up to 12 labels", 409);
+      }
+      context.database.addVersionLabel(runtime.id, id, label);
+      response.json({ labels: labelsFor(runtime.id).get(id) || [] });
+    } catch (error) { next(error); }
+  });
+  app.delete("/v1/history/:version/labels", context.json({ limit: "4kb" }), async (request, response, next) => {
+    try {
+      const runtime = await context.resolveProject(request);
+      const id = await context.withGitReader(runtime, () => historyCommit(runtime.projectDir, request.params.version));
+      context.database.removeVersionLabel(runtime.id, id, cleanLabel(request.body?.label));
+      response.json({ labels: labelsFor(runtime.id).get(id) || [] });
     } catch (error) { next(error); }
   });
   app.post("/v1/history/:version/restore", context.json({ limit: "16kb" }), async (request, response, next) => {

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 14;
+export const LATEST_SCHEMA_VERSION = 15;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -291,6 +291,23 @@ const migrations: Migration[] = [
           used_at INTEGER
         ) STRICT;
         CREATE INDEX password_resets_user_idx ON password_resets(username, expires_at);
+      `);
+    },
+  },
+  {
+    version: 15,
+    name: "version labels",
+    up(database) {
+      database.exec(`
+        CREATE TABLE version_labels (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          version_id TEXT NOT NULL,
+          label TEXT NOT NULL COLLATE NOCASE,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, version_id, label)
+        ) STRICT;
+        CREATE INDEX version_labels_project_label_idx
+          ON version_labels(project_id, label COLLATE NOCASE, created_at);
       `);
     },
   },

@@ -921,6 +921,13 @@ test("version history shows agent diffs and restores files through a custom conf
     assert.match(await page.locator("#history-meta").textContent(), /Research agent/);
     assert.equal(await page.locator("#git-history .version-row").count(), 1);
     assert.equal(await page.locator("#history-version-count").textContent(), "1 version");
+    await page.locator("#history-label-input").fill("arxiv-v1");
+    await page.locator("#history-label-form button[type=submit]").click();
+    await page.locator("#history-labels", { hasText: "arxiv-v1" }).waitFor();
+    await page.locator("#history-labeled").click();
+    await page.waitForFunction(() => document.querySelector("#history-version-count")?.textContent === "1 version");
+    assert.equal(await page.locator("#git-history .version-labels", { hasText: "arxiv-v1" }).count(), 1);
+    await page.waitForFunction(() => !document.querySelector("#history-meta")?.textContent?.includes("Loading"));
     await page.screenshot({ path: "/tmp/latexcoder-version-history-light.png" });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.screenshot({ path: "/tmp/latexcoder-version-history-dark.png" });

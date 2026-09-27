@@ -36,6 +36,12 @@ export type BlameChange = {
   commit: string | null;
 };
 
+export type VersionLabel = {
+  versionId: string;
+  label: string;
+  createdAt: number;
+};
+
 export type UserType = "internal" | "external";
 
 type SqlValue = string | number | bigint | Uint8Array | null;
@@ -478,6 +484,29 @@ export class StateDatabase {
       const createdAt = Date.now();
       for (const tag of tags) insert.run(projectId, tag, createdAt);
     });
+  }
+
+  listVersionLabels(projectId: string): VersionLabel[] {
+    return (this.db.prepare(`
+      SELECT version_id, label, created_at FROM version_labels
+      WHERE project_id = ? ORDER BY created_at, label COLLATE NOCASE
+    `).all(projectId) as Array<{ version_id: string; label: string; created_at: number }>).map(row => ({
+      versionId: row.version_id,
+      label: row.label,
+      createdAt: Number(row.created_at),
+    }));
+  }
+
+  addVersionLabel(projectId: string, versionId: string, label: string): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO version_labels (project_id, version_id, label, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(projectId, versionId, label, Date.now());
+  }
+
+  removeVersionLabel(projectId: string, versionId: string, label: string): void {
+    this.db.prepare("DELETE FROM version_labels WHERE project_id = ? AND version_id = ? AND label = ? COLLATE NOCASE")
+      .run(projectId, versionId, label);
   }
 
   setProjectArchived(projectId: string, username: string, archived: boolean): boolean {
