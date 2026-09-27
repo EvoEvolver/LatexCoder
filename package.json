@@ -8,6 +8,7 @@
   "scripts": {
     "build": "vite build",
     "capture:demo": "tsx scripts/capture-demo.ts",
+    "capture:hover-demo": "pnpm build && tsx scripts/capture-hover-demo.ts",
     "capture:readme": "tsx scripts/capture-readme.ts",
     "check": "pnpm build && pnpm typecheck",
     "dev": "concurrently -k -n server,vite \"tsx watch src/server/main.ts\" \"vite\"",
