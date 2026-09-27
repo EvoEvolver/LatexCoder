@@ -7,7 +7,11 @@ import { citationEntries } from "../src/shared/bibliography.ts";
 
 test("citation entries retain nested titles and author metadata", () => {
   const source = '@article{paper, title={A {Nested} Title}, author={Doe, Jane and Smith, John and Third, Alice and Fourth, Bob}}';
-  assert.deepEqual(citationEntries(source), [{ key: "paper", title: "A Nested Title", authors: ["Doe, Jane", "Smith, John", "Third, Alice", "Fourth, Bob"] }]);
+  assert.deepEqual(citationEntries(source), [{
+    key: "paper", type: "article", title: "A Nested Title",
+    authors: ["Doe, Jane", "Smith, John", "Third, Alice", "Fourth, Bob"],
+    year: "", venue: "",
+  }]);
   assert.equal(citationEntries('@book(other, title="A, quoted title", author="Someone")')[0].title, "A, quoted title");
 });
 

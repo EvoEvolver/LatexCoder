@@ -106,6 +106,7 @@ import {
 import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
+import { citationHover } from "./citation-hover.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
 import { EditorSession } from "./editor-session.ts";
 import { createElementRegistry, optionalElement } from "./dom.ts";
@@ -1718,6 +1719,11 @@ function scheduleStaticDiagnostics(): void {
   staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
 }
 
+async function readProjectTextFile(relativePath: string): Promise<string> {
+  const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`));
+  return response.ok ? response.text() : "";
+}
+
 function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
@@ -1752,12 +1758,13 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       projectId: () => state.projectId,
       activeFile: () => state.activeFile,
       files: () => state.files,
-      readFile: async relativePath => {
-        const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`));
-        if (!response.ok) return "";
-        return response.text();
-      },
+      readFile: readProjectTextFile,
     })] }),
+    citationHover({
+      projectId: () => state.projectId,
+      files: () => state.files,
+      readFile: readProjectTextFile,
+    }),
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),

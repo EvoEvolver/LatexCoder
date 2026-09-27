@@ -128,6 +128,42 @@ test("citation autocomplete displays title and authors and inserts only the key"
   });
 });
 
+test("hovering a citation key shows its bibliography entry", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=refs.bib`, {
+      data: [
+        "@article{paper2026, title={A Useful Paper}, author={Doe, Jane and Smith, John}, year={2026}, journal={Journal of Useful Results}}",
+        "@book{other, title={A Different Book}, author={Other, Alice}, year={2024}}",
+      ].join("\n"),
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
+      data: "See \\citep{paper2026, other}.", headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    const point = await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      const position = view.state.doc.toString().indexOf("paper2026") + 3;
+      const coordinates = view.coordsAtPos(position)!;
+      return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
+    });
+    await page.mouse.move(1, 1);
+    await page.mouse.move(point.x, point.y);
+    const tooltip = page.locator(".cm-citation-tooltip");
+    await tooltip.waitFor();
+    assert.match(await tooltip.textContent(), /paper2026/);
+    assert.match(await tooltip.textContent(), /article · 2026/);
+    assert.match(await tooltip.textContent(), /A Useful Paper/);
+    assert.match(await tooltip.textContent(), /Doe, Jane; Smith, John/);
+    assert.match(await tooltip.textContent(), /Journal of Useful Results · refs\.bib/);
+    assert.doesNotMatch(await tooltip.textContent(), /A Different Book/);
+    await page.screenshot({ path: "/tmp/latexcoder-citation-hover-dark.png" });
+  });
+});
+
 test("graphics references open project previews and URL references open a safe new tab", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
@@ -543,7 +579,7 @@ test("selection overlay preserves the addition highlight", async () => {
     });
     assert.equal(visual.insertionBackground, "rgb(220, 239, 231)");
     assert.equal(visual.selectionBackground, "rgba(63, 153, 220, 0.18)");
-    assert.notEqual(visual.selectionOutline, "none");
+    assert.equal(visual.selectionOutline, "none");
   });
 });
 

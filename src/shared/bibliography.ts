@@ -1,4 +1,11 @@
-export type CitationEntry = { key: string; title: string; authors: string[] };
+export type CitationEntry = {
+  key: string;
+  type: string;
+  title: string;
+  authors: string[];
+  year: string;
+  venue: string;
+};
 
 function displayText(value: string): string {
   return value.replace(/\\[a-zA-Z]+\s*/g, "").replace(/[{}]/g, "").replace(/\s+/g, " ").trim();
@@ -35,8 +42,12 @@ export function citationEntries(source: string): CitationEntry[] {
     }
     header.lastIndex = Math.max(position, header.lastIndex);
     entries.push({
-      key: match[3], title: displayText(fields.title || ""),
+      key: match[3],
+      type: match[1].toLowerCase(),
+      title: displayText(fields.title || ""),
       authors: (fields.author || "").split(/\s+and\s+/i).map(displayText).filter(Boolean),
+      year: displayText(fields.year || fields.date || ""),
+      venue: displayText(fields.journal || fields.booktitle || fields.publisher || ""),
     });
   }
   return entries;
