@@ -272,6 +272,26 @@ test("collaborative edits show attributed ranges in blame mode", async () => {
     assert.equal((await page.locator("#blame-menu-state").textContent())?.trim(), "On");
     await page.locator("#toggle-blame").click();
     assert.equal(await page.locator(".cm-blame-author").count(), 0);
+
+    await page.route(/\/v1\/blame\?/, async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          path: "main.tex",
+          revision: "test-revision",
+          runs: [
+            { from: 0, to: 4, authorId: "alice", authorName: "Alice", changeId: "change-1", createdAt: 1, commit: "1111111", gitAuthor: null },
+            { from: 4, to: 8, authorId: "alice", authorName: "Alice", changeId: "change-2", createdAt: 2, commit: "2222222", gitAuthor: null },
+            { from: 8, to: 12, authorId: "bob", authorName: "Bob", changeId: "change-3", createdAt: 3, commit: null, gitAuthor: null },
+          ],
+        },
+      });
+    });
+    await toggleBlame(page);
+    await page.locator(".cm-blame-author", { hasText: "Alice" }).waitFor();
+    assert.equal(await page.locator(".cm-blame-range").count(), 3, "commit-specific blame ranges should remain separate");
+    assert.equal(await page.locator(".cm-blame-author", { hasText: "Alice" }).count(), 1, "a contiguous author should have one label");
+    assert.equal(await page.locator(".cm-blame-author", { hasText: "Bob" }).count(), 1);
   });
 });
 

@@ -1598,16 +1598,25 @@ const editorBlameModeField = StateField.define<boolean>({
 function buildBlameDecorations(editorState: EditorState): DecorationSet {
   if (!editorState.field(editorBlameModeField)) return Decoration.none;
   const decorations: Range<Decoration>[] = [];
+  let previousBlame: BlameRun | undefined;
+  let previousTo = -1;
   for (const blame of readableBlameRuns(editorState.field(editorBlameField))) {
     const from = Math.max(0, Math.min(blame.from, editorState.doc.length));
     const to = Math.max(from, Math.min(blame.to, editorState.doc.length));
     if (to <= from) continue;
     const color = colorFor(blame.authorId || blame.authorName);
-    decorations.push(Decoration.widget({ widget: new BlameAuthorWidget(blame), side: -1 }).range(from));
+    const continuesPreviousAuthor = previousBlame
+      && previousTo === from
+      && previousBlame.authorId === blame.authorId;
+    if (!continuesPreviousAuthor) {
+      decorations.push(Decoration.widget({ widget: new BlameAuthorWidget(blame), side: -1 }).range(from));
+    }
     decorations.push(Decoration.mark({
       class: "cm-blame-range",
       attributes: { title: blameDetails(blame), style: `--blame-color: ${color}` },
     }).range(from, to));
+    previousBlame = blame;
+    previousTo = to;
   }
   return Decoration.set(decorations, true);
 }
