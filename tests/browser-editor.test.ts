@@ -80,12 +80,47 @@ test("citation autocomplete displays title and authors and inserts only the key"
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: "", headers: { "Content-Type": "text/plain" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.locator(".cm-content").click();
     await page.keyboard.type("\\citep{pap");
     const candidate = page.locator(".cm-tooltip-autocomplete li").filter({ hasText: "paper2026" });
     await candidate.waitFor();
     assert.match(await candidate.textContent(), /A Useful Paper/);
     assert.match(await candidate.textContent(), /Doe, Jane; Smith, John/);
+    const colors = await page.locator(".cm-tooltip-autocomplete").evaluate((tooltip) => {
+      const selected = tooltip.querySelector<HTMLElement>('li[aria-selected="true"]')!;
+      const detail = selected.querySelector<HTMLElement>(".cm-completionDetail")!;
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:fixed;background:var(--card);color:var(--card-foreground);border-color:var(--border)";
+      document.body.append(probe);
+      const expectedBackground = getComputedStyle(probe).backgroundColor;
+      const expectedForeground = getComputedStyle(probe).color;
+      const expectedBorder = getComputedStyle(probe).borderTopColor;
+      probe.style.background = "var(--accent)";
+      probe.style.color = "var(--muted-foreground)";
+      const expectedSelectedBackground = getComputedStyle(probe).backgroundColor;
+      const expectedDetail = getComputedStyle(probe).color;
+      const result = {
+        background: getComputedStyle(tooltip).backgroundColor,
+        expectedBackground,
+        foreground: getComputedStyle(tooltip).color,
+        expectedForeground,
+        border: getComputedStyle(tooltip).borderTopColor,
+        expectedBorder,
+        selectedBackground: getComputedStyle(selected).backgroundColor,
+        expectedSelectedBackground,
+        detail: getComputedStyle(detail).color,
+        expectedDetail,
+      };
+      probe.remove();
+      return result;
+    });
+    assert.equal(colors.background, colors.expectedBackground);
+    assert.equal(colors.foreground, colors.expectedForeground);
+    assert.equal(colors.border, colors.expectedBorder);
+    assert.equal(colors.selectedBackground, colors.expectedSelectedBackground);
+    assert.equal(colors.detail, colors.expectedDetail);
+    await page.screenshot({ path: "/tmp/latexcoder-citation-autocomplete-dark.png" });
     await page.keyboard.press("Enter");
     const source = await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString());
     assert.match(source, /\\citep\{paper2026/);
