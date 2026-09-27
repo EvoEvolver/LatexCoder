@@ -1,6 +1,7 @@
 import { createVersionHistory } from "./version-history";
 import { createFileTabs } from "./file-tabs.ts";
 import { createFileTree } from "./file-tree.ts";
+import { renderMarkdownPreview as renderMarkdownDocument } from "./markdown-preview.ts";
 import { autocompletion, closeBrackets } from "@codemirror/autocomplete";
 import { indentWithTab, selectAll } from "@codemirror/commands";
 import {
@@ -189,7 +190,7 @@ const elementIds = [
   "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
-  "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
+  "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "markdown-preview", "markdown-preview-content", "markdown-rendered", "markdown-source", "markdown-view-switch", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-external", "invite-internal", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
   "copy-password-reset-link", "password-reset-link", "password-reset-link-close", "password-reset-link-dialog", "password-reset-link-done",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
@@ -337,6 +338,8 @@ let compileQueued = false;
 let editorSession: EditorSession | null = null;
 let editorScrollCleanup: (() => void) | null = null;
 let editorScrollTimer: ReturnType<typeof setTimeout> | undefined;
+let markdownPreviewActive = false;
+let markdownRenderQueued = false;
 
 function updateSyncStatus() {
   if (!state.provider) return;
@@ -578,7 +581,7 @@ function syncProjectPermissionUi(): void {
   document.getElementById("history-restore")!.hidden = !editable;
   document.getElementById("history-restore-file")!.hidden = !editable;
   const textFile = state.files.find(file => file.path === state.activeFile)?.text;
-  elements.suggest_edit.hidden = !editable || !textFile;
+  elements.suggest_edit.hidden = !editable || !textFile || markdownPreviewActive;
   if (!editable) elements.selection_actions.hidden = true;
 }
 
@@ -1105,6 +1108,14 @@ document.addEventListener("click", event => {
 elements.open_structure.addEventListener("click", () => {
   fileTabs.openAuxiliary({ id: "structure", label: "TreeWriter", controls: "structure-view" });
 });
+elements.markdown_source.addEventListener("click", () => setMarkdownPreview(false));
+elements.markdown_rendered.addEventListener("click", () => setMarkdownPreview(true));
+elements.markdown_preview.addEventListener("click", event => {
+  const anchor = (event.target as Element).closest<HTMLAnchorElement>("a[data-project-path]");
+  if (!anchor?.dataset.projectPath) return;
+  event.preventDefault();
+  void openFile(anchor.dataset.projectPath);
+});
 
 function showExpandedStructure(): void {
   setReviewOpen(false);
@@ -1112,6 +1123,8 @@ function showExpandedStructure(): void {
   setMobileFilesOpen(false);
   elements.structure_view.hidden = false;
   elements.editor.hidden = true;
+  elements.markdown_preview.hidden = true;
+  elements.markdown_view_switch.hidden = true;
   elements.binary_view.hidden = true;
   elements.review_actions.hidden = false;
   elements.suggest_edit.hidden = true;
@@ -1124,6 +1137,7 @@ function hideExpandedStructure(): void {
   elements.editor.hidden = !file?.text;
   elements.binary_view.hidden = file?.text !== false;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file?.text;
+  syncMarkdownView();
 }
 
 elements.file_list.addEventListener("scroll", () => {
@@ -1726,6 +1740,66 @@ function scheduleStaticDiagnostics(): void {
   staticDiagnosticTimer = setTimeout(() => { void refreshStaticDiagnostics().catch(error => console.error("LaTeX diagnostics failed", error)); }, 350);
 }
 
+function isMarkdownPath(relativePath = state.activeFile): boolean {
+  return /\.md$/i.test(relativePath);
+}
+
+function renderMarkdownPreview(): void {
+  if (!markdownPreviewActive || !state.view || !isMarkdownPath()) return;
+  try {
+    renderMarkdownDocument({
+      activeFile: state.activeFile,
+      container: elements.markdown_preview_content,
+      files: state.files,
+      fileUrl: relativePath => projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`).toString(),
+      source: state.view.state.doc.toString(),
+    });
+  } catch (error) {
+    elements.markdown_preview_content.replaceChildren();
+    const message = document.createElement("p");
+    message.className = "text-sm text-destructive";
+    message.textContent = error instanceof Error ? `Markdown preview failed: ${error.message}` : "Markdown preview failed";
+    elements.markdown_preview_content.append(message);
+  }
+}
+
+function scheduleMarkdownPreview(): void {
+  if (!markdownPreviewActive || markdownRenderQueued) return;
+  markdownRenderQueued = true;
+  requestAnimationFrame(() => {
+    markdownRenderQueued = false;
+    renderMarkdownPreview();
+  });
+}
+
+function syncMarkdownView(): void {
+  const available = Boolean(state.view && isMarkdownPath());
+  elements.markdown_view_switch.hidden = !available;
+  elements.markdown_source.classList.toggle("active", !markdownPreviewActive);
+  elements.markdown_source.setAttribute("aria-selected", String(!markdownPreviewActive));
+  elements.markdown_rendered.classList.toggle("active", markdownPreviewActive);
+  elements.markdown_rendered.setAttribute("aria-selected", String(markdownPreviewActive));
+  elements.markdown_preview.hidden = !available || !markdownPreviewActive;
+  if (available) elements.editor.hidden = markdownPreviewActive;
+  elements.suggest_edit.hidden = !state.projectCanEdit || !state.view || markdownPreviewActive;
+  if (available && markdownPreviewActive) renderMarkdownPreview();
+}
+
+function setMarkdownPreview(active: boolean): void {
+  if (!state.view || !isMarkdownPath()) return;
+  markdownPreviewActive = active;
+  syncMarkdownView();
+  if (!active) requestAnimationFrame(() => state.view?.focus());
+}
+
+function resetMarkdownPreview(): void {
+  markdownPreviewActive = false;
+  markdownRenderQueued = false;
+  elements.markdown_preview.hidden = true;
+  elements.markdown_preview_content.replaceChildren();
+  elements.markdown_view_switch.hidden = true;
+}
+
 async function readProjectTextFile(relativePath: string): Promise<string> {
   const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(relativePath)}`));
   return response.ok ? response.text() : "";
@@ -1753,6 +1827,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       editorUndoManagers.set(view, undoManager);
       return { destroy() { editorUndoManagers.delete(view); undoManager.destroy(); } };
     }),
+    EditorView.updateListener.of(update => { if (update.docChanged) scheduleMarkdownPreview(); }),
     foldGutter(),
     drawSelection(),
     dropCursor(),
@@ -1903,6 +1978,7 @@ function disconnectEditor() {
   state.doc = null;
   state.selectionSuggestionIds = [];
   elements.selection_actions.hidden = true;
+  resetMarkdownPreview();
 }
 
 function bindEditorScroll(view: EditorView, projectId: string, path: string): void {
@@ -2241,6 +2317,7 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   state.provider = session.provider;
   state.persistence = session.persistence;
   state.view = session.view;
+  syncMarkdownView();
   bindEditorScroll(session.view, state.projectId, relativePath);
   updateSyncStatus();
   applyEditorDiagnostics();

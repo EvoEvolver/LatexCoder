@@ -31,6 +31,58 @@ test("selected file background covers its actions and follows file selection", a
   });
 });
 
+test("Markdown files switch between live source and sanitized project-aware previews", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const markdown = `# Project Notes
+
+An **important** result with a [linked chapter](chapter.md).
+
+- [x] Reproduce the experiment
+
+| Metric | Value |
+| --- | ---: |
+| Accuracy | 98% |
+
+![A project asset](assets/pixel.png)
+
+<script>window.__markdownScriptRan = true</script>`;
+    const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+    await page.request.put(`${base}/v1/files?project=${id}&path=notes/README.md`, { data: markdown, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=notes/chapter.md`, { data: "# Linked chapter\n", headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=notes/assets/pixel.png`, { data: pixel, headers: { "Content-Type": "image/png" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.locator('[title="notes"]').click();
+    await page.locator('[title="notes/README.md"]').click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "notes/README.md" && globalThis.__paperE2E.state.provider?.synced);
+    assert.equal(await page.locator("#markdown-view-switch").isVisible(), true);
+    await page.locator("#markdown-rendered").click();
+    await page.locator("#markdown-preview h1", { hasText: "Project Notes" }).waitFor();
+    assert.equal((await page.locator("#markdown-source").getAttribute("class")).split(" ").includes("active"), false);
+    assert.equal((await page.locator("#markdown-rendered").getAttribute("class")).split(" ").includes("active"), true);
+    assert.equal(await page.locator("#editor").isVisible(), false);
+    assert.equal(await page.locator("#markdown-preview table").count(), 1);
+    assert.equal(await page.locator('#markdown-preview input[type="checkbox"]:checked').count(), 1);
+    assert.equal(await page.locator("#markdown-preview script").count(), 0);
+    assert.equal(await page.evaluate(() => (window as typeof window & { __markdownScriptRan?: boolean }).__markdownScriptRan), undefined);
+    await page.waitForFunction(() => (document.querySelector("#markdown-preview img") as HTMLImageElement | null)?.naturalWidth === 1);
+    await page.screenshot({ path: "/tmp/latexcoder-markdown-preview.png" });
+
+    await page.locator("#markdown-source").click();
+    await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      view.dispatch({ changes: { from: view.state.doc.length, insert: "\n\n## Live update\n" } });
+    });
+    await page.locator("#markdown-rendered").click();
+    await page.locator("#markdown-preview h2", { hasText: "Live update" }).waitFor();
+    await page.locator("#markdown-preview a", { hasText: "linked chapter" }).click();
+    await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "notes/chapter.md" && globalThis.__paperE2E.state.provider?.synced);
+    assert.equal(await page.locator("#editor").isVisible(), true);
+    assert.equal(await page.locator("#markdown-source").getAttribute("aria-selected"), "true");
+  });
+});
+
 test("settings and project replace preview apply through the real UI", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();

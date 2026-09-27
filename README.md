@@ -38,6 +38,8 @@ stores application state, and every project is a real Git repository on `main`.
 
 - Browse an indented file tree with folders, drag-and-drop moves, downloads,
   recoverable deletion, image/PDF previews, and open-file tabs.
+- Edit Markdown beside LaTeX and switch to a sanitized GFM preview with project-relative
+  images, tables, task lists, code blocks, and links to other project files.
 - Use **Tree** for the section outline and **TreeWriter** for a paper-level view
   of section titles, `\tldr`, and `\sectiontldr` summaries. Leaf source can be
   edited in place with the same CodeMirror interactions as the main editor.
