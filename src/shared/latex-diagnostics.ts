@@ -42,7 +42,7 @@ export function latexDiagnostics(files: LatexSourceFile[]): BuildDiagnostic[] {
     }
     if (!/\.tex$/i.test(file.path)) continue;
     labels.push(...macroKeys(file.path, file.source, /\\label\s*\{([^{}]+)\}/g));
-    references.push(...macroKeys(file.path, file.source, /\\(?:ref|autoref|cref)\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}/g));
+    references.push(...macroKeys(file.path, file.source, /\\(?:ref|autoref|cref|eqref)\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}/g));
     citations.push(...macroKeys(file.path, file.source, /\\(?:cite|citep|citet)\s*(?:\[[^\]]*\]\s*){0,2}\{([^{}]+)\}/g));
   }
 

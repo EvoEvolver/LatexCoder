@@ -16,7 +16,7 @@ test("citation entries retain nested titles and author metadata", () => {
 });
 
 test("completion arguments support optional arguments, multiple keys and bibliography styles", () => {
-  for (const macro of ["cite", "citep", "citet", "ref", "autoref", "cref"]) {
+  for (const macro of ["cite", "citep", "citet", "ref", "autoref", "cref", "eqref"]) {
     const source = `\\${macro}*[see][p. 2]{first, se`;
     const argument = completionArgument(source, source.length)!;
     assert.equal(argument.kind, macro.startsWith("cite") ? "cite" : "label");

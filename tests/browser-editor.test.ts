@@ -164,6 +164,72 @@ test("hovering a citation key shows its bibliography entry", async () => {
   });
 });
 
+test("hovering inline and display math renders formula previews", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const source = String.raw`Inline $E = mc^2$ and display \[\frac{1}{2}mv^2\].`;
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: source, headers: { "Content-Type": "text/plain" } });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+
+    const hoverText = async (text: string): Promise<void> => {
+      const point = await page.evaluate(value => {
+        const view = globalThis.__paperE2E.state.view;
+        const position = view.state.doc.toString().indexOf(value) + Math.floor(value.length / 2);
+        const coordinates = view.coordsAtPos(position)!;
+        return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
+      }, text);
+      await page.mouse.move(1, 1);
+      await page.locator(".cm-formula-tooltip").waitFor({ state: "hidden" }).catch(() => {});
+      await page.mouse.move(point.x, point.y);
+      await page.locator(".cm-formula-tooltip").waitFor();
+    };
+
+    await hoverText("mc^2");
+    let tooltip = page.locator(".cm-formula-tooltip");
+    assert.match(await tooltip.textContent(), /Inline formula/);
+    assert.equal(await tooltip.locator(".katex-mathml annotation").textContent(), "E = mc^2");
+    assert.equal(await tooltip.locator(".fallback").count(), 0);
+
+    await hoverText("frac");
+    tooltip = page.locator(".cm-formula-tooltip");
+    assert.match(await tooltip.textContent(), /Display formula/);
+    assert.equal(await tooltip.locator(".katex-mathml annotation").textContent(), "\\frac{1}{2}mv^2");
+    await page.screenshot({ path: "/tmp/latexcoder-formula-hover-dark.png" });
+  });
+});
+
+test("hovering an equation reference previews its cross-file formula", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
+      data: "Mass-energy equivalence is given by \\eqref{eq:mass}.", headers: { "Content-Type": "text/plain" },
+    });
+    await page.request.put(`${base}/v1/files?project=${id}&path=equations.tex`, {
+      data: "\\begin{equation}\nE = mc^2 \\label{eq:mass}\n\\end{equation}", headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const point = await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      const position = view.state.doc.toString().indexOf("eq:mass") + 3;
+      const coordinates = view.coordsAtPos(position)!;
+      return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
+    });
+    await page.mouse.move(1, 1);
+    await page.mouse.move(point.x, point.y);
+    const tooltip = page.locator(".cm-formula-tooltip");
+    await tooltip.waitFor();
+    assert.match(await tooltip.textContent(), /Display formula/);
+    assert.match(await tooltip.textContent(), /\\label\{eq:mass\}/);
+    assert.equal((await tooltip.locator("footer").textContent()).trim(), "equations.tex");
+    assert.match(await tooltip.locator(".katex-mathml annotation").textContent(), /E = mc\^2/);
+    assert.doesNotMatch(await tooltip.locator(".katex-mathml annotation").textContent(), /label/);
+    await page.screenshot({ path: "/tmp/latexcoder-equation-reference-hover.png" });
+  });
+});
+
 test("graphics references open project previews and URL references open a safe new tab", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
@@ -615,11 +681,11 @@ test(`${platform} modifier-click follows includes, citations, and label referenc
     const id = projects.defaultProjectId;
     const source = String.raw`\include{chapters/intro}
 \cite{smith} \citep[see]{smith} \citet{smith}
-\ref{sec:intro} \autoref{sec:intro} \cref{sec:intro}`;
+\ref{sec:intro} \autoref{sec:intro} \cref{sec:intro} \eqref{sec:intro}`;
     for (const [path, body] of [["main.tex", source], ["chapters/intro.tex", String.raw`\section{Intro}\label{sec:intro}`], ["refs.bib", "@article{smith, title={Title}}"]]) {
       await page.request.put(`${base}/v1/files?project=${id}&path=${encodeURIComponent(path)}`, { data: body, headers: { "Content-Type": "text/plain" } });
     }
-    for (const macro of ["include", "cite", "citep", "citet", "ref", "autoref", "cref"]) {
+    for (const macro of ["include", "cite", "citep", "citet", "ref", "autoref", "cref", "eqref"]) {
       await page.goto(`${base}/projects/${id}?e2e=1`);
       await page.waitForFunction(() => globalThis.__paperE2E?.state.view?.state.doc.toString().includes("\\include"));
       const point = await page.evaluate(command => {

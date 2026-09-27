@@ -8,10 +8,10 @@ export type ArgumentContext = { kind: CompletionKind; from: number; omitExtensio
 
 export function completionArgument(source: string, position: number): ArgumentContext | null {
   const prefix = withoutComments(source.slice(0, position));
-  const match = /\\(citep|citet|cite|autoref|cref|ref|includegraphics|bibliography|addbibresource|input|include)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/.exec(prefix);
+  const match = /\\(citep|citet|cite|autoref|cref|eqref|ref|includegraphics|bibliography|addbibresource|input|include)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/.exec(prefix);
   if (!match || match[2].includes("\n")) return null;
   const macro = match[1];
-  const kind: CompletionKind = macro.startsWith("cite") ? "cite" : ["ref", "autoref", "cref"].includes(macro) ? "label"
+  const kind: CompletionKind = macro.startsWith("cite") ? "cite" : ["ref", "autoref", "cref", "eqref"].includes(macro) ? "label"
     : macro === "includegraphics" ? "image" : ["bibliography", "addbibresource"].includes(macro) ? "bib" : "tex";
   const argument = match[2];
   const start = position - argument.length;

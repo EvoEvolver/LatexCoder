@@ -18,7 +18,7 @@ export function withoutComments(source: string) {
 export function referenceLinks(source: string): ReferenceLink[] {
   const result: ReferenceLink[] = [];
   const clean = withoutComments(source);
-  const macros = /\\(includegraphics|include|input|url|citep|citet|cite|autoref|cref|ref)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)\}/g;
+  const macros = /\\(includegraphics|include|input|url|citep|citet|cite|autoref|cref|eqref|ref)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)\}/g;
   for (const match of clean.matchAll(macros)) {
     const start = match.index! + match[0].lastIndexOf("{") + 1;
     const kind = match[1] === "includegraphics" ? "asset" : match[1] === "url" ? "url" : match[1] === "include" || match[1] === "input" ? "file" : match[1].startsWith("cite") ? "cite" : "label";

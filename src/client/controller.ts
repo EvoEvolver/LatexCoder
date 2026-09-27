@@ -107,6 +107,7 @@ import type { BuildDiagnostic } from "../shared/compile-errors.ts";
 import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import { citationHover } from "./citation-hover.ts";
+import { formulaHover } from "./formula-hover.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
 import { EditorSession } from "./editor-session.ts";
 import { createElementRegistry, optionalElement } from "./dom.ts";
@@ -1762,6 +1763,12 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
     })] }),
     citationHover({
       projectId: () => state.projectId,
+      files: () => state.files,
+      readFile: readProjectTextFile,
+    }),
+    formulaHover({
+      projectId: () => state.projectId,
+      activeFile: () => state.activeFile,
       files: () => state.files,
       readFile: readProjectTextFile,
     }),
