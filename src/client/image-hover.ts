@@ -2,7 +2,7 @@ import type { Extension } from "@codemirror/state";
 import { EditorView, hoverTooltip, type TooltipView } from "@codemirror/view";
 import { getDocument, type PDFDocumentLoadingTask } from "pdfjs-dist/build/pdf.mjs";
 
-import { resolveGraphicsPath } from "../shared/assets.ts";
+import { labeledGraphics, resolveGraphicsPath } from "../shared/assets.ts";
 import { referenceLinks } from "../shared/references.ts";
 import type { ProjectFile } from "../shared/api-schema.ts";
 
@@ -11,11 +11,16 @@ type ImageHoverData = {
   activeFile(): string;
   files(): ProjectFile[];
   fileUrl(path: string): string;
+  readFile(path: string): Promise<string>;
 };
+
+type TexSource = { path: string; source: string };
+type TexSourceCache = { projectId: string; signature: string; loadedAt: number; sources: TexSource[] };
 
 const IMAGE_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i;
 const MAX_PREVIEW_WIDTH = 420;
 const MAX_PREVIEW_HEIGHT = 280;
+const SOURCE_CACHE_MS = 3_000;
 
 function tooltipShell(path: string, titleText = "Image preview"): { dom: HTMLElement; preview: HTMLElement; status: HTMLElement } {
   const dom = document.createElement("div");
@@ -114,21 +119,56 @@ function unavailableTooltip(path: string, message: string): TooltipView {
 }
 
 export function imageHover(data: ImageHoverData): Extension {
+  let sourceCache: TexSourceCache | null = null;
+
+  const projectTexSources = async (activeSource: string): Promise<TexSource[]> => {
+    const projectId = data.projectId();
+    const activeFile = data.activeFile();
+    const files = data.files()
+      .filter(file => file.text && file.path.toLowerCase().endsWith(".tex"))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const signature = files.map(file => `${file.path}:${file.size}`).join("\0");
+    if (sourceCache?.projectId === projectId && sourceCache.signature === signature && Date.now() - sourceCache.loadedAt < SOURCE_CACHE_MS) {
+      return sourceCache.sources.map(source => source.path === activeFile ? { ...source, source: activeSource } : source);
+    }
+    const sources = await Promise.all(files.map(async file => ({
+      path: file.path,
+      source: file.path === activeFile ? activeSource : await data.readFile(file.path),
+    })));
+    sourceCache = { projectId, signature, loadedAt: Date.now(), sources };
+    return sources;
+  };
+
   return [
-    hoverTooltip((view, position) => {
-      const link = referenceLinks(view.state.doc.toString())
-        .find(candidate => candidate.kind === "asset" && position >= candidate.from && position <= candidate.to);
+    hoverTooltip(async (view, position) => {
+      const activeSource = view.state.doc.toString();
+      const link = referenceLinks(activeSource)
+        .find(candidate => ["asset", "label"].includes(candidate.kind) && position >= candidate.from && position <= candidate.to);
       if (!link) return null;
       const projectId = data.projectId();
       const activeFile = data.activeFile();
-      const path = resolveGraphicsPath(link.key, activeFile, data.files());
+      let asset = link.key;
+      let originFile = activeFile;
+      if (link.kind === "label") {
+        const sources = await projectTexSources(activeSource);
+        if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
+        let target: { path: string; asset: string } | undefined;
+        for (const source of sources) {
+          const graphic = labeledGraphics(source.source).find(candidate => candidate.label === link.key);
+          if (graphic) { target = { path: source.path, asset: graphic.asset }; break; }
+        }
+        if (!target) return null;
+        asset = target.asset;
+        originFile = target.path;
+      }
+      const path = resolveGraphicsPath(asset, originFile, data.files());
       return {
         pos: link.from,
         end: link.to,
         above: true,
         create: () => {
-          if (projectId !== data.projectId() || activeFile !== data.activeFile()) return unavailableTooltip(link.key, "Preview is no longer current");
-          if (!path) return unavailableTooltip(link.key, "Project file not found");
+          if (projectId !== data.projectId() || activeFile !== data.activeFile()) return unavailableTooltip(asset, "Preview is no longer current");
+          if (!path) return unavailableTooltip(asset, "Project file not found");
           const url = data.fileUrl(path);
           if (IMAGE_PATTERN.test(path)) return imageTooltip(path, url);
           if (/\.pdf$/i.test(path)) return pdfTooltip(path, url);

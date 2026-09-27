@@ -236,28 +236,31 @@ test("hovering an equation reference previews its cross-file formula", async () 
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
-      data: "Mass-energy equivalence is given by \\eqref{eq:mass}.", headers: { "Content-Type": "text/plain" },
+      data: "Formula links: \\ref{eq:mass}, \\autoref{eq:mass}, \\cref{eq:mass}, and \\eqref{eq:mass}.", headers: { "Content-Type": "text/plain" },
     });
     await page.request.put(`${base}/v1/files?project=${id}&path=equations.tex`, {
       data: "\\begin{equation}\nE = mc^2 \\label{eq:mass}\n\\end{equation}", headers: { "Content-Type": "text/plain" },
     });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
-    const point = await page.evaluate(() => {
-      const view = globalThis.__paperE2E.state.view;
-      const position = view.state.doc.toString().indexOf("eq:mass") + 3;
-      const coordinates = view.coordsAtPos(position)!;
-      return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
-    });
-    await page.mouse.move(1, 1);
-    await page.mouse.move(point.x, point.y);
     const tooltip = page.locator(".cm-formula-tooltip");
-    await tooltip.waitFor();
-    assert.match(await tooltip.textContent(), /Display formula/);
-    assert.match(await tooltip.textContent(), /\\label\{eq:mass\}/);
-    assert.equal((await tooltip.locator("footer").textContent()).trim(), "equations.tex");
-    assert.match(await tooltip.locator(".katex-mathml annotation").textContent(), /E = mc\^2/);
-    assert.doesNotMatch(await tooltip.locator(".katex-mathml annotation").textContent(), /label/);
+    for (const macro of ["ref", "autoref", "cref", "eqref"]) {
+      await page.mouse.move(1, 1);
+      await tooltip.waitFor({ state: "hidden" }).catch(() => {});
+      const point = await page.evaluate(command => {
+        const view = globalThis.__paperE2E.state.view;
+        const position = view.state.doc.toString().indexOf(`\\${command}{`) + command.length + 3;
+        const coordinates = view.coordsAtPos(position)!;
+        return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
+      }, macro);
+      await page.mouse.move(point.x, point.y);
+      await tooltip.waitFor();
+      assert.match(await tooltip.textContent(), /Display formula/);
+      assert.match(await tooltip.textContent(), /\\label\{eq:mass\}/);
+      assert.equal((await tooltip.locator("footer").textContent()).trim(), "equations.tex");
+      assert.match(await tooltip.locator(".katex-mathml annotation").textContent(), /E = mc\^2/);
+      assert.doesNotMatch(await tooltip.locator(".katex-mathml annotation").textContent(), /label/);
+    }
     await page.screenshot({ path: "/tmp/latexcoder-equation-reference-hover.png" });
   });
 });
@@ -303,10 +306,19 @@ test("hovering graphics previews project images, PDFs, and missing files", async
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#236b59"/><circle cx="160" cy="90" r="45" fill="white"/></svg>';
-    const source = String.raw`\includegraphics[width=\linewidth]{figs/diagram}
+    const source = String.raw`\ref{fig:plain} \autoref{fig:auto} \cref{fig:clever} \ref{fig:paper}
+\includegraphics[width=\linewidth]{figs/diagram}
 \includegraphics{figs/paper.pdf}
 \includegraphics{figs/missing}`;
+    const figures = String.raw`\begin{figure}
+\includegraphics[width=\linewidth]{figs/diagram}
+\label{fig:plain}\label{fig:auto}\label{fig:clever}
+\end{figure}
+\begin{figure*}
+\includegraphics{figs/paper.pdf}\label{fig:paper}
+\end{figure*}`;
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: source, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=sections/figures.tex`, { data: figures, headers: { "Content-Type": "text/plain" } });
     await page.request.put(`${base}/v1/files?project=${id}&path=figs/diagram.svg`, { data: svg, headers: { "Content-Type": "image/svg+xml" } });
     await page.request.put(`${base}/v1/files?project=${id}&path=figs/paper.pdf`, { data: previewPdf(), headers: { "Content-Type": "application/pdf" } });
     await page.goto(`${base}/projects/${id}?e2e=1`);
@@ -332,12 +344,24 @@ test("hovering graphics previews project images, PDFs, and missing files", async
     assert.equal(await tooltip.locator("footer").textContent(), "figs/diagram.svg");
     await page.screenshot({ path: "/tmp/latexcoder-image-hover.png" });
 
+    for (const label of ["fig:plain", "fig:auto", "fig:clever"]) {
+      await hoverReference(label);
+      tooltip = page.locator(".cm-image-tooltip");
+      await page.waitForFunction(() => document.querySelector<HTMLImageElement>(".cm-image-tooltip img")?.naturalWidth === 320);
+      assert.equal(await tooltip.locator("footer").textContent(), "figs/diagram.svg");
+    }
+
     await hoverReference("figs/paper.pdf");
     tooltip = page.locator(".cm-image-tooltip");
     await tooltip.locator("canvas").waitFor();
     await page.waitForFunction(() => document.querySelector(".cm-image-tooltip header span")?.textContent === "1 page");
     assert.equal(await tooltip.locator("header strong").textContent(), "PDF preview");
     assert.ok((await tooltip.locator("canvas").boundingBox())!.width > 100);
+
+    await hoverReference("fig:paper");
+    tooltip = page.locator(".cm-image-tooltip");
+    await page.waitForFunction(() => document.querySelector(".cm-image-tooltip header span")?.textContent === "1 page");
+    assert.equal(await tooltip.locator("footer").textContent(), "figs/paper.pdf");
 
     await hoverReference("figs/missing");
     tooltip = page.locator(".cm-image-tooltip");

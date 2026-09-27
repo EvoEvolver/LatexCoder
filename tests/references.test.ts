@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeProjectPath, resolveGraphicsPath } from "../src/shared/assets.ts";
+import { labeledGraphics, normalizeProjectPath, resolveGraphicsPath } from "../src/shared/assets.ts";
 import { referenceLinks, referenceDefinition } from "../src/shared/references.ts";
 
 test("references support optional arguments, multiple keys, and comments", () => {
@@ -37,4 +37,21 @@ test("graphics paths resolve root, relative, and extensionless project assets", 
   assert.equal(resolveGraphicsPath("../figures/root.pdf", "chapters/intro.tex", files), "figures/root.pdf");
   assert.equal(resolveGraphicsPath("missing", "main.tex", files), null);
   assert.equal(normalizeProjectPath("chapters/../figures/./root.pdf"), "figures/root.pdf");
+});
+
+test("figure labels resolve to nearby graphics and ignore comments", () => {
+  const source = String.raw`\begin{figure}
+\includegraphics{figures/first}
+\label{fig:first}
+\includegraphics{figures/second.pdf}
+\label{fig:second}
+% \label{fig:ignored}
+\end{figure}
+\begin{figure*}\label{fig:wide}\includegraphics{figures/wide}\end{figure*}
+\label{fig:outside}`;
+  assert.deepEqual(labeledGraphics(source), [
+    { label: "fig:first", asset: "figures/first" },
+    { label: "fig:second", asset: "figures/second.pdf" },
+    { label: "fig:wide", asset: "figures/wide" },
+  ]);
 });

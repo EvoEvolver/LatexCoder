@@ -1774,6 +1774,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       activeFile: () => state.activeFile,
       files: () => state.files,
       fileUrl: path => projectApiUrl(`v1/files?path=${encodeURIComponent(path)}`).toString(),
+      readFile: readProjectTextFile,
     }),
     rectangularSelection(),
     crosshairCursor(),

@@ -27,7 +27,7 @@ Custom notation: $\braket{\psi}{\phi}$.
 
 The dynamics follow Equation~\eqref{eq:wave}.
 
-\includegraphics[width=.7\linewidth]{figures/spectrum}
+Figure~\autoref{fig:spectrum} shows the measured response.
 
 \includegraphics[width=.7\linewidth]{figures/supplement.pdf}
 
@@ -41,6 +41,12 @@ const equationSource = String.raw`\begin{equation}
 i\hbar \frac{\partial}{\partial t}\ket{\psi}
 = \Hamiltonian\ket{\psi}\label{eq:wave}
 \end{equation}`;
+
+const figureSource = String.raw`\begin{figure}
+\includegraphics[width=.7\linewidth]{figures/spectrum}
+\caption{Measured spectral response.}
+\label{fig:spectrum}
+\end{figure}`;
 
 const bibliography = String.raw`@article{chen2026,
   title = {Auditable Collaboration for Scientific Writing},
@@ -227,6 +233,7 @@ async function main(): Promise<void> {
     await upload("main.tex", mainSource);
     await upload("macros.sty", macroSource);
     await upload("equations.tex", equationSource);
+    await upload("figures.tex", figureSource);
     await upload("references.bib", bibliography);
     await upload("figures/spectrum.svg", spectrumSvg, "image/svg+xml");
     const pdfBytes = previewPdf();
@@ -251,7 +258,7 @@ async function main(): Promise<void> {
     await scene(page, "chen2026", ".cm-citation-tooltip", "Citations", "Read the bibliography in place", "Hover a citation key to see its title, authors, venue, and year.");
     await scene(page, "braket", ".cm-formula-tooltip", "Custom macros", "Preview project notation", "LaTeX Coder expands project-defined macros before rendering the formula with KaTeX.");
     await scene(page, "eq:wave", ".cm-formula-tooltip", "Equation references", "Inspect formulas across files", "A reference resolves its label across the project and previews the defining equation.");
-    await scene(page, "figures/spectrum", ".cm-image-tooltip", "Figures", "See project images without switching files", "Extensionless and relative graphics paths resolve to the actual project asset.", async () => {
+    await scene(page, "fig:spectrum", ".cm-image-tooltip", "Figure references", "Preview figures from any ref", "ref, autoref, and cleveref resolve labels across files to the actual project graphic.", async () => {
       await page.waitForFunction(() => document.querySelector<HTMLImageElement>(".cm-image-tooltip img")?.naturalWidth === 720);
     });
     await scene(page, "figures/supplement.pdf", ".cm-image-tooltip", "PDF graphics", "Preview the first page instantly", "PDF.js renders project PDFs directly in the editor hover panel.", async () => {
