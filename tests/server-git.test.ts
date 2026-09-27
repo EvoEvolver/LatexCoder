@@ -131,6 +131,7 @@ test("collaborative blame follows Yjs text, checkpoints, and file moves", async 
       const alice = blame.runs.find(run => run.authorId === "alice");
       assert.equal(alice.from, 0);
       assert.equal(alice.to, "% attributed edit\n".length);
+      assert.equal(doc.getText("content").toDelta()[0].attributes, undefined, "server-only blame metadata must not echo into the editor");
 
       const checkpoint = await fetch(`${base}/v1/git/commit`, {
         method: "POST",

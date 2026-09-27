@@ -125,14 +125,27 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
       }
       if (!inserted.length) return;
       const attributes = attributesForActor(actor);
-      doc.transact(() => {
-        for (const range of inserted) text.format(range.from, range.length, attributes);
-      }, BLAME_ORIGIN);
+      // An observer runs while Yjs is still finishing the originating update.
+      // A nested transaction is folded into that update and echoes the blame
+      // formatting back to its author. Defer once so BLAME_ORIGIN remains a
+      // distinct, server-only transaction.
+      queueMicrotask(() => {
+        if (shared?.removed || shuttingDown) return;
+        doc.transact(() => {
+          for (const range of inserted) text.format(range.from, range.length, attributes);
+        }, BLAME_ORIGIN);
+      });
     });
     doc.on("update", (update: Uint8Array, origin: unknown) => {
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, MESSAGE_SYNC); syncProtocol.writeUpdate(encoder, update);
-      broadcast(shared, encoding.toUint8Array(encoder), origin); persist(shared);
+      // Attribution formatting is server-owned metadata. Sending it back to
+      // editors adds a non-text Yjs update after every insertion and can remap
+      // a local selection while the user is already typing or deleting.
+      if (origin !== BLAME_ORIGIN) {
+        const encoder = encoding.createEncoder();
+        encoding.writeVarUint(encoder, MESSAGE_SYNC); syncProtocol.writeUpdate(encoder, update);
+        broadcast(shared, encoding.toUint8Array(encoder), origin);
+      }
+      persist(shared);
       if (origin !== BLAME_ORIGIN && !suspended && !shuttingDown) onChange();
     });
     shared.awareness.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: WebSocket | null) => {

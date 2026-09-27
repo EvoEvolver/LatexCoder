@@ -295,6 +295,60 @@ test("collaborative edits show attributed ranges in blame mode", async () => {
   });
 });
 
+test("rapid typing followed by Backspace stays deleted after collaboration updates", async () => {
+  await withEditor(async ({ page, base }) => {
+    await page.routeWebSocket(/\/v1\/collab/, socket => {
+      const server = socket.connectToServer();
+      socket.onMessage(message => server.send(message));
+      server.onMessage(message => { setTimeout(() => socket.send(message), 180); });
+    });
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 500,
+      downloadThroughput: 1024 * 1024,
+      uploadThroughput: 1024 * 1024,
+      connectionType: "cellular3g",
+    });
+    const exercise = async (suggesting: boolean) => {
+      const original = await page.evaluate(value => {
+        const { state } = globalThis.__paperE2E;
+        state.suggesting = value;
+        const source = state.view.state.doc.toString();
+        const marker = "\\begin{document}";
+        const position = source.indexOf(marker) + marker.length;
+        state.view.dispatch({ selection: { anchor: position } });
+        state.view.focus();
+        return { source, position };
+      }, suggesting);
+      const typed = "rapid-input";
+      await page.keyboard.type(typed);
+      for (let index = 0; index < typed.length; index += 1) await page.keyboard.press("Backspace");
+      for (const character of "abcdefghij") {
+        await page.keyboard.type(character);
+        await page.keyboard.press("Backspace");
+      }
+      await page.waitForTimeout(2_000);
+      const result = await page.evaluate(() => {
+        const { state } = globalThis.__paperE2E;
+        return {
+          editor: state.view.state.doc.toString(),
+          ytext: state.doc.getText("content").toString(),
+          head: state.view.state.selection.main.head,
+        };
+      });
+      assert.equal(result.editor, original.source);
+      assert.equal(result.ytext, original.source);
+      assert.equal(result.head, original.position);
+    };
+    await exercise(false);
+    await exercise(true);
+  });
+});
+
 test("real collaborative page replaces a selection and exposes review actions", async () => {
   await withEditor(async ({ page, base }) => {
     await page.goto(`${base}/?e2e=1`);
