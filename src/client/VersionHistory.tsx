@@ -6,6 +6,7 @@ export function VersionHistory() {
       <div className="version-filters" role="group" aria-label="Filter versions">
         <Button id="history-all" variant="ghost" size="sm" aria-pressed="true">All versions</Button>
         <Button id="history-agents" variant="ghost" size="sm" aria-pressed="false">Agent edits</Button>
+        <span id="history-version-count" className="ml-auto self-center text-xs tabular-nums text-muted-foreground" role="status" />
       </div>
       <p className="version-help">Saved automatically after 30 seconds idle, or every 5 minutes while editing.</p>
       <div id="git-history" className="version-list" aria-label="Saved versions" />

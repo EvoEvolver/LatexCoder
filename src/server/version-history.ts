@@ -62,9 +62,15 @@ export async function listVersions(directory: string, before?: unknown, agentOnl
   // A root commit has no parent; the previous page will never emit it as a cursor.
   const args = ["log", "--first-parent", "-31", "--format=%H"];
   if (agentOnly) args.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
-  const ids = (await readGit(directory, [...args, ref, "--"])).trim().split("\n").filter(Boolean);
+  const countArgs = ["rev-list", "--count", "--first-parent"];
+  if (agentOnly) countArgs.push("--fixed-strings", "--grep=\"kind\":\"agent\"");
+  const [history, count] = await Promise.all([
+    readGit(directory, [...args, ref, "--"]),
+    readGit(directory, [...countArgs, "main", "--"]),
+  ]);
+  const ids = history.trim().split("\n").filter(Boolean);
   const items = await Promise.all(ids.slice(0, 30).map(id => versionInfo(directory, id)));
-  return { items, next: ids.length > 30 ? items.at(-1)!.id : null };
+  return { items, next: ids.length > 30 ? items.at(-1)!.id : null, total: Number(count.trim()) };
 }
 export async function versionFiles(directory: string, id: string) {
   const output = await readGit(directory, ["diff-tree", "--root", "--diff-merges=first-parent", "--no-commit-id", "-r", "--no-renames", "--numstat", "-z", id, "--"]);

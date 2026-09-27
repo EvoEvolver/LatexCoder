@@ -920,6 +920,7 @@ test("version history shows agent diffs and restores files through a custom conf
     assert.equal(await page.locator("#history-diff").evaluate(element => element.scrollWidth <= element.clientWidth + 1), true);
     assert.match(await page.locator("#history-meta").textContent(), /Research agent/);
     assert.equal(await page.locator("#git-history .version-row").count(), 1);
+    assert.equal(await page.locator("#history-version-count").textContent(), "1 version");
     await page.screenshot({ path: "/tmp/latexcoder-version-history-light.png" });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.screenshot({ path: "/tmp/latexcoder-version-history-dark.png" });

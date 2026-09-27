@@ -120,6 +120,8 @@ test("history paginates all saved versions without duplicates", async () => {
     const second = await api(`v1/history?before=${first.next}`);
     assert.ok(second.items.length >= 4);
     assert.equal(second.next, null);
+    assert.equal(first.total, first.items.length + second.items.length);
+    assert.equal(second.total, first.total);
     assert.equal(new Set([...first.items, ...second.items].map(item => item.id)).size, first.items.length + second.items.length);
   });
 });
@@ -134,6 +136,7 @@ test("agent asset operations and patches are attributed, and invalid drafts rema
     await post("v1/files/folder?agentId=plotter&agentName=Plotter", { path: "empty-agent-folder" });
     let history = await api("v1/history?agent=1");
     assert.equal(history.items.length, 2);
+    assert.equal(history.total, 2);
     assert.equal(history.items[0].metadata.agentName, "Plotter");
     const asset = history.items.find(item => item.subject.startsWith("Agent upload"));
     const changes = await api(`v1/history/${asset.id}`);

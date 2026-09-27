@@ -60,7 +60,7 @@ export function createVersionHistory(deps: Dependencies) {
   let generation = 0, selectionGeneration = 0, fileGeneration = 0, restoring = false;
   const list = node("git-history"), error = node("history-error"), diff = node("history-diff");
   const restore = node<HTMLButtonElement>("history-restore"), restoreFile = node<HTMLButtonElement>("history-restore-file");
-  const more = node<HTMLButtonElement>("history-more");
+  const more = node<HTMLButtonElement>("history-more"), versionCount = node("history-version-count");
   function fail(reason: unknown) { error.textContent = reason instanceof Error ? reason.message : "Could not load version history. Try refreshing."; error.hidden = false; }
   function clearPreview() {
     node("history-preview").setAttribute("aria-busy", "false");
@@ -144,11 +144,12 @@ export function createVersionHistory(deps: Dependencies) {
   async function refresh(append = false) {
     if (restoring) return;
     const epoch = ++generation, project = deps.project();
-    if (!append) { cursor = null; list.replaceChildren(); clearPreview(); list.textContent = "Loading versions…"; }
+    if (!append) { cursor = null; list.replaceChildren(); clearPreview(); list.textContent = "Loading versions…"; versionCount.textContent = ""; }
     more.disabled = true; error.hidden = true;
     try {
-      const result = await deps.request<{ items: Version[]; next: string | null }>(`v1/history?agent=${agentOnly ? "1" : "0"}${append && cursor ? `&before=${cursor}` : ""}`);
+      const result = await deps.request<{ items: Version[]; next: string | null; total: number }>(`v1/history?agent=${agentOnly ? "1" : "0"}${append && cursor ? `&before=${cursor}` : ""}`);
       if (epoch !== generation || project !== deps.project()) return;
+      versionCount.textContent = `${result.total} ${result.total === 1 ? "version" : "versions"}`;
       if (!append) list.replaceChildren();
       for (const version of result.items) {
         const button = document.createElement("button"); button.type = "button"; button.className = "version-row"; button.dataset.version = version.id; button.setAttribute("aria-pressed", "false");
