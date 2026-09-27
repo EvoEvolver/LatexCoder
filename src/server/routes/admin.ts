@@ -1,5 +1,5 @@
-import { adminResetPasswordRequestSchema, adminUpdateUserTypeRequestSchema } from "../../shared/api-schema.ts";
-import { apiError, passwordRecord, validatePassword } from "../core.ts";
+import { adminUpdateUserTypeRequestSchema } from "../../shared/api-schema.ts";
+import { apiError, randomToken, sha256 } from "../core.ts";
 import type { AdminRouteContext, RouteApp } from "./types.ts";
 
 function pagination(query: Record<string, unknown>): { page: number; limit: number; search: string } {
@@ -30,17 +30,21 @@ export function registerAdminRoutes(app: RouteApp, context: AdminRouteContext): 
     } catch (error) { next(error); }
   });
 
-  app.post("/v1/admin/users/:username/password", json({ limit: "16kb" }), (request, response, next) => {
+  app.post("/v1/admin/users/:username/password-reset", (request, response, next) => {
     try {
-      context.requireAdmin(request);
-      const parsed = adminResetPasswordRequestSchema.safeParse(request.body);
-      if (!parsed.success) throw apiError("invalid_request", "password must contain between 10 and 1024 characters", 400);
-      const password = validatePassword(parsed.data.password);
-      const record = passwordRecord(password);
-      if (!database.resetUserPassword(String(request.params.username), record.salt, record.hash)) {
+      const admin = context.requireAdmin(request);
+      const username = String(request.params.username);
+      const token = randomToken();
+      const createdAt = Date.now();
+      const expiresAt = createdAt + context.passwordResetSeconds * 1000;
+      if (!database.createPasswordReset({
+        tokenHash: sha256(token), username, createdBy: admin.username, createdAt, expiresAt,
+      })) {
         throw apiError("user_not_found", "active user does not exist", 404);
       }
-      response.json({ user: { username: request.params.username }, sessionsRevoked: true });
+      response.status(201).json({
+        reset: { username, path: `/reset-password/${token}`, expiresAt: new Date(expiresAt).toISOString() },
+      });
     } catch (error) { next(error); }
   });
 

@@ -192,11 +192,52 @@ export class StateDatabase {
     });
   }
 
-  resetUserPassword(username: string, salt: string, hash: string) {
+  createPasswordReset(reset: { tokenHash: string; username: string; createdBy: string; createdAt: number; expiresAt: number }): boolean {
     return this.transaction(() => {
-      const result = this.db.prepare("UPDATE users SET password_salt = ?, password_hash = ? WHERE username = ? AND deleted_at IS NULL").run(salt, hash, username);
-      if (Number(result.changes) === 1) this.db.prepare("DELETE FROM user_sessions WHERE username = ?").run(username);
-      return Number(result.changes) === 1;
+      const user = this.db.prepare("SELECT 1 AS active FROM users WHERE username = ? AND deleted_at IS NULL").get(reset.username);
+      if (!user) return false;
+      this.db.prepare("DELETE FROM password_resets WHERE username = ?").run(reset.username);
+      this.db.prepare(`
+        INSERT INTO password_resets (token_hash, username, created_by, created_at, expires_at, used_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+      `).run(reset.tokenHash, reset.username, reset.createdBy, reset.createdAt, reset.expiresAt);
+      return true;
+    });
+  }
+
+  getPasswordReset(tokenHash: string) {
+    const row = this.db.prepare(`
+      SELECT password_resets.*, users.display_name, users.deleted_at
+      FROM password_resets JOIN users ON users.username = password_resets.username
+      WHERE password_resets.token_hash = ?
+    `).get(tokenHash) as SqlRow | undefined;
+    if (!row) return null;
+    return {
+      tokenHash: row.token_hash as string,
+      username: row.username as string,
+      displayName: row.display_name as string,
+      createdBy: row.created_by as string,
+      createdAt: Number(row.created_at),
+      expiresAt: Number(row.expires_at),
+      usedAt: row.used_at === null ? null : Number(row.used_at),
+      deletedAt: row.deleted_at as string | null,
+    };
+  }
+
+  consumePasswordReset(tokenHash: string, salt: string, hash: string, usedAt: number): string | null {
+    return this.transaction(() => {
+      const reset = this.db.prepare(`
+        SELECT password_resets.username
+        FROM password_resets JOIN users ON users.username = password_resets.username
+        WHERE password_resets.token_hash = ? AND password_resets.used_at IS NULL
+          AND password_resets.expires_at > ? AND users.deleted_at IS NULL
+      `).get(tokenHash, usedAt) as { username: string } | undefined;
+      if (!reset) return null;
+      const consumed = this.db.prepare("UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL").run(usedAt, tokenHash);
+      if (Number(consumed.changes) !== 1) return null;
+      this.db.prepare("UPDATE users SET password_salt = ?, password_hash = ? WHERE username = ?").run(salt, hash, reset.username);
+      this.db.prepare("DELETE FROM user_sessions WHERE username = ?").run(reset.username);
+      return reset.username;
     });
   }
 

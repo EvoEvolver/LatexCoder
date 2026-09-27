@@ -33,7 +33,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
 
   const database = new StateDatabase(stateDir);
   try {
-    assert.equal(database.schemaVersion(), 13);
+    assert.equal(database.schemaVersion(), 14);
     assert.equal(database.ping(), true);
     const upgraded = new DatabaseSync(filename, { readOnly: true });
     try {
@@ -55,6 +55,7 @@ test("SQLite migrations upgrade a version-one database transactionally", async (
       assert.equal((upgraded.prepare("SELECT user_type FROM users WHERE username = 'legacy.user'").get() as { user_type: string }).user_type, "internal");
       assert.equal((upgraded.prepare("SELECT user_type FROM invitations WHERE token_hash = 'legacy-token'").get() as { user_type: string }).user_type, "internal");
       assert.deepEqual(columns("project_tags"), ["project_id", "tag", "created_at"]);
+      assert.deepEqual(columns("password_resets"), ["token_hash", "username", "created_by", "created_at", "expires_at", "used_at"]);
     } finally {
       upgraded.close();
     }
@@ -104,7 +105,7 @@ test("health endpoints distinguish liveness and readiness", async () => {
     const ready = await readyResponse.json();
     assert.equal(readyResponse.status, 200);
     assert.equal(ready.status, "ready");
-    assert.equal(ready.schemaVersion, 13);
+    assert.equal(ready.schemaVersion, 14);
     assert.deepEqual(ready.queue, { active: 0, queued: 0, concurrency: 2, accepting: true });
     assert.equal(typeof ready.dependencies.git.available, "boolean");
   } finally {

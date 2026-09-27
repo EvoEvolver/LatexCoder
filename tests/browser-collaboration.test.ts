@@ -675,5 +675,25 @@ test("login, invitations, and capability links separate members from guests", as
     await chooseAppMenu(invited, "history", "#git-button");
     await invited.locator("#git-dialog").waitFor();
     assert.equal(await invited.locator("#clone-button").count(), 0);
+
+    await page.goto(`${base}/admin`);
+    await page.locator("#admin-users-tab").click();
+    await page.locator("#admin-search").fill("browser.member");
+    await page.waitForFunction(() => document.querySelector("#admin-table")?.textContent?.includes("browser.member"));
+    await page.getByRole("button", { name: "Create password reset link for browser.member" }).click();
+    await page.locator("#password-reset-link-dialog").waitFor();
+    const passwordResetLink = await page.locator("#password-reset-link").inputValue();
+    assert.match(passwordResetLink, new RegExp(`^${base}/reset-password/[A-Za-z0-9_-]+$`));
+
+    const resetting = await browser.newPage();
+    await resetting.goto(passwordResetLink);
+    await resetting.locator("#auth-page").waitFor();
+    assert.equal(await resetting.locator("#auth-title").textContent(), "Set a new password");
+    assert.equal(await resetting.locator("#auth-username").inputValue(), "browser.member");
+    assert.equal(await resetting.locator("#auth-username").isDisabled(), true);
+    await resetting.locator("#auth-password").fill("browser member replacement");
+    await resetting.locator("#auth-submit").click();
+    await resetting.locator("#projects-page").waitFor();
+    assert.equal(await resetting.locator("#current-user").textContent(), "browser.member");
   }, { authDisabled: false, adminPassword: "browser admin password" });
 });

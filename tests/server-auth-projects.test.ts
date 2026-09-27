@@ -468,7 +468,7 @@ test("invite-only users and project capability sessions enforce access boundarie
 
 test("administrators page through users and projects and manage their lifecycle", async () => {
   const adminPassword = "admin control password";
-  await withServer(async ({ base }) => {
+  await withServer(async ({ base, stateDir }) => {
     const login = await fetch(`${base}/v1/auth/login`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "admin", password: adminPassword }),
@@ -510,12 +510,56 @@ test("administrators page through users and projects and manage their lifecycle"
       body: JSON.stringify({ userType: "external" }),
     })).status, 409);
 
-    const reset = await fetch(`${base}/v1/admin/users/managed.user/password`, {
-      method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ password: "managed new password" }),
+    const firstResetResponse = await fetch(`${base}/v1/admin/users/managed.user/password-reset`, {
+      method: "POST", headers: { Cookie: adminCookie },
+    });
+    assert.equal(firstResetResponse.status, 201);
+    const firstReset = (await firstResetResponse.json()).reset;
+    assert.match(firstReset.path, /^\/reset-password\/[A-Za-z0-9_-]+$/);
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    assert.ok(Math.abs(Date.parse(firstReset.expiresAt) - Date.now() - sevenDays) < 5_000);
+    assert.equal((await fetch(`${base}/v1/projects`, { headers: { Cookie: memberCookie } })).status, 200);
+    const firstResetToken = firstReset.path.split("/").at(-1);
+    assert.equal((await fetch(`${base}/v1/auth/password-reset/${firstResetToken}`)).status, 200);
+
+    const secondResetResponse = await fetch(`${base}/v1/admin/users/managed.user/password-reset`, {
+      method: "POST", headers: { Cookie: adminCookie },
+    });
+    assert.equal(secondResetResponse.status, 201);
+    const secondReset = (await secondResetResponse.json()).reset;
+    assert.notEqual(secondReset.path, firstReset.path);
+    assert.equal((await fetch(`${base}/v1/auth/password-reset/${firstResetToken}`)).status, 404);
+    const resetToken = secondReset.path.split("/").at(-1);
+    const storedReset = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
+    try {
+      const records = storedReset.prepare("SELECT token_hash FROM password_resets WHERE username = ?").all("managed.user") as Array<{ token_hash: string }>;
+      assert.equal(records.length, 1);
+      assert.notEqual(records[0].token_hash, resetToken);
+    } finally {
+      storedReset.close();
+    }
+
+    const reset = await fetch(`${base}/v1/auth/password-reset`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: resetToken, password: "managed new password" }),
     });
     assert.equal(reset.status, 200);
+    assert.match(reset.headers.get("set-cookie") || "", /lc_user=/);
     assert.equal((await fetch(`${base}/v1/projects`, { headers: { Cookie: memberCookie } })).status, 401);
+    const resetDatabase = new DatabaseSync(path.join(stateDir, "state.sqlite"), { readOnly: true });
+    try {
+      const storedUser = resetDatabase.prepare("SELECT password_salt, password_hash FROM users WHERE username = ?").get("managed.user") as { password_salt: string; password_hash: string };
+      const storedToken = resetDatabase.prepare("SELECT used_at FROM password_resets WHERE username = ?").get("managed.user") as { used_at: number };
+      assert.notEqual(storedUser.password_hash, "managed new password");
+      assert.notEqual(storedUser.password_salt, "managed new password");
+      assert.equal(typeof storedToken.used_at, "number");
+    } finally {
+      resetDatabase.close();
+    }
+    assert.equal((await fetch(`${base}/v1/auth/password-reset`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: resetToken, password: "another new password" }),
+    })).status, 404);
     assert.equal((await fetch(`${base}/v1/auth/login`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "managed.user", password: "managed old password" }),

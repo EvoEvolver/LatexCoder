@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 13;
+export const LATEST_SCHEMA_VERSION = 14;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -274,6 +274,23 @@ const migrations: Migration[] = [
       database.exec(`
         UPDATE users SET user_type = 'internal';
         CREATE INDEX IF NOT EXISTS users_type_status_idx ON users(user_type, deleted_at, created_at);
+      `);
+    },
+  },
+  {
+    version: 14,
+    name: "password reset links",
+    up(database) {
+      database.exec(`
+        CREATE TABLE password_resets (
+          token_hash TEXT PRIMARY KEY,
+          username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+          created_by TEXT NOT NULL REFERENCES users(username),
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          used_at INTEGER
+        ) STRICT;
+        CREATE INDEX password_resets_user_idx ON password_resets(username, expires_at);
       `);
     },
   },

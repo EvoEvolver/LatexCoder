@@ -1,5 +1,5 @@
 import { apiError, cleanDisplayName, cleanUsername, passwordMatches, passwordRecord, randomToken, sessionCookie, sha256, validatePassword } from "../core.ts";
-import { createInvitationRequestSchema, loginRequestSchema, registerRequestSchema, updateProfileRequestSchema } from "../../shared/api-schema.ts";
+import { createInvitationRequestSchema, loginRequestSchema, passwordResetRequestSchema, registerRequestSchema, updateProfileRequestSchema } from "../../shared/api-schema.ts";
 import type { ZodType } from "zod";
 import type { AuthRouteContext, RouteApp } from "./types.ts";
 
@@ -13,6 +13,10 @@ function parseBody<T>(schema: ZodType<T>, value: unknown): T {
 
 function invitationIsValid(invitation: ReturnType<AuthRouteContext["database"]["getInvitation"]>): boolean {
   return Boolean(invitation && invitation.expiresAt > Date.now() && (invitation.reusable || !invitation.usedAt));
+}
+
+function passwordResetIsValid(reset: ReturnType<AuthRouteContext["database"]["getPasswordReset"]>): boolean {
+  return Boolean(reset && !reset.deletedAt && !reset.usedAt && reset.expiresAt > Date.now());
 }
 
 export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): void {
@@ -51,6 +55,24 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
     if (session) database.deleteUserSession(session.key);
     response.append("Set-Cookie", sessionCookie(request, "lc_user", "", 0));
     response.json({ user: null });
+  });
+  app.get("/v1/auth/password-reset/:token", (request, response, next) => {
+    try {
+      const reset = database.getPasswordReset(sha256(String(request.params.token || "")));
+      if (!passwordResetIsValid(reset)) throw apiError("password_reset_invalid", "password reset link is invalid, expired, or already used", 404);
+      response.json({ reset: { username: reset!.username, displayName: reset!.displayName, expiresAt: new Date(reset!.expiresAt).toISOString() } });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/auth/password-reset", json({ limit: "16kb" }), (request, response, next) => {
+    try {
+      const body = parseBody(passwordResetRequestSchema, request.body);
+      const record = passwordRecord(validatePassword(body.password));
+      const username = database.consumePasswordReset(sha256(body.token), record.salt, record.hash, Date.now());
+      if (!username) throw apiError("password_reset_invalid", "password reset link is invalid, expired, or already used", 404);
+      const user = database.getUser(username)!;
+      context.issueUserSession(request, response, username);
+      response.json({ user: { username, displayName: user.displayName, isAdmin: user.isAdmin, userType: user.userType } });
+    } catch (error) { next(error); }
   });
   app.patch("/v1/users/me", json({ limit: "16kb" }), (request, response, next) => {
     try {

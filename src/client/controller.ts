@@ -187,6 +187,7 @@ const elementIds = [
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
   "copy-invite-link", "current-user", "invite-close", "invite-description", "invite-dialog", "invite-done", "invite-external", "invite-internal", "invite-link", "invite-regenerate", "invite-reusable", "invite-single", "invite-user", "logout-button",
+  "copy-password-reset-link", "password-reset-link", "password-reset-link-close", "password-reset-link-dialog", "password-reset-link-done",
   "pdf-download", "pdf-fit-page", "pdf-fit-width", "pdf-status", "pdf-surface", "pdf-view", "pdf-zoom-in", "pdf-zoom-out", "presence", "review-count", "review-dialog", "review-form",
   "project-list", "project-name", "project-search", "project-tag-filters", "projects-active", "projects-archived", "projects-page", "review-cancel", "review-close", "review-list", "review-pane", "review-text", "rotate-share-secret", "share-edit", "share-link", "share-link-label", "share-view", "suggest-edit", "sync-state",
   "share-confirm-cancel", "share-confirm-description", "share-confirm-page", "share-confirm-project", "share-confirm-submit", "share-confirm-title",
@@ -205,6 +206,7 @@ const elements = createElementRegistry(elementIds, {
   git_access_dialog: HTMLDialogElement,
   git_dialog: HTMLDialogElement,
   invite_dialog: HTMLDialogElement,
+  password_reset_link_dialog: HTMLDialogElement,
   review_dialog: HTMLDialogElement,
   account_display_name: HTMLInputElement,
   account_username: HTMLInputElement,
@@ -216,6 +218,7 @@ const elements = createElementRegistry(elementIds, {
   display_name: HTMLInputElement,
   git_message: HTMLInputElement,
   invite_link: HTMLInputElement,
+  password_reset_link: HTMLInputElement,
   project_search: HTMLInputElement,
   admin_search: HTMLInputElement,
   share_link: HTMLInputElement,
@@ -2720,21 +2723,12 @@ function adminTable(headers: string[]): { table: HTMLTableElement; body: HTMLTab
   return { table, body };
 }
 
-async function resetAdminUserPassword(user: AdminUserRow): Promise<void> {
-  const password = await openActionDialog({
-    title: `Reset password for ${user.username}`,
-    label: "New password",
-    inputType: "password",
-    maxLength: 1024,
-    message: "The user's existing login sessions will be revoked.",
-    submitLabel: "Reset password",
-  });
-  if (typeof password !== "string") return;
+async function createAdminPasswordResetLink(user: AdminUserRow): Promise<void> {
   try {
-    await request(`v1/admin/users/${encodeURIComponent(user.username)}/password`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
-    });
-    showToast(`Password reset for ${user.username}.`);
+    const result = await request<{ reset: { path: string } }>(`v1/admin/users/${encodeURIComponent(user.username)}/password-reset`, { method: "POST" });
+    elements.password_reset_link.value = `${window.location.origin}${result.reset.path}`;
+    elements.password_reset_link_dialog.showModal();
+    elements.password_reset_link.select();
   } catch (error) { showToast(error.message); }
 }
 
@@ -2816,7 +2810,7 @@ function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
     const actions = adminCell("", "Actions");
     adminCellValue(actions).classList.add("flex", "justify-end", "gap-1");
     if (!user.deletedAt) {
-      adminCellValue(actions).append(adminAction(`Reset password for ${user.username}`, "key-round", () => void resetAdminUserPassword(user)));
+      adminCellValue(actions).append(adminAction(`Create password reset link for ${user.username}`, "key-round", () => void createAdminPasswordResetLink(user)));
       if (!user.isAdmin) adminCellValue(actions).append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
     }
     row.append(identity, statusCell, typeCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString(), "Created"), adminCell(user.invitedBy || "Bootstrap", "Invited by"), actions);
@@ -2941,6 +2935,11 @@ function routeInvitationToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function routePasswordResetToken(): string {
+  const match = window.location.pathname.match(/^\/reset-password\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 function routeProjectShare(): { projectId: string; token: string } | null {
   const match = window.location.pathname.match(/^\/share\/([^/]+)\/([^/]+)$/);
   return match ? { projectId: decodeURIComponent(match[1]), token: decodeURIComponent(match[2]) } : null;
@@ -3043,7 +3042,7 @@ function watchProjectFiles(): void {
   });
 }
 
-function showAuthPage(mode = "login", description = "") {
+function showAuthPage(mode: "login" | "register" | "reset" = "login", description = "") {
   stopProjectEvents();
   disconnectEditor();
   elements.projects_page.hidden = true;
@@ -3056,16 +3055,20 @@ function showAuthPage(mode = "login", description = "") {
   elements.auth_submit.disabled = false;
   elements.auth_password.value = "";
   const registering = mode === "register";
-  elements.auth_title.textContent = registering ? "Create your account" : "Sign in";
+  const resetting = mode === "reset";
+  elements.auth_username.disabled = resetting;
+  elements.auth_title.textContent = registering ? "Create your account" : resetting ? "Set a new password" : "Sign in";
   elements.auth_description.textContent = description || (registering
     ? "Choose an account for this invitation."
+    : resetting
+      ? "Choose a new password for your account."
     : state.bootstrapReady
       ? "Core team members can sign in to manage projects."
       : "Set LATEXCODER_ADMIN_PASSWORD and restart the service to create the initial admin account.");
-  elements.auth_submit.querySelector("span").textContent = registering ? "Create account" : "Sign in";
-  elements.auth_password.autocomplete = registering ? "new-password" : "current-password";
-  document.title = `${registering ? "Join" : "Sign in"} · LaTeX Coder`;
-  elements.auth_username.focus();
+  elements.auth_submit.querySelector("span").textContent = registering ? "Create account" : resetting ? "Set password" : "Sign in";
+  elements.auth_password.autocomplete = registering || resetting ? "new-password" : "current-password";
+  document.title = `${registering ? "Join" : resetting ? "Reset password" : "Sign in"} · LaTeX Coder`;
+  (resetting ? elements.auth_password : elements.auth_username).focus();
 }
 
 function showProjectsPage(push = true) {
@@ -3645,13 +3648,15 @@ elements.auth_form.addEventListener("submit", async (event: Event) => {
   elements.auth_submit.disabled = true;
   elements.auth_error.hidden = true;
   try {
-    const token = routeInvitationToken();
-    const result = await request<{ user: CurrentUser }>(token ? "v1/auth/register" : "v1/auth/login", {
+    const invitationToken = routeInvitationToken();
+    const passwordResetToken = routePasswordResetToken();
+    const endpoint = passwordResetToken ? "v1/auth/password-reset" : invitationToken ? "v1/auth/register" : "v1/auth/login";
+    const result = await request<{ user: CurrentUser }>(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        token: token || undefined,
-        username: elements.auth_username.value,
+        token: passwordResetToken || invitationToken || undefined,
+        username: passwordResetToken ? undefined : elements.auth_username.value,
         password: elements.auth_password.value,
       }),
     });
@@ -3737,6 +3742,13 @@ elements.invite_dialog.addEventListener("cancel", (event: Event) => {
   elements.invite_dialog.close();
 });
 elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, "Invitation link copied."));
+elements.copy_password_reset_link.addEventListener("click", () => copyText(elements.password_reset_link.value, "Password reset link copied."));
+elements.password_reset_link_close.addEventListener("click", () => elements.password_reset_link_dialog.close());
+elements.password_reset_link_done.addEventListener("click", () => elements.password_reset_link_dialog.close());
+elements.password_reset_link_dialog.addEventListener("cancel", (event: Event) => {
+  event.preventDefault();
+  elements.password_reset_link_dialog.close();
+});
 async function logout() {
   await request("v1/auth/logout", { method: "POST" }).catch((): null => null);
   state.user = null;
@@ -4398,6 +4410,18 @@ window.addEventListener("beforeunload", () => {
   resetFilePreview();
 });
 async function routeApp() {
+  const passwordResetToken = routePasswordResetToken();
+  if (passwordResetToken) {
+    try {
+      const result = await request<{ reset: { username: string; displayName: string } }>(`v1/auth/password-reset/${encodeURIComponent(passwordResetToken)}`);
+      elements.auth_username.value = result.reset.username;
+      showAuthPage("reset", `Set a new password for ${result.reset.displayName} (@${result.reset.username}). This link can only be used once.`);
+    } catch (error) {
+      showAuthPage("reset", error.message);
+      elements.auth_submit.disabled = true;
+    }
+    return;
+  }
   if (window.location.pathname === "/admin") {
     if (state.user?.isAdmin) showAdminPage(false);
     else if (state.user) showProjectsPage(false);

@@ -30,6 +30,7 @@ export interface AdminRouteContext {
   json: JsonMiddleware;
   loadProject(id: unknown): Promise<ProjectRuntime>;
   requireAdmin(request: Request): AuthenticatedUser;
+  passwordResetSeconds: number;
 }
 
 export interface GitRouteContext {

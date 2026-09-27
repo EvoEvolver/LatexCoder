@@ -824,6 +824,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   const USER_SESSION_SECONDS = 7 * 24 * 60 * 60;
   const PROJECT_SESSION_SECONDS = 24 * 60 * 60;
   const INVITATION_SECONDS = 7 * 24 * 60 * 60;
+  const PASSWORD_RESET_SECONDS = 7 * 24 * 60 * 60;
 
   function cookieSession(request: CookieRequest, cookieName: string): CookieSession | null {
     const token = parseCookies(request)[cookieName];
@@ -1298,7 +1299,10 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     database, currentUser, issueUserSession, json: express.json, loginAttempts,
     requireUser, userSession, invitationSeconds: INVITATION_SECONDS,
   });
-  registerAdminRoutes(app, { database, deleteProject, json: express.json, loadProject, requireAdmin });
+  registerAdminRoutes(app, {
+    database, deleteProject, json: express.json, loadProject, requireAdmin,
+    passwordResetSeconds: PASSWORD_RESET_SECONDS,
+  });
   registerProjectRoutes(app, {
     assertProjectWritable, cleanProjectName, cleanProjectTags, createProject,
     createProjectArchive, database, deleteProject, isProjectOwner,

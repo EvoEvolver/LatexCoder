@@ -12,7 +12,7 @@ export const createInvitationRequestSchema = z.strictObject({
   userType: userTypeSchema.default("external"),
 });
 export const updateProfileRequestSchema = z.strictObject({ displayName: z.string().trim().min(1).max(80) });
-export const adminResetPasswordRequestSchema = z.strictObject({ password: passwordSchema });
+export const passwordResetRequestSchema = z.strictObject({ token: z.string().min(1), password: passwordSchema });
 export const adminUpdateUserTypeRequestSchema = z.strictObject({ userType: userTypeSchema });
 export const createProjectRequestSchema = z.strictObject({ name: projectNameSchema });
 export const updateProjectRequestSchema = createProjectRequestSchema;
