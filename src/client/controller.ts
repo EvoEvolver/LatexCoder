@@ -2222,10 +2222,12 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
       onUnsavedChange: unsaved => { state.unsaved = unsaved; },
       onSynced: () => {
         if (editorSession !== session) return;
+        const reconnected = scrollRestored;
         if (!scrollRestored) {
           scrollRestored = true;
           restoreEditorScroll(session.view, state.projectId, relativePath);
         }
+        if (reconnected) void refreshProjectFiles(state.projectId).catch(error => console.error("Project file refresh after reconnect failed", error));
         renderReviews();
         scheduleStaticDiagnostics();
         applyEditorDiagnostics();
@@ -3048,6 +3050,24 @@ function stopProjectEvents(): void {
   projectEventSource = null;
 }
 
+async function refreshProjectFiles(projectId: string): Promise<void> {
+  const data = await request<{ project: ProjectDetail }>("v1/project");
+  if (state.projectId !== projectId) return;
+  const changed = JSON.stringify(state.files) !== JSON.stringify(data.project.files)
+    || JSON.stringify(state.folders) !== JSON.stringify(data.project.folders || []);
+  state.files = data.project.files;
+  state.folders = data.project.folders || [];
+  state.main = data.project.main;
+  if (changed) renderFiles();
+  if (state.activeFile && !state.files.some(file => file.path === state.activeFile)) {
+    disconnectEditor();
+    resetFilePreview();
+    state.activeFile = "";
+    const target = state.files.find(file => file.path === state.main) || state.files[0];
+    if (target) await openFile(target.path);
+  }
+}
+
 function watchProjectFiles(): void {
   stopProjectEvents();
   const projectId = state.projectId;
@@ -3062,21 +3082,8 @@ function watchProjectFiles(): void {
     try {
       while (pending && projectEventSource === source) {
         pending = false;
-        const data = await request<{ project: ProjectDetail }>("v1/project");
-        if (state.projectId !== projectId || projectEventSource !== source) return;
-        const changed = JSON.stringify(state.files) !== JSON.stringify(data.project.files)
-          || JSON.stringify(state.folders) !== JSON.stringify(data.project.folders || []);
-        state.files = data.project.files;
-        state.folders = data.project.folders || [];
-        state.main = data.project.main;
-        if (changed) renderFiles();
-        if (state.activeFile && !state.files.some(file => file.path === state.activeFile)) {
-          disconnectEditor();
-          resetFilePreview();
-          state.activeFile = "";
-          const target = state.files.find(file => file.path === state.main) || state.files[0];
-          if (target) await openFile(target.path);
-        }
+        await refreshProjectFiles(projectId);
+        if (projectEventSource !== source) return;
       }
     } catch (error) { console.error("Project file refresh failed", error); }
     finally { refreshing = false; }

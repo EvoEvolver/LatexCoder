@@ -15,6 +15,7 @@ import { withEditor, LIPSUM, chooseAppMenu, toggleBlame, openRootFileMenu, selec
 
 test("Git pushes update the open browser file tree without reloading the editor", async () => {
   await withEditor(async ({ page, base }) => {
+    await page.route(/\/v1\/project\/events/, route => route.abort("failed"));
     await page.goto(`${base}/?e2e=1`);
     await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
     const projectId = await page.evaluate(() => globalThis.__paperE2E.state.projectId);
