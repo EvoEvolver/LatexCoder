@@ -3,6 +3,7 @@ import { EditorView, hoverTooltip } from "@codemirror/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
+import { expandLatexMacros, parseLatexMacros, type LatexMacroDefinition } from "../shared/latex-macros.ts";
 import { mathRegions, renderableMath, type MathRegion } from "../shared/math.ts";
 import { referenceLinks } from "../shared/references.ts";
 import type { ProjectFile } from "../shared/api-schema.ts";
@@ -15,8 +16,12 @@ type FormulaHoverData = {
 };
 
 type LocatedFormula = { region: MathRegion; path: string; label?: string };
+type TexSource = { path: string; source: string };
+type TexSourceCache = { projectId: string; signature: string; loadedAt: number; sources: TexSource[] };
 
-function formulaTooltipDom(formula: LocatedFormula): HTMLElement {
+const SOURCE_CACHE_MS = 3_000;
+
+function formulaTooltipDom(formula: LocatedFormula, macros: ReadonlyMap<string, LatexMacroDefinition>): HTMLElement {
   const dom = document.createElement("div");
   dom.className = "cm-formula-tooltip";
   const header = document.createElement("header");
@@ -33,7 +38,7 @@ function formulaTooltipDom(formula: LocatedFormula): HTMLElement {
   const preview = document.createElement("div");
   preview.className = "cm-formula-preview";
   try {
-    katex.render(renderableMath(formula.region), preview, {
+    katex.render(expandLatexMacros(renderableMath(formula.region), macros), preview, {
       displayMode: formula.region.display,
       output: "htmlAndMathml",
       strict: false,
@@ -55,6 +60,26 @@ function formulaTooltipDom(formula: LocatedFormula): HTMLElement {
 }
 
 export function formulaHover(data: FormulaHoverData): Extension {
+  let sourceCache: TexSourceCache | null = null;
+
+  const projectTexSources = async (activeSource: string): Promise<TexSource[]> => {
+    const projectId = data.projectId();
+    const activeFile = data.activeFile();
+    const files = data.files()
+      .filter(file => file.text && /\.(?:tex|sty|cls)$/i.test(file.path))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const signature = files.map(file => `${file.path}:${file.size}`).join("\0");
+    if (sourceCache?.projectId === projectId && sourceCache.signature === signature && Date.now() - sourceCache.loadedAt < SOURCE_CACHE_MS) {
+      return sourceCache.sources.map(source => source.path === activeFile ? { ...source, source: activeSource } : source);
+    }
+    const sources = await Promise.all(files.map(async file => ({
+      path: file.path,
+      source: file.path === activeFile ? activeSource : await data.readFile(file.path),
+    })));
+    sourceCache = { projectId, signature, loadedAt: Date.now(), sources };
+    return sources;
+  };
+
   return [
     hoverTooltip(async (view, position) => {
       const activeSource = view.state.doc.toString();
@@ -63,17 +88,15 @@ export function formulaHover(data: FormulaHoverData): Extension {
       let from = direct?.from;
       let to = direct?.to;
 
+      const projectId = data.projectId();
+      const activeFile = data.activeFile();
+      const sources = await projectTexSources(activeSource);
+      if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
+
       if (!formula) {
         const link = referenceLinks(activeSource)
           .find(candidate => candidate.kind === "label" && position >= candidate.from && position <= candidate.to);
         if (!link) return null;
-        const projectId = data.projectId();
-        const activeFile = data.activeFile();
-        const sources = await Promise.all(data.files().filter(file => file.text && file.path.toLowerCase().endsWith(".tex")).map(async file => ({
-          path: file.path,
-          source: file.path === activeFile ? activeSource : await data.readFile(file.path),
-        })));
-        if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
         for (const file of sources) {
           const region = mathRegions(file.source).find(candidate => candidate.labels.includes(link.key));
           if (region) { formula = { region, path: file.path, label: link.key }; break; }
@@ -84,7 +107,8 @@ export function formulaHover(data: FormulaHoverData): Extension {
       }
 
       const located = formula;
-      return { pos: from!, end: to!, above: true, create: () => ({ dom: formulaTooltipDom(located) }) };
+      const macros = parseLatexMacros(sources.map(source => source.source));
+      return { pos: from!, end: to!, above: true, create: () => ({ dom: formulaTooltipDom(located, macros) }) };
     }, { hoverTime: 650, hideOnChange: true }),
     EditorView.baseTheme({
       ".cm-formula-tooltip": {

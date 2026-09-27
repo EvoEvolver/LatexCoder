@@ -200,6 +200,38 @@ test("hovering inline and display math renders formula previews", async () => {
   });
 });
 
+test("formula previews expand project custom macros", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    await page.request.put(`${base}/v1/files?project=${id}&path=macros.sty`, {
+      data: String.raw`\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\pair}[2][x]{\left(#1,#2\right)}
+\def\RR{\mathbb{R}}`,
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, {
+      data: String.raw`Custom formula: $\pair[y]{\vect{v}} \in \RR$.`, headers: { "Content-Type": "text/plain" },
+    });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    const point = await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      const position = view.state.doc.toString().indexOf("pair") + 2;
+      const coordinates = view.coordsAtPos(position)!;
+      return { x: (coordinates.left + coordinates.right) / 2, y: (coordinates.top + coordinates.bottom) / 2 };
+    });
+    await page.mouse.move(1, 1);
+    await page.mouse.move(point.x, point.y);
+    const tooltip = page.locator(".cm-formula-tooltip");
+    await tooltip.waitFor();
+    assert.equal(await tooltip.locator(".fallback").count(), 0, await tooltip.textContent() ?? undefined);
+    assert.equal(
+      await tooltip.locator(".katex-mathml annotation").textContent(),
+      String.raw`\left(y,\mathbf{v}\right) \in \mathbb{R}`,
+    );
+  });
+});
+
 test("hovering an equation reference previews its cross-file formula", async () => {
   await withEditor(async ({ page, base }) => {
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
