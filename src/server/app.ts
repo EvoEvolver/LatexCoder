@@ -587,7 +587,7 @@ To create suggestions, add \`&mode=suggesting&agentId=ag_unique&agentName=writer
 
 \`POST /v1/compile\` with JSON \`{"main":"main.tex"}\` compiles a PDF.
 
-Text files are synchronized through Yjs. Writing through the API updates connected editors. Inline comments use \`\\cmtbg{id}{name}text\\cmted{comment}\`; replies are appended inside the final argument as \`\\cmtrpl{reply-id}{name}{reply}\`. Suggestion mode tracks insertions as \`\\addbg{id}{name}text\\added\` and deletions as \`\\delbg{id}{name}text\\deled\`.
+Text files are synchronized through Yjs. Writing through the API updates connected editors. Inline comments use \`\\cmtbg{id}{name}text\\cmted{comment}\`; replies are appended inside the final argument as \`\\cmtrpl{reply-id}{name}{reply}\`. Suggestion mode tracks insertions as \`\\addbg{id}{name}text\\added{}\` and deletions as \`\\delbg{id}{name}text\\deled{}\`. Keep the empty groups after \`\\added\` and \`\\deled\`; they prevent TeX from joining a following word to the macro name.
 
 ## Trust
 

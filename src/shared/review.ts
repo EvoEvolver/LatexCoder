@@ -70,7 +70,12 @@ function parseReviewKind(source: string, kind: ReviewKind, opening: string, clos
     if (closeAt < 0) break;
     const note = closingHasArgument ? parseBraced(source, closeAt + closing.length) : null;
     if (closingHasArgument && !note) { cursor = closeAt + closing.length; continue; }
-    const to = note?.end ?? closeAt + closing.length;
+    // Empty groups delimit no-argument control words from following letters.
+    // Consume them as storage while still accepting legacy ungrouped endings.
+    const emptyGroupEnd = !closingHasArgument && source.startsWith("{}", closeAt + closing.length)
+      ? closeAt + closing.length + 2
+      : closeAt + closing.length;
+    const to = note?.end ?? emptyGroupEnd;
     const comment = kind === "comment"
       ? parseCommentNote(note?.value ?? "", id.value, author.value)
       : null;

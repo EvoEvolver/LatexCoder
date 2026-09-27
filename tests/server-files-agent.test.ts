@@ -151,7 +151,10 @@ test("full-file edit computes Yjs changes atomically and rejects live stale hash
       const suggesting = await fresh.json();
       assert.equal(suggesting.edit.mode, "suggesting");
       assert.ok(suggesting.edit.suggestionIds.length);
-      assert.ok(parseReviews(shared.doc.getText("content").toString()).some(review => review.author.includes("Writer")));
+      const suggestedSource = shared.doc.getText("content").toString();
+      assert.match(suggestedSource, /\\deled\{\}/);
+      assert.match(suggestedSource, /\\added\{\}/);
+      assert.ok(parseReviews(suggestedSource).some(review => review.author.includes("Writer")));
     } finally { provider.destroy(); doc.destroy(); }
   });
 });
@@ -202,6 +205,8 @@ test("patch API applies one checked Yjs transaction and rejects stale edits", as
     await waitFor(() => parseReviews(firstDoc.getText("content").toString()).length === 2);
     await waitFor(() => parseReviews(secondDoc.getText("content").toString()).length === 2);
     const reviews = parseReviews(firstDoc.getText("content").toString());
+    assert.match(firstDoc.getText("content").toString(), /\\deled\{\}\\addbg/);
+    assert.match(firstDoc.getText("content").toString(), /\\added\{\}/);
     assert.deepEqual(reviews.map(item => [item.kind, item.id, item.author, item.body]), [
       ["deletion", result.patch.suggestionIds[0], "Agent: Test Writer [ag_test123]", "shared live"],
       ["addition", result.patch.suggestionIds[0], "Agent: Test Writer [ag_test123]", "edited together"],

@@ -823,7 +823,7 @@ test("suggesting keeps the caret before a Backspace deletion", async () => {
     await setCursor(page, caret);
     await page.keyboard.press("Backspace");
     const { doc, head } = await editorState(page);
-    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}e\\deled/);
+    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}e\\deled\{\}/);
     assert.equal(head, caret - 1, "caret moves to where the removed character started");
     assert.ok(doc.slice(head).startsWith("\\delbg"), "caret sits before the deletion marker");
   });
@@ -837,8 +837,8 @@ test("suggesting keeps the caret after a forward Delete", async () => {
     await setCursor(page, caret);
     await page.keyboard.press("Delete");
     const { doc, head } = await editorState(page);
-    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}b\\deled/);
-    assert.equal(head, doc.indexOf("\\deled") + "\\deled".length, "caret stays ahead of the wrapped character");
+    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}b\\deled\{\}/);
+    assert.equal(head, doc.indexOf("\\deled{}") + "\\deled{}".length, "caret stays ahead of the wrapped character");
   });
 });
 
@@ -854,8 +854,8 @@ test("suggesting wraps selection deletes and replacements", async () => {
     }, [from, to]);
     await page.keyboard.press("Backspace");
     let { doc, head } = await editorState(page);
-    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}brave\\deled/);
-    assert.equal(head, doc.indexOf("\\deled") + "\\deled".length);
+    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}brave\\deled\{\}/);
+    assert.equal(head, doc.indexOf("\\deled{}") + "\\deled{}".length);
 
     await createEditor(page, LIPSUM);
     await page.evaluate(([anchor, head]) => {
@@ -865,7 +865,7 @@ test("suggesting wraps selection deletes and replacements", async () => {
     }, [from, to]);
     await page.keyboard.type("bold");
     ({ doc, head } = await editorState(page));
-    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}brave\\deled\\addbg\{[^}]+\}\{[^}]+\}bold\\added/);
+    assert.match(doc, /\\delbg\{[^}]+\}\{[^}]+\}brave\\deled\{\}\\addbg\{[^}]+\}\{[^}]+\}bold\\added\{\}/);
     assert.equal(head, doc.indexOf("bold\\added") + "bold".length, "caret lands after the inserted replacement");
   });
 });
@@ -879,7 +879,7 @@ test("consecutive Backspace deletions stay in one review block", async () => {
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
     const { doc, head } = await editorState(page);
-    assert.match(doc, /Hello br\\delbg\{[^}]+\}\{[^}]+\}ave\\deled new world\./);
+    assert.match(doc, /Hello br\\delbg\{[^}]+\}\{[^}]+\}ave\\deled\{\} new world\./);
     assert.equal(head, "Hello br".length);
   });
 });

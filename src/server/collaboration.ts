@@ -277,7 +277,7 @@ export function createCollaborationStore(projectId: string, projectDir: string, 
       for (const change of changes) {
         if (reviews.some(item => change.from < item.to && change.to > item.from)) throw apiError("review_conflict", "suggesting patches cannot overlap an open review", 409);
         const id = `r${randomUUID().replaceAll("-", "")}`, deleted = source.slice(change.from, change.to);
-        change.insert = `${deleted ? `\\delbg{${id}}{${author}}${deleted}\\deled` : ""}${change.insert ? `\\addbg{${id}}{${author}}${change.insert}\\added` : ""}`;
+        change.insert = `${deleted ? `\\delbg{${id}}{${author}}${deleted}\\deled{}` : ""}${change.insert ? `\\addbg{${id}}{${author}}${change.insert}\\added{}` : ""}`;
         suggestionIds.push(id);
       }
     }

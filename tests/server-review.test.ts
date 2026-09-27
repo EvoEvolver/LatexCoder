@@ -71,3 +71,12 @@ test("compile projection removes storage macros beside ordinary letters", () => 
   assert.equal(clean, "before after goodtext");
   assert.doesNotMatch(clean, /\\(?:cmtbg|cmted|cmtrpl|revbg|reved|addbg|added|delbg|deled)\\b/);
 });
+
+test("review terminator empty groups are hidden with their storage macros", () => {
+  const source = "before \\delbg{r1}{Lin}bad\\deled{}after "
+    + "\\addbg{r1}{Lin}good\\added{}text";
+  const reviews = parseReviews(source);
+  assert.equal(reviews[0].to, source.indexOf("after"));
+  assert.equal(reviews[1].to, source.indexOf("text"));
+  assert.equal(stripReviewStorage(source), "before after goodtext");
+});

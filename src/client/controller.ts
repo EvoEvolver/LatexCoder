@@ -1334,7 +1334,7 @@ function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Tra
     const changes = {
       from: change.from,
       to: previousDeletion.to,
-      insert: `\\delbg{${previousDeletion.id}}{${previousDeletion.author}}${body}\\deled`,
+      insert: `\\delbg{${previousDeletion.id}}{${previousDeletion.author}}${body}\\deled{}`,
     };
     last.from = change.from;
     lastDeletion.set(state.view, last);
@@ -1353,9 +1353,9 @@ function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Tra
     return [];
   }
   const id = randomId();
-  const deletion = deleted ? `\\delbg{${id}}{${author}}${deleted}\\deled` : "";
+  const deletion = deleted ? `\\delbg{${id}}{${author}}${deleted}\\deled{}` : "";
   const additionStart = change.inserted ? `\\addbg{${id}}{${author}}` : "";
-  const addition = change.inserted ? `${additionStart}${change.inserted}\\added` : "";
+  const addition = change.inserted ? `${additionStart}${change.inserted}\\added{}` : "";
   const replacement = `${deletion}${addition}`;
   // Backspace wraps text behind the caret: the caret stays where the user
   // pressed it, in front of the new deletion block, ready to continue
