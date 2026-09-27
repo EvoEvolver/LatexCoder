@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { normalizeProjectPath, resolveGraphicsPath } from "../src/shared/assets.ts";
 import { referenceLinks, referenceDefinition } from "../src/shared/references.ts";
 
 test("references support optional arguments, multiple keys, and comments", () => {
@@ -27,4 +28,13 @@ test("graphics and URL links preserve complete paths, punctuation and percent es
     { key: "https://example.test/a%20b?q=a,b#section", kind: "url" }, { key: "after", kind: "label" },
   ]);
   for (const link of links) assert.equal(source.slice(link.from, link.to), link.key);
+});
+
+test("graphics paths resolve root, relative, and extensionless project assets", () => {
+  const files = ["figures/root.pdf", "chapters/figures/local.png", "chapters/photo.jpg"].map(path => ({ path }));
+  assert.equal(resolveGraphicsPath("figures/root", "chapters/intro.tex", files), "figures/root.pdf");
+  assert.equal(resolveGraphicsPath("figures/local", "chapters/intro.tex", files), "chapters/figures/local.png");
+  assert.equal(resolveGraphicsPath("../figures/root.pdf", "chapters/intro.tex", files), "figures/root.pdf");
+  assert.equal(resolveGraphicsPath("missing", "main.tex", files), null);
+  assert.equal(normalizeProjectPath("chapters/../figures/./root.pdf"), "figures/root.pdf");
 });

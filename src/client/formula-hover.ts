@@ -88,22 +88,25 @@ export function formulaHover(data: FormulaHoverData): Extension {
       let from = direct?.from;
       let to = direct?.to;
 
+      const link = formula ? undefined : referenceLinks(activeSource)
+        .find(candidate => candidate.kind === "label" && position >= candidate.from && position <= candidate.to);
+      if (!formula && !link) return null;
+
       const projectId = data.projectId();
       const activeFile = data.activeFile();
       const sources = await projectTexSources(activeSource);
       if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
 
       if (!formula) {
-        const link = referenceLinks(activeSource)
-          .find(candidate => candidate.kind === "label" && position >= candidate.from && position <= candidate.to);
-        if (!link) return null;
+        const labelLink = link;
+        if (!labelLink) return null;
         for (const file of sources) {
-          const region = mathRegions(file.source).find(candidate => candidate.labels.includes(link.key));
-          if (region) { formula = { region, path: file.path, label: link.key }; break; }
+          const region = mathRegions(file.source).find(candidate => candidate.labels.includes(labelLink.key));
+          if (region) { formula = { region, path: file.path, label: labelLink.key }; break; }
         }
         if (!formula) return null;
-        from = link.from;
-        to = link.to;
+        from = labelLink.from;
+        to = labelLink.to;
       }
 
       const located = formula;

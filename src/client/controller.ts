@@ -88,6 +88,7 @@ import * as Y from "yjs";
 
 import { parseReviews, stripReviewStorage, type ReviewItem } from "../shared/review.ts";
 import { referenceDefinition, type ReferenceLink } from "../shared/references.ts";
+import { normalizeProjectPath, resolveGraphicsPath } from "../shared/assets.ts";
 import { buildDiagnostics, compileErrors } from "../shared/compile-errors.ts";
 import { latexDiagnostics } from "../shared/latex-diagnostics.ts";
 import {
@@ -108,6 +109,7 @@ import { createApiClient, socketUrl } from "./api.ts";
 import { projectCompletionSource } from "./completions.ts";
 import { citationHover } from "./citation-hover.ts";
 import { formulaHover } from "./formula-hover.ts";
+import { imageHover } from "./image-hover.ts";
 import { setThemePreference, themePreference, type ThemePreference } from "./theme.ts";
 import { EditorSession } from "./editor-session.ts";
 import { createElementRegistry, optionalElement } from "./dom.ts";
@@ -1418,17 +1420,12 @@ async function followReference(link: ReferenceLink) {
     let destination: { path: string; from: number; to: number } | undefined;
     if (link.kind === "file" || link.kind === "asset") {
       const directory = originFile.split("/").slice(0, -1).join("/");
-      const normalize = (value: string) => {
-        const parts: string[] = [];
-        for (const part of value.split("/")) {
-          if (part === "..") parts.pop();
-          else if (part && part !== ".") parts.push(part);
-        }
-        return parts.join("/");
-      };
-      const names = link.kind === "asset" ? /\.[^/]+$/.test(link.key) ? [link.key] : [link.key, ...["pdf", "png", "jpg", "jpeg", "svg", "webp", "gif"].map(extension => `${link.key}.${extension}`)] : [link.key.endsWith(".tex") ? link.key : `${link.key}.tex`];
-      const candidates = names.flatMap(name => [normalize(name), normalize(`${directory}/${name}`)]);
-      const file = candidates.map(candidate => state.files.find(file => file.path === candidate)).find(Boolean);
+      const assetPath = link.kind === "asset" ? resolveGraphicsPath(link.key, originFile, state.files) : null;
+      const names = link.key.endsWith(".tex") ? [link.key] : [`${link.key}.tex`];
+      const candidates = names.flatMap(name => [normalizeProjectPath(name), normalizeProjectPath(`${directory}/${name}`)]);
+      const file = link.kind === "asset"
+        ? state.files.find(file => file.path === assetPath)
+        : candidates.map(candidate => state.files.find(file => file.path === candidate)).find(Boolean);
       if (file) destination = { path: file.path, from: 0, to: 0 };
     } else {
       const kind = link.kind;
@@ -1771,6 +1768,12 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       activeFile: () => state.activeFile,
       files: () => state.files,
       readFile: readProjectTextFile,
+    }),
+    imageHover({
+      projectId: () => state.projectId,
+      activeFile: () => state.activeFile,
+      files: () => state.files,
+      fileUrl: path => projectApiUrl(`v1/files?path=${encodeURIComponent(path)}`).toString(),
     }),
     rectangularSelection(),
     crosshairCursor(),
