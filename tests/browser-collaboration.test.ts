@@ -668,8 +668,8 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.locator("#access-close").click();
     await chooseAppMenu(invited, "collaborate", "#collaborate-members");
     await invited.locator("#collaborator-dialog").waitFor();
-    assert.match(await invited.locator("#collaborator-list").textContent(), /adminOwner/);
-    assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.memberEdit/);
+    assert.match(await invited.locator("#collaborator-list").textContent(), /Lead Editor@adminOwner/);
+    assert.match(await invited.locator("#collaborator-list").textContent(), /browser\.member@browser\.memberEdit/);
     await invited.locator("#collaborator-close").click();
     await chooseAppMenu(invited, "history", "#git-button");
     await invited.locator("#git-dialog").waitFor();

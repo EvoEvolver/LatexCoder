@@ -389,9 +389,19 @@ export class StateDatabase {
 
   listProjectMembers(projectId: string) {
     return (this.db.prepare(`
-      SELECT username, role, joined_at FROM project_members WHERE project_id = ?
-      ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, username COLLATE NOCASE
-    `).all(projectId) as SqlRow[]).map(row => ({ username: row.username as string, role: row.role as string, joinedAt: Number(row.joined_at) }));
+      SELECT project_members.username, project_members.role, project_members.joined_at,
+        COALESCE(users.display_name, project_members.username) AS display_name
+      FROM project_members
+      LEFT JOIN users ON users.username = project_members.username
+      WHERE project_members.project_id = ?
+      ORDER BY CASE project_members.role WHEN 'owner' THEN 0 ELSE 1 END,
+        display_name COLLATE NOCASE, project_members.username COLLATE NOCASE
+    `).all(projectId) as SqlRow[]).map(row => ({
+      username: row.username as string,
+      displayName: row.display_name as string,
+      role: row.role as string,
+      joinedAt: Number(row.joined_at),
+    }));
   }
 
   listProjects(ownerUsername?: string | null) {

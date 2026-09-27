@@ -3499,12 +3499,19 @@ async function refreshProjectMembers() {
   elements.collaborator_list.replaceChildren(...result.members.map((member: ProjectMember) => {
     const row = document.createElement("div");
     row.className = "flex items-center justify-between gap-3 rounded bg-muted px-2 py-1.5";
-    const name = document.createElement("span");
-    name.textContent = member.username;
+    const identity = document.createElement("span");
+    identity.className = "min-w-0";
+    const name = document.createElement("strong");
+    name.className = "block truncate font-medium text-foreground";
+    name.textContent = member.displayName;
+    const username = document.createElement("span");
+    username.className = "block truncate text-[10px] text-muted-foreground";
+    username.textContent = `@${member.username}`;
+    identity.append(name, username);
     const role = document.createElement("span");
-    role.className = "text-muted-foreground";
+    role.className = "shrink-0 text-muted-foreground";
     role.textContent = member.role === "owner" ? "Owner" : member.role === "viewer" ? "View" : "Edit";
-    row.append(name, role);
+    row.append(identity, role);
     return row;
   }));
 }

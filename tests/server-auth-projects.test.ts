@@ -341,7 +341,7 @@ test("invite-only users and project capability sessions enforce access boundarie
       action: "join",
     });
     const membersBeforeViewConfirmation = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: memberCookie } })).json();
-    assert.deepEqual(membersBeforeViewConfirmation.members.map(member => [member.username, member.role]), [["member.one", "owner"]]);
+    assert.deepEqual(membersBeforeViewConfirmation.members.map(member => [member.username, member.displayName, member.role]), [["member.one", "member.one", "owner"]]);
     assert.equal((await fetch(viewJoinApi, { method: "POST", headers: { Cookie: adminCookie } })).status, 200);
     const registeredViewerProject = await fetch(`${base}/v1/project?project=${project.id}`, { headers: { Cookie: adminCookie } });
     assert.equal(registeredViewerProject.status, 200);
@@ -352,7 +352,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     })).status, 403);
     assert.equal((await fetch(`${base}/v1/project/share?project=${project.id}`, { method: "POST", headers: { Cookie: adminCookie } })).status, 403);
     const viewerMembers = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: memberCookie } })).json();
-    assert.deepEqual(viewerMembers.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "viewer"]]);
+    assert.deepEqual(viewerMembers.members.map(member => [member.username, member.displayName, member.role]), [["member.one", "member.one", "owner"], ["admin", "Admin Editor", "viewer"]]);
 
     const joinResponse = await fetch(`${base}${share.editPath}`, { headers: { Cookie: adminCookie }, redirect: "manual" });
     assert.equal(joinResponse.status, 200);
@@ -382,7 +382,7 @@ test("invite-only users and project capability sessions enforce access boundarie
     const adminShare = (await adminShareResponse.json()).share;
     assert.notEqual(adminShare.editPath, share.editPath);
     const members = await (await fetch(`${base}/v1/project/members?project=${project.id}`, { headers: { Cookie: adminCookie } })).json();
-    assert.deepEqual(members.members.map(member => [member.username, member.role]), [["member.one", "owner"], ["admin", "collaborator"]]);
+    assert.deepEqual(members.members.map(member => [member.username, member.displayName, member.role]), [["member.one", "member.one", "owner"], ["admin", "Admin Editor", "collaborator"]]);
 
     const tagsResponse = await fetch(`${base}/v1/projects/${project.id}/tags`, {
       method: "PATCH",
