@@ -490,6 +490,7 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#about-dialog").waitFor();
     assert.equal(await page.locator("#about-github").getAttribute("href"), "https://github.com/EvoEvolver/LatexCoder");
     assert.match(await page.locator("#about-dialog").textContent(), /people, coding agents, and Git/);
+    assert.equal(await page.locator('[aria-label="Project technologies"]').count(), 0);
     await page.screenshot({ path: "/tmp/latexcoder-about.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     const aboutBounds = await page.locator("#about-dialog").boundingBox();

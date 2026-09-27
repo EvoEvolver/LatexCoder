@@ -117,12 +117,6 @@ function AboutDialog() {
           <img src={keycapUrl} alt="" className="size-20 object-contain" />
           <h2 className="mt-3 font-serif text-2xl font-semibold">LaTeX Coder</h2>
           <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">A self-hosted LaTeX workspace where people, coding agents, and Git work on the same paper.</p>
-          <div className="mt-4 flex flex-wrap justify-center gap-1.5 text-[11px] text-muted-foreground" aria-label="Project technologies">
-            <span className="rounded border bg-muted px-2 py-1">TypeScript</span>
-            <span className="rounded border bg-muted px-2 py-1">Yjs</span>
-            <span className="rounded border bg-muted px-2 py-1">Git</span>
-            <span className="rounded border bg-muted px-2 py-1">SQLite</span>
-          </div>
         </div>
         <footer className="mt-5 flex items-center justify-between border-t pt-4">
           <span className="text-xs text-muted-foreground">Open source · MIT License</span>
