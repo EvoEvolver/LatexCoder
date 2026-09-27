@@ -199,15 +199,15 @@ export function AppShell() {
           <button id="admin-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder"><Brand /></button>
           <Button id="admin-back" variant="ghost" size="sm"><Icon name="arrow-left" />Projects</Button>
         </header>
-        <main className="mx-auto w-[min(calc(100%-2rem),80rem)] py-8">
-          <div className="mb-5"><h1 className="font-serif text-3xl font-semibold">Administration</h1><p className="mt-1 text-sm text-muted-foreground">Manage accounts and projects across this installation.</p></div>
+        <main className="mx-auto w-[min(calc(100%-2rem),80rem)] py-8 max-sm:py-5">
+          <div className="mb-5"><h1 className="font-serif text-3xl font-semibold max-sm:text-2xl">Administration</h1><p className="mt-1 text-sm text-muted-foreground">Manage accounts and projects across this installation.</p></div>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <div className="segmented grid grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist" aria-label="Admin data"><Button id="admin-users-tab" className="active h-8 px-4 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" role="tab">Users</Button><Button id="admin-projects-tab" className="h-8 px-4 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" role="tab">Projects</Button></div>
-            <label className="relative min-w-56 flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="admin-search" className="pl-8" type="search" placeholder="Search users" aria-label="Search admin records" /></label>
-            <span id="admin-total" className="text-xs tabular-nums text-muted-foreground" />
+            <label className="relative min-w-56 flex-1 max-sm:order-last max-sm:basis-full max-sm:min-w-0"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="admin-search" className="pl-8" type="search" placeholder="Search users" aria-label="Search admin records" /></label>
+            <span id="admin-total" className="ml-auto text-xs tabular-nums text-muted-foreground" />
           </div>
-          <div id="admin-table" className="min-h-72 overflow-x-auto rounded-md border bg-card" />
-          <footer className="mt-3 flex items-center justify-between"><span id="admin-page-status" className="text-xs tabular-nums text-muted-foreground" /><div className="flex gap-2"><Button id="admin-previous" variant="outline" size="sm">Previous</Button><Button id="admin-next" variant="outline" size="sm">Next</Button></div></footer>
+          <div id="admin-table" className="min-h-72 overflow-x-auto rounded-md border bg-card max-sm:min-h-0 max-sm:overflow-x-hidden max-sm:border-0 max-sm:bg-transparent" />
+          <footer className="mt-3 flex flex-wrap items-center justify-between gap-2"><span id="admin-page-status" className="text-xs tabular-nums text-muted-foreground" /><div className="flex gap-2"><Button id="admin-previous" variant="outline" size="sm">Previous</Button><Button id="admin-next" variant="outline" size="sm">Next</Button></div></footer>
         </main>
       </div>
 

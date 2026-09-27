@@ -2672,11 +2672,22 @@ let adminView: "users" | "projects" = "users";
 let adminPageNumber = 1;
 let adminSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
-function adminCell(text: string, className = ""): HTMLTableCellElement {
+function adminCell(text: string, label: string, className = ""): HTMLTableCellElement {
   const cell = document.createElement("td");
-  cell.className = `whitespace-nowrap border-b px-3 py-2.5 text-xs ${className}`;
-  cell.textContent = text;
+  cell.className = `whitespace-nowrap border-b px-3 py-2.5 text-xs max-sm:grid max-sm:grid-cols-[5.25rem_minmax(0,1fr)] max-sm:items-start max-sm:gap-2 max-sm:whitespace-normal max-sm:border-0 max-sm:px-2 max-sm:py-1.5 ${className}`;
+  const mobileLabel = document.createElement("span");
+  mobileLabel.className = "hidden pt-0.5 text-[9px] font-semibold uppercase text-muted-foreground max-sm:block";
+  mobileLabel.textContent = label;
+  const value = document.createElement("span");
+  value.className = "min-w-0 break-words";
+  value.dataset.adminCellValue = "";
+  value.textContent = text;
+  cell.append(mobileLabel, value);
   return cell;
+}
+
+function adminCellValue(cell: HTMLTableCellElement): HTMLSpanElement {
+  return cell.querySelector<HTMLSpanElement>("[data-admin-cell-value]")!;
 }
 
 function adminAction(label: string, icon: "key-round" | "trash-2", action: () => void, danger = false): HTMLButtonElement {
@@ -2692,9 +2703,9 @@ function adminAction(label: string, icon: "key-round" | "trash-2", action: () =>
 
 function adminTable(headers: string[]): { table: HTMLTableElement; body: HTMLTableSectionElement } {
   const table = document.createElement("table");
-  table.className = "w-full min-w-[760px] border-collapse text-left";
+  table.className = "w-full border-collapse text-left sm:min-w-[760px]";
   const head = document.createElement("thead");
-  head.className = "sticky top-0 z-10 bg-muted/95 text-[10px] uppercase text-muted-foreground backdrop-blur";
+  head.className = "sticky top-0 z-10 bg-muted/95 text-[10px] uppercase text-muted-foreground backdrop-blur max-sm:hidden";
   const row = document.createElement("tr");
   for (const header of headers) {
     const cell = document.createElement("th");
@@ -2704,6 +2715,7 @@ function adminTable(headers: string[]): { table: HTMLTableElement; body: HTMLTab
   }
   head.append(row);
   const body = document.createElement("tbody");
+  body.className = "max-sm:grid max-sm:gap-2";
   table.append(head, body);
   return { table, body };
 }
@@ -2775,18 +2787,18 @@ function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
   const { table, body } = adminTable(["User", "Status", "Type", "Projects", "Created", "Invited by", "Actions"]);
   for (const user of result.items) {
     const row = document.createElement("tr");
-    row.className = "hover:bg-accent/40";
-    const identity = adminCell("");
+    row.className = "hover:bg-accent/40 max-sm:grid max-sm:rounded-md max-sm:border max-sm:bg-background max-sm:p-1";
+    const identity = adminCell("", "User");
     const name = document.createElement("strong");
     name.className = "block font-medium text-foreground";
     name.textContent = user.displayName;
     const username = document.createElement("span");
     username.className = "text-[10px] text-muted-foreground";
     username.textContent = `@${user.username}`;
-    identity.append(name, username);
+    adminCellValue(identity).append(name, username);
     const status = user.deletedAt ? "Deleted" : user.isAdmin ? "Admin" : "Active";
-    const statusCell = adminCell(status, user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
-    const typeCell = adminCell("");
+    const statusCell = adminCell(status, "Status", user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
+    const typeCell = adminCell("", "Type");
     const typeSelect = document.createElement("select");
     typeSelect.className = "h-7 rounded border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60";
     typeSelect.setAttribute("aria-label", `Account type for ${user.username}`);
@@ -2799,15 +2811,15 @@ function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
     }
     typeSelect.disabled = user.isAdmin || Boolean(user.deletedAt);
     typeSelect.addEventListener("change", () => void updateAdminUserType(user, typeSelect.value as "internal" | "external"));
-    typeCell.append(typeSelect);
-    const projects = adminCell(`${user.projectCount} total · ${user.ownedProjectCount} owned`, "tabular-nums");
-    const actions = adminCell("");
-    actions.classList.add("space-x-1", "text-right");
+    adminCellValue(typeCell).append(typeSelect);
+    const projects = adminCell(`${user.projectCount} total · ${user.ownedProjectCount} owned`, "Projects", "tabular-nums");
+    const actions = adminCell("", "Actions");
+    adminCellValue(actions).classList.add("flex", "justify-end", "gap-1");
     if (!user.deletedAt) {
-      actions.append(adminAction(`Reset password for ${user.username}`, "key-round", () => void resetAdminUserPassword(user)));
-      if (!user.isAdmin) actions.append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
+      adminCellValue(actions).append(adminAction(`Reset password for ${user.username}`, "key-round", () => void resetAdminUserPassword(user)));
+      if (!user.isAdmin) adminCellValue(actions).append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
     }
-    row.append(identity, statusCell, typeCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString()), adminCell(user.invitedBy || "Bootstrap"), actions);
+    row.append(identity, statusCell, typeCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString(), "Created"), adminCell(user.invitedBy || "Bootstrap", "Invited by"), actions);
     body.append(row);
   }
   elements.admin_table.replaceChildren(table);
@@ -2817,20 +2829,20 @@ function renderAdminProjects(result: AdminPageResult<AdminProjectRow>): void {
   const { table, body } = adminTable(["Project", "Owner", "Members", "Last opened", "Created", "Actions"]);
   for (const project of result.items) {
     const row = document.createElement("tr");
-    row.className = "hover:bg-accent/40";
-    const identity = adminCell("");
+    row.className = "hover:bg-accent/40 max-sm:grid max-sm:rounded-md max-sm:border max-sm:bg-background max-sm:p-1";
+    const identity = adminCell("", "Project");
     const name = document.createElement("strong");
     name.className = "block max-w-80 truncate font-medium text-foreground";
     name.textContent = project.name;
     const id = document.createElement("code");
     id.className = "text-[10px] text-muted-foreground";
     id.textContent = project.id;
-    identity.append(name, id);
-    const owner = adminCell(project.ownerDisplayName || project.ownerUsername || "No owner", project.ownerDeletedAt ? "text-muted-foreground line-through" : "");
-    const actions = adminCell("");
-    actions.classList.add("text-right");
-    actions.append(adminAction(`Delete ${project.name}`, "trash-2", () => void deleteAdminProject(project), true));
-    row.append(identity, owner, adminCell(String(project.memberCount), "tabular-nums"), adminCell(new Date(project.lastOpenedAt).toLocaleString()), adminCell(new Date(project.createdAt).toLocaleDateString()), actions);
+    adminCellValue(identity).append(name, id);
+    const owner = adminCell(project.ownerDisplayName || project.ownerUsername || "No owner", "Owner", project.ownerDeletedAt ? "text-muted-foreground line-through" : "");
+    const actions = adminCell("", "Actions");
+    adminCellValue(actions).classList.add("flex", "justify-end");
+    adminCellValue(actions).append(adminAction(`Delete ${project.name}`, "trash-2", () => void deleteAdminProject(project), true));
+    row.append(identity, owner, adminCell(String(project.memberCount), "Members", "tabular-nums"), adminCell(new Date(project.lastOpenedAt).toLocaleString(), "Last opened"), adminCell(new Date(project.createdAt).toLocaleDateString(), "Created"), actions);
     body.append(row);
   }
   elements.admin_table.replaceChildren(table);

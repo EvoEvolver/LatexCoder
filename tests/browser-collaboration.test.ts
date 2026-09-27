@@ -505,9 +505,25 @@ test("login, invitations, and capability links separate members from guests", as
     await page.locator("#admin-table tbody tr").first().waitFor();
     assert.match(await page.locator("#admin-table").textContent(), /admin/);
     assert.match(await page.locator("#admin-total").textContent(), /users/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= 390);
+    const userCard = page.locator("#admin-table tbody tr").first();
+    const userBounds = await userCard.boundingBox();
+    assert.ok(userBounds && userBounds.x >= 0 && userBounds.x + userBounds.width <= 390, `Admin user card must fit mobile: ${JSON.stringify(userBounds)}`);
+    for (const label of ["User", "Status", "Type", "Projects", "Created", "Invited by", "Actions"]) {
+      await userCard.getByText(label, { exact: true }).waitFor();
+    }
+    await page.screenshot({ path: "/tmp/latexcoder-admin-users-mobile.png", fullPage: true });
     await page.locator("#admin-projects-tab").click();
     await page.waitForFunction(() => document.querySelector("#admin-total")?.textContent?.includes("projects"));
     assert.match(await page.locator("#admin-table").textContent(), /Paper/);
+    const projectCard = page.locator("#admin-table tbody tr").first();
+    for (const label of ["Project", "Owner", "Members", "Last opened", "Created", "Actions"]) {
+      await projectCard.getByText(label, { exact: true }).waitFor();
+    }
+    assert.ok(await projectCard.getByRole("button", { name: /Delete/ }).isVisible());
+    await page.screenshot({ path: "/tmp/latexcoder-admin-projects-mobile.png", fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.locator("#admin-back").click();
     await page.waitForURL(`${base}/projects`);
     await page.locator("#account-button").click();
