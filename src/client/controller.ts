@@ -1827,7 +1827,6 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       "&.cm-focused .cm-selectionLayer, &[data-context-menu] .cm-selectionLayer": { zIndex: "3 !important", pointerEvents: "none" },
       "&.cm-focused .cm-selectionBackground, &[data-context-menu] .cm-selectionBackground": {
         backgroundColor: "rgb(63 153 220 / 18%) !important",
-        boxShadow: "inset 0 0 0 1px rgb(38 120 181 / 85%)",
       },
       ".cm-content ::selection": { backgroundColor: "rgb(63 153 220 / 22%) !important" },
     }),

@@ -233,6 +233,7 @@ test("selected text context menu preserves selection and offers editing commands
     await selectionContextMenu(page, "brave");
     assert.equal(await page.locator(".cm-editor").getAttribute("data-context-menu"), "open");
     assert.equal(await page.locator(".cm-selectionBackground").first().evaluate(element => getComputedStyle(element).backgroundColor), "rgba(63, 153, 220, 0.18)");
+    assert.equal(await page.locator(".cm-selectionBackground").first().evaluate(element => getComputedStyle(element).boxShadow), "none");
     assert.equal(await page.locator(".cm-selectionLayer").evaluate(element => getComputedStyle(element).zIndex), "3");
     assert.equal(await page.locator("#editor-context-menu [role=menuitem]").count(), 9);
     await page.screenshot({ path: "/tmp/latexcoder-editor-context-menu.png" });
