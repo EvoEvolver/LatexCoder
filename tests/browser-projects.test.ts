@@ -269,10 +269,20 @@ test("Tree follows the main document and TreeWriter navigates the outline", asyn
 \sectiontldr{The conclusion states the main result.}
 \end{document}`;
     const method = String.raw`Introduction
+\begin{equation}F=ma\label{eq:tree}\end{equation}
+\begin{figure}\includegraphics{figure.svg}\label{fig:tree}\end{figure}
 \subsection{Method}
-Details at \url{https://example.com}. \tldr{The method combines two stages.}`;
+Details at \url{https://example.com}. See \cite{paper2026}, use $E=mc^2$, inspect \includegraphics{figure.svg}, and revisit \ref{eq:tree} with \ref{fig:tree}. \tldr{The method combines two stages.}`;
     await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: main, headers: { "Content-Type": "text/plain" } });
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: method, headers: { "Content-Type": "text/plain" } });
+    await page.request.put(`${base}/v1/files?project=${id}&path=refs.bib`, {
+      data: "@article{paper2026, title={TreeWriter Hover Preview}, author={Doe, Jane}, year={2026}}",
+      headers: { "Content-Type": "text/plain" },
+    });
+    await page.request.put(`${base}/v1/files?project=${id}&path=chapters/figure.svg`, {
+      data: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#236b59"/></svg>',
+      headers: { "Content-Type": "image/svg+xml" },
+    });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     const items = page.locator("#structure-list .structure-item");
     const headings = page.locator('#structure-list .structure-item[data-structure-type="heading"]');
@@ -285,7 +295,7 @@ Details at \url{https://example.com}. \tldr{The method combines two stages.}`;
 
     await headings.nth(1).click();
     await page.waitForFunction(() => document.querySelector("#active-file-label")?.textContent === "chapters/method.tex"
-      && globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number === 2);
+      && globalThis.__paperE2E.state.view.state.doc.lineAt(globalThis.__paperE2E.state.view.state.selection.main.head).number === 4);
 
     await page.request.put(`${base}/v1/files?project=${id}&path=chapters/method.tex`, { data: `${method}\n\\subsection{Evaluation}\nEvidence. \\tldr{Evaluation confirms the gain.}`, headers: { "Content-Type": "text/plain" } });
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -318,9 +328,59 @@ Details at \url{https://example.com}. \tldr{The method combines two stages.}`;
     await page.locator('#structure-document [data-structure-kind="paragraph"]').first().click();
     const treeEditor = page.locator(".tree-writer-editor .cm-content");
     await treeEditor.waitFor();
+    assert.ok(await page.locator(".tree-writer-editor .cm-scroller").evaluate(element => parseFloat(getComputedStyle(element).maxHeight)) >= 768);
     assert.equal(await structureTab.getAttribute("aria-selected"), "true");
     assert.equal(await page.locator("#active-file-label").textContent(), "chapters/method.tex");
     assert.equal(await page.getByRole("tab", { name: "method.tex", exact: true }).count(), 0, "TreeWriter source files should stay transient");
+
+    const hoverTreeWriterText = async (needle: string, tooltip: string): Promise<void> => {
+      await page.mouse.move(1, 1);
+      await page.locator(tooltip).waitFor({ state: "hidden" }).catch(() => {});
+      const point = await treeEditor.evaluate((root, value) => {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const nodes: Text[] = [];
+        let combined = "";
+        let current: Node | null;
+        while ((current = walker.nextNode())) {
+          const node = current as Text;
+          nodes.push(node);
+          combined += node.data;
+        }
+        const target = combined.indexOf(value) + Math.floor(value.length / 2);
+        if (target >= Math.floor(value.length / 2)) {
+          let offset = 0;
+          for (const node of nodes) {
+            if (target <= offset + node.length) {
+              const range = document.createRange();
+              range.setStart(node, target - offset);
+              range.setEnd(node, target - offset);
+              const bounds = range.getBoundingClientRect();
+              return { x: bounds.left, y: (bounds.top + bounds.bottom) / 2 };
+            }
+            offset += node.length;
+          }
+        }
+        throw new Error(`Could not locate ${value} in TreeWriter`);
+      }, needle);
+      await page.mouse.move(point.x, point.y);
+      await page.locator(tooltip).waitFor();
+    };
+
+    await hoverTreeWriterText("paper2026", ".cm-citation-tooltip");
+    assert.match(await page.locator(".cm-citation-tooltip").textContent(), /TreeWriter Hover Preview/);
+    await hoverTreeWriterText("mc^2", ".cm-formula-tooltip");
+    assert.equal(await page.locator(".cm-formula-tooltip .katex-mathml annotation").textContent(), "E=mc^2");
+    await hoverTreeWriterText("eq:tree", ".cm-formula-tooltip");
+    assert.equal(await page.locator(".cm-formula-tooltip .katex-mathml annotation").textContent(), "F=ma");
+    await hoverTreeWriterText("figure.svg", ".cm-image-tooltip");
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>(".cm-image-tooltip img")?.naturalWidth === 120);
+    assert.equal(await page.locator(".cm-image-tooltip footer").textContent(), "chapters/figure.svg");
+    await hoverTreeWriterText("fig:tree", ".cm-image-tooltip");
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>(".cm-image-tooltip img")?.naturalWidth === 120);
+    assert.equal(await page.locator(".cm-image-tooltip footer").textContent(), "chapters/figure.svg");
+    await page.mouse.move(1, 1);
+    await page.locator(".cm-image-tooltip").waitFor({ state: "hidden" });
+
     await treeEditor.click({ button: "right" });
     const treeContextMenu = page.getByRole("menu", { name: "Edit selection", exact: true });
     await treeContextMenu.waitFor();

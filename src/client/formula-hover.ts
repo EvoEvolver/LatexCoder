@@ -13,6 +13,7 @@ type FormulaHoverData = {
   activeFile(): string;
   files(): ProjectFile[];
   readFile(path: string): Promise<string>;
+  sourceForActiveFile?(editorSource: string): string;
 };
 
 type LocatedFormula = { region: MathRegion; path: string; label?: string };
@@ -94,7 +95,7 @@ export function formulaHover(data: FormulaHoverData): Extension {
 
       const projectId = data.projectId();
       const activeFile = data.activeFile();
-      const sources = await projectTexSources(activeSource);
+      const sources = await projectTexSources(data.sourceForActiveFile?.(activeSource) ?? activeSource);
       if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
 
       if (!formula) {

@@ -12,6 +12,7 @@ type ImageHoverData = {
   files(): ProjectFile[];
   fileUrl(path: string): string;
   readFile(path: string): Promise<string>;
+  sourceForActiveFile?(editorSource: string): string;
 };
 
 type TexSource = { path: string; source: string };
@@ -150,7 +151,7 @@ export function imageHover(data: ImageHoverData): Extension {
       let asset = link.key;
       let originFile = activeFile;
       if (link.kind === "label") {
-        const sources = await projectTexSources(activeSource);
+        const sources = await projectTexSources(data.sourceForActiveFile?.(activeSource) ?? activeSource);
         if (projectId !== data.projectId() || activeFile !== data.activeFile()) return null;
         let target: { path: string; asset: string } | undefined;
         for (const source of sources) {

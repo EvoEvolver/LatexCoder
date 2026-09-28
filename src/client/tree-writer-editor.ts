@@ -99,7 +99,7 @@ export class TreeWriterEditor {
             ".cm-content": { caretColor: "var(--primary)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", padding: "10px 0" },
             ".cm-gutters": { backgroundColor: "var(--editor-gutter)", color: "var(--editor-gutter-foreground)", border: "0" },
             ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
-            ".cm-scroller": { maxHeight: "24rem", overflow: "auto" },
+            ".cm-scroller": { maxHeight: "48rem", overflow: "auto" },
             "&.cm-focused": { outline: "none" },
           }),
         ],

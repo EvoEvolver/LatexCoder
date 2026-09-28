@@ -981,10 +981,13 @@ async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButton
     text: session.text,
     undoManager,
     selection,
-    extensions: sourceEditorInteractions({
-      followReference: link => { void followReference(link); },
-      openContextMenu: openEditorContextMenu,
-    }),
+    extensions: [
+      ...projectHoverExtensions(() => target.range.path, () => session.text.toString()),
+      sourceEditorInteractions({
+        followReference: link => { void followReference(link); },
+        openContextMenu: openEditorContextMenu,
+      }),
+    ],
     onInvalidated: () => {
       panel.status.hidden = false;
       panel.status.textContent = "This source range was removed. Refresh the Tree to continue.";
@@ -1808,6 +1811,24 @@ async function readProjectTextFile(relativePath: string): Promise<string> {
   return response.ok ? response.text() : "";
 }
 
+function projectHoverExtensions(activeFile: () => string, sourceForActiveFile?: (editorSource: string) => string): Extension[] {
+  const projectData = {
+    projectId: () => state.projectId,
+    activeFile,
+    files: () => state.files,
+    readFile: readProjectTextFile,
+    sourceForActiveFile,
+  };
+  return [
+    citationHover(projectData),
+    formulaHover(projectData),
+    imageHover({
+      ...projectData,
+      fileUrl: path => projectApiUrl(`v1/files?path=${encodeURIComponent(path)}`).toString(),
+    }),
+  ];
+}
+
 function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awareness">): Extension[] {
   const undoManager = new Y.UndoManager(ytext, { trackedOrigins: new Set() });
   return [
@@ -1845,24 +1866,7 @@ function editorExtensions(ytext: Y.Text, provider: Pick<WebsocketProvider, "awar
       files: () => state.files,
       readFile: readProjectTextFile,
     })] }),
-    citationHover({
-      projectId: () => state.projectId,
-      files: () => state.files,
-      readFile: readProjectTextFile,
-    }),
-    formulaHover({
-      projectId: () => state.projectId,
-      activeFile: () => state.activeFile,
-      files: () => state.files,
-      readFile: readProjectTextFile,
-    }),
-    imageHover({
-      projectId: () => state.projectId,
-      activeFile: () => state.activeFile,
-      files: () => state.files,
-      fileUrl: path => projectApiUrl(`v1/files?path=${encodeURIComponent(path)}`).toString(),
-      readFile: readProjectTextFile,
-    }),
+    ...projectHoverExtensions(() => state.activeFile),
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),
