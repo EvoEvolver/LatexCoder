@@ -257,13 +257,16 @@ Keep the existing HTTPS domain for the web app. If Railway assigns
 `shuttle.proxy.rlwy.net:15140`, for example, configure:
 
 ```env
+PORT=8080
+LATEXCODER_PORT=8080
 LATEXCODER_SSH_PORT=2222
 LATEXCODER_SSH_PUBLIC_HOST=shuttle.proxy.rlwy.net
 LATEXCODER_SSH_PUBLIC_PORT=15140
 ```
 
-Replace the example hostname and public port with your assigned TCP proxy
-address, then redeploy. The Git menu uses these values for SSH clone commands;
+Keep the HTTPS domain target port at `8080`; HTTP and SSH must use different
+internal ports. Replace the example hostname and public port with your assigned
+TCP proxy address, then redeploy. The Git menu uses these values for SSH clone commands;
 the existing HTTPS access links remain available under **Access link**.
 
 ## Configuration
