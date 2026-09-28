@@ -558,6 +558,10 @@ test("login, invitations, and capability links separate members from guests", as
     await loginMark.waitFor();
     assert.equal(await loginMark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
     assert.match(await page.locator('link[rel="icon"]').getAttribute("href"), /l-keycap(?:-[A-Za-z0-9_-]+)?\.svg$/);
+    const accountNotice = page.locator("#auth-notice");
+    assert.equal(await accountNotice.isVisible(), true);
+    await accountNotice.locator("summary").click();
+    assert.match(await accountNotice.textContent(), /contact an administrator to request a password reset link/i);
     await page.locator("#auth-username").fill("admin");
     await page.locator("#auth-password").fill("browser admin password");
     await page.locator("#auth-submit").click();
@@ -701,6 +705,7 @@ test("login, invitations, and capability links separate members from guests", as
     await invited.goto(invitationLink);
     await invited.locator("#auth-page").waitFor();
     assert.equal(await invited.locator("#auth-title").textContent(), "Create your account");
+    assert.equal(await invited.locator("#auth-notice").isVisible(), true);
     await invited.locator("#auth-username").fill("browser.member");
     await invited.locator("#auth-password").fill("browser member password");
     await invited.locator("#auth-submit").click();
@@ -767,6 +772,7 @@ test("login, invitations, and capability links separate members from guests", as
     await resetting.goto(passwordResetLink);
     await resetting.locator("#auth-page").waitFor();
     assert.equal(await resetting.locator("#auth-title").textContent(), "Set a new password");
+    assert.equal(await resetting.locator("#auth-notice").isHidden(), true);
     assert.equal(await resetting.locator("#auth-username").inputValue(), "browser.member");
     assert.equal(await resetting.locator("#auth-username").isDisabled(), true);
     await resetting.locator("#auth-password").fill("browser member replacement");

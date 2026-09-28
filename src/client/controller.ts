@@ -187,7 +187,7 @@ const elementIds = [
   "admin-back", "admin-button", "admin-next", "admin-page", "admin-page-status", "admin-previous", "admin-projects-tab", "admin-search", "admin-table", "admin-total", "admin-users-tab",
   "account-button", "account-cancel", "account-close", "account-dialog", "account-display-name", "account-form", "account-logout", "account-save", "account-username",
   "action-cancel", "action-close", "action-dialog", "action-form", "action-input", "action-label", "action-message", "action-submit", "action-title",
-  "auth-description", "auth-error", "auth-form", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
+  "auth-description", "auth-error", "auth-form", "auth-notice", "auth-page", "auth-password", "auth-submit", "auth-title", "auth-username",
   "active-file-label", "binary-download", "binary-fallback", "binary-fallback-download", "binary-kind", "binary-name", "binary-status", "binary-view",
   "browser-editing-description", "build-log", "build-output", "clone-command", "close-files", "close-output", "compile-button", "copy-agent-link", "copy-clone-command", "copy-share-link", "display-name", "download-project",
   "collaborate-menu", "collaborator-close", "collaborator-dialog", "collaborator-done", "collaborator-list", "editor-page", "editor-pane", "editor-topbar", "editor", "empty-output", "file-list", "file-pdf-document", "file-preview-viewport", "file-preview-zoom-in", "file-preview-zoom-out", "files-menu", "files-pane", "guest-name-field", "image-preview", "markdown-preview", "markdown-preview-content", "markdown-rendered", "markdown-source", "markdown-view-switch", "new-project", "open-pdf", "output-pane", "pdf-document", "project-title", "review-actions", "topbar-actions", "topbar-status",
@@ -3182,6 +3182,7 @@ function showAuthPage(mode: "login" | "register" | "reset" = "login", descriptio
   elements.auth_password.value = "";
   const registering = mode === "register";
   const resetting = mode === "reset";
+  elements.auth_notice.hidden = resetting;
   elements.auth_username.disabled = resetting;
   elements.auth_title.textContent = registering ? "Create your account" : resetting ? "Set a new password" : "Sign in";
   elements.auth_description.textContent = description || (registering

@@ -145,6 +145,13 @@ export function AppShell() {
                 <p id="auth-error" className="auth-error text-sm text-destructive" hidden />
                 <Button id="auth-submit" className="w-full" type="submit"><Icon name="log-in" /><span>Sign in</span></Button>
               </form>
+              <details id="auth-notice" className="group mt-4 border-t pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-1 py-2 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                  <span className="flex items-center gap-2"><Icon name="key-round" />Account notice</span>
+                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 transition-transform group-open:rotate-90" />
+                </summary>
+                <p className="px-1 pb-1 pt-2 text-xs leading-relaxed text-muted-foreground">There is no self-service password recovery. If you lose or forget your password, contact an administrator to request a password reset link.</p>
+              </details>
             </CardContent>
           </Card>
         </main>
