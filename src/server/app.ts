@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { WebSocketServer } from "ws";
 
+import { createGitSshServer, type SshGitRunner } from "./git-ssh.ts";
 import { StateDatabase } from "./database.ts";
 import { parseReviews } from "../shared/review.ts";
 import { apiError, isTextFile, MAX_FILE_BYTES, MAX_TEXT_BYTES, parseCookies, passwordRecord, pathFromRoomName, randomToken, safeRelativePath, sessionCookie, sha256, validatePassword } from "./core.ts";
@@ -466,16 +467,18 @@ async function syncGitIngress(runtime: ProjectRuntime): Promise<{ ingressDir: st
   return { ingressDir, head };
 }
 
-async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string, blameActor?: BlameActor) {
+async function gitReceivePack(runtime: ProjectRuntime, args: string[], input: Uint8Array, protocol?: string, blameActor?: BlameActor, sshRunner?: SshGitRunner) {
   const { ingressDir, head: before } = await syncGitIngress(runtime);
   const env: Record<string, string | undefined> = { ...process.env, ...GIT_IDENTITY_ENV };
   if (protocol) env.GIT_PROTOCOL = protocol;
-  const output = await runBinary("git", [
+  const receiveArgs = [
     "-c", "core.hooksPath=/dev/null",
     "-c", "receive.denyDeletes=true",
     "-c", "receive.denyNonFastForwards=true",
-    "receive-pack", "--stateless-rpc", ...args, ingressDir,
-  ], { cwd: ingressDir, env }, input);
+    "receive-pack", ...(sshRunner ? [] : ["--stateless-rpc"]), ...args, ingressDir,
+  ];
+  const output = sshRunner ? await sshRunner(receiveArgs, ingressDir, env)
+    : await runBinary("git", receiveArgs, { cwd: ingressDir, env }, input);
   if (args.includes("--advertise-refs")) return { output, sync: null };
 
   const incoming = await gitHead(ingressDir, "refs/heads/main");
@@ -1316,6 +1319,56 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     notifyProjectFiles, resolveProject, trackedPaths, withGitOperation,
     withGitReader, withTemporaryWorktree,
   });
+  const sshPort = options.sshPort ?? (process.env.LATEXCODER_SSH_PORT ? Number(process.env.LATEXCODER_SSH_PORT) : undefined);
+  const ssh = sshPort === undefined ? null : await createGitSshServer({
+    stateDir, database, port: sshPort, host: options.sshHost || process.env.LATEXCODER_SSH_HOST || "0.0.0.0",
+    async run(username, fingerprint, projectId, push, runner) {
+      const authorize = () => {
+        const key = database.getSshKey(fingerprint);
+        const user = database.getUser(username);
+        const membership = database.getProjectMember(projectId, username);
+        if (key?.username !== username || !user || user.deletedAt || !membership || (push && membership.role === "viewer")) {
+          throw apiError("git_access_denied", "SSH key or project access is no longer valid.", 403);
+        }
+        return { id: username, name: user.displayName };
+      };
+      const actor = authorize();
+      const runtime = await loadProject(projectId);
+      await withGitReader(runtime, async () => {
+        if (push) {
+          const result = await withGitOperation(runtime, () => gitReceivePack(runtime, [], Buffer.alloc(0), undefined, actor,
+            async (args, cwd, env) => { const output = await runner(args, cwd, env); authorize(); return output; }));
+          if (result.sync) notifyProjectFiles(runtime.id);
+        } else {
+          await withLiveGitOperation(runtime, () => prepareGitPull(runtime));
+          authorize();
+          await runner(["-c", "core.hooksPath=/dev/null", "upload-pack", runtime.projectDir], runtime.projectDir, { ...process.env, GIT_PROTOCOL: "" });
+        }
+      });
+    },
+  }).catch(error => {
+    for (const checkpoint of autoCheckpoints.values()) checkpoint.close();
+    compileQueue.close();
+    for (const runtime of projects.values()) runtime.collaboration.shutdown();
+    database.close();
+    throw error;
+  });
+  app.get("/v1/git/ssh", async (request, response, next) => {
+    try {
+      const user = requireUser(request);
+      const runtime = await resolveProject(request);
+      requireProjectMember(request, runtime);
+      const address = ssh?.server.address();
+      const port = Number(options.sshPublicPort || process.env.LATEXCODER_SSH_PUBLIC_PORT || (address && typeof address === "object" ? address.port : 2222));
+      const hostname = options.sshPublicHost || process.env.LATEXCODER_SSH_PUBLIC_HOST || request.hostname;
+      if (!/^(?:[A-Za-z0-9.-]+|\[[A-Fa-f0-9:]+\])$/.test(hostname) || !Number.isInteger(port) || port < 1 || port > 65535) {
+        throw apiError("ssh_configuration_invalid", "SSH public host or port is invalid.", 503);
+      }
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ enabled: Boolean(ssh), url: ssh ? `ssh://git@${hostname}:${port}/${runtime.id}.git` : null,
+        keyCount: database.listSshKeys(user.username).length, hostFingerprint: ssh?.fingerprint || null });
+    } catch (error) { next(error); }
+  });
   registerGitRoutes(app, {
     gitCheckpoint, gitReceivePack, gitResolve, gitStatus, gitSync, gitUploadPack,
     json: express.json, notifyProjectFiles, prepareGitPull, raw: express.raw,
@@ -1375,17 +1428,18 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
 
   const defaultRuntime = defaultProjectId ? await loadProject(defaultProjectId) : null;
   let closed = false;
-  const shutdown = () => {
+  const shutdown = async () => {
     if (closed) return;
+    closed = true;
     for (const checkpoint of autoCheckpoints.values()) checkpoint.close();
+    if (ssh) await ssh.close();
     for (const listeners of projectEvents.values()) for (const response of listeners) response.end();
     compileQueue.close();
     for (const runtime of projects.values()) runtime.collaboration.shutdown();
     database.close();
-    closed = true;
   };
   return {
-    app, server, sockets, stateDir, projectsDir, projects, database, shutdown,
+    app, server, sockets, stateDir, projectsDir, projects, database, shutdown, sshServer: ssh?.server,
     // Kept for API consumers of the original single-project server.
     projectDir: defaultRuntime?.projectDir,
     collaboration: defaultRuntime?.collaboration,
@@ -1393,13 +1447,19 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
 }
 
 export async function startPaperServer(options: ServerOptions = {}): Promise<PaperServer> {
-  const paper = await createPaperServer({ ...options, logRequests: options.logRequests ?? true });
+  const paper = await createPaperServer({ ...options, sshPort: options.sshPort ?? Number(process.env.LATEXCODER_SSH_PORT || 2222), logRequests: options.logRequests ?? true });
   const host = options.host || process.env.LATEXCODER_HOST || "0.0.0.0";
-  const port = Number(options.port || process.env.LATEXCODER_PORT || process.env.PORT || 8090);
-  await new Promise<void>((resolve, reject) => {
-    paper.server.once("error", reject);
-    paper.server.listen(port, host, () => resolve());
-  });
+  const port = Number(options.port ?? process.env.LATEXCODER_PORT ?? process.env.PORT ?? 8090);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      paper.server.once("error", reject);
+      paper.server.listen(port, host, () => { paper.server.removeListener("error", reject); resolve(); });
+    });
+  } catch (error) {
+    await paper.shutdown();
+    paper.sockets.close();
+    throw error;
+  }
   const address = paper.server.address();
   console.log(`LaTeX Coder listening on http://${host}:${typeof address === "object" && address ? address.port : port}`);
   return paper;

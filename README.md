@@ -178,14 +178,23 @@ content does not create an empty commit.
 
 Clone, fetch, and pull first checkpoint the latest collaborative content, so a
 browser user does not need to push before a local Git client can see their work.
-A personal remote is available from **Collaborate → Git access**:
+Add a public key under **Account Settings → SSH keys**, then copy the default
+SSH command from **Collaborate → Git access**. Clone and push require the
+matching private key and project membership. Viewers can clone but cannot push.
+Removing a key revokes its SSH access.
 
 ```sh
-git clone https://your-host/git/<project-id>/<personal-secret>
+git clone ssh://git@your-host:2222/<project-id>.git
 cd <project-id>
 # edit and commit normally
 git push origin main
 ```
+
+The **Access link** option retains the existing HTTPS remote at
+`https://your-host/git/<project-id>/<personal-secret>`, which works without an
+SSH key. SSH keys are managed separately from project access-link secrets.
+The server's SSH host key is generated on first startup and persisted in the
+state directory; its fingerprint is shown in the Git dialog.
 
 On push, LaTeX Coder checkpoints current Yjs state, merges the incoming commit
 in a temporary worktree, validates the result, and imports a clean merge into
@@ -229,6 +238,7 @@ docker volume create latexcoder-data
 docker run --rm \
   --name latexcoder \
   --publish 8090:8090 \
+  --publish 2222:2222 \
   --security-opt seccomp=unconfined \
   --env LATEXCODER_ADMIN_PASSWORD='use-a-long-random-password' \
   --volume latexcoder-data:/data \
@@ -242,6 +252,20 @@ For Railway, use the deploy button above, attach a persistent volume at `/data`,
 and set `LATEXCODER_ADMIN_PASSWORD`. Railway's injected `PORT` is accepted
 automatically; no custom start command is required.
 
+For SSH Git, add a **Settings → Networking → TCP Proxy** targeting port `2222`.
+Keep the existing HTTPS domain for the web app. If Railway assigns
+`shuttle.proxy.rlwy.net:15140`, for example, configure:
+
+```env
+LATEXCODER_SSH_PORT=2222
+LATEXCODER_SSH_PUBLIC_HOST=shuttle.proxy.rlwy.net
+LATEXCODER_SSH_PUBLIC_PORT=15140
+```
+
+Replace the example hostname and public port with your assigned TCP proxy
+address, then redeploy. The Git menu uses these values for SSH clone commands;
+the existing HTTPS access links remain available under **Access link**.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -249,7 +273,11 @@ automatically; no custom start command is required.
 | `LATEXCODER_ADMIN_PASSWORD` | none | Creates the initial `admin` account on an empty database. |
 | `LATEXCODER_STATE_DIR` | `.latexcoder` | SQLite database, projects, Git repositories, Yjs snapshots, build cache, and PDFs. |
 | `LATEXCODER_HOST` | `0.0.0.0` | Listener address. |
-| `LATEXCODER_PORT` | `PORT` or `8090` | Listener port. |
+| `LATEXCODER_PORT` | `PORT` or `8090` | HTTP listener port. |
+| `LATEXCODER_SSH_PORT` | `2222` | SSH Git listener port. |
+| `LATEXCODER_SSH_HOST` | `0.0.0.0` | SSH listener address. |
+| `LATEXCODER_SSH_PUBLIC_HOST` | Web request hostname | Hostname shown in SSH clone URLs. |
+| `LATEXCODER_SSH_PUBLIC_PORT` | SSH listener port | External SSH port, when forwarded by a TCP proxy. |
 | `LATEXCODER_LATEX_BIN` | auto-detected | Explicit Tectonic or latexmk executable. |
 | `LATEXCODER_TECTONIC_BUNDLE_URL` | Tectonic default | Tectonic bundle mirror URL, useful when the default package bundle is slow or unavailable. |
 | `LATEXCODER_COMPILE_CONCURRENCY` | `2` | Process-wide concurrent build limit. |

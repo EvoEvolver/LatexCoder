@@ -43,6 +43,7 @@ export type VersionLabel = {
 };
 
 export type UserType = "internal" | "external";
+export type UserSshKey = { id: string; username: string; title: string; publicKey: string; fingerprint: string; createdAt: string };
 
 type SqlValue = string | number | bigint | Uint8Array | null;
 type SqlRow = Record<string, SqlValue>;
@@ -104,6 +105,26 @@ export class StateDatabase {
 
   countUsers() {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM users").get() as SqlRow).count);
+  }
+
+  listSshKeys(username: string): UserSshKey[] {
+    return this.db.prepare(`SELECT id, username, title, public_key AS publicKey,
+      fingerprint, created_at AS createdAt FROM user_ssh_keys WHERE username = ?
+      ORDER BY created_at, id`).all(username) as unknown as UserSshKey[];
+  }
+
+  getSshKey(fingerprint: string): UserSshKey | null {
+    return this.db.prepare(`SELECT id, username, title, public_key AS publicKey,
+      fingerprint, created_at AS createdAt FROM user_ssh_keys WHERE fingerprint = ?`).get(fingerprint) as unknown as UserSshKey || null;
+  }
+
+  addSshKey(key: UserSshKey): void {
+    this.db.prepare(`INSERT INTO user_ssh_keys (id, username, title, public_key, fingerprint, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(key.id, key.username, key.title, key.publicKey, key.fingerprint, key.createdAt);
+  }
+
+  deleteSshKey(username: string, id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM user_ssh_keys WHERE username = ? AND id = ?").run(username, id).changes) === 1;
   }
 
   firstUsername() {

@@ -66,7 +66,7 @@ export async function withServer(run: (context: ServerTestContext) => Promise<vo
       ws: `ws://127.0.0.1:${address.port}`,
     });
   } finally {
-    paper.shutdown();
+    await paper.shutdown();
     paper.sockets.close();
     await new Promise(resolve => paper.server.close(resolve));
     await rm(stateDir, { recursive: true, force: true });

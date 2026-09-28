@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const LATEST_SCHEMA_VERSION = 15;
+export const LATEST_SCHEMA_VERSION = 16;
 
 type ColumnRow = { name: string };
 type Migration = { version: number; name: string; up(database: DatabaseSync): void };
@@ -308,6 +308,23 @@ const migrations: Migration[] = [
         ) STRICT;
         CREATE INDEX version_labels_project_label_idx
           ON version_labels(project_id, label COLLATE NOCASE, created_at);
+      `);
+    },
+  },
+  {
+    version: 16,
+    name: "user SSH public keys",
+    up(database) {
+      database.exec(`
+        CREATE TABLE user_ssh_keys (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          public_key TEXT NOT NULL,
+          fingerprint TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX user_ssh_keys_username_idx ON user_ssh_keys(username);
       `);
     },
   },

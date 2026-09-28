@@ -421,6 +421,7 @@ function openAccountPanel(): void {
   elements.account_display_name.value = state.user.displayName || state.user.username;
   syncThemeControls();
   elements.account_dialog.showModal();
+  void refreshSshKeys().catch(error => showToast(error.message));
   queueMicrotask(() => elements.account_display_name.select());
 }
 
@@ -3613,11 +3614,95 @@ function setAgentEditingMode(mode: "direct" | "propose"): void {
   }
 }
 
+type SshGitAccess = { enabled: boolean; url: string | null; keyCount: number; hostFingerprint: string | null };
+type SshKey = { id: string; title: string; fingerprint: string };
+let gitAccessMode: "ssh" | "link" = "ssh";
+let sshGitAccess: SshGitAccess | null = null;
+
+function updateGitAccess(): void {
+  const ssh = gitAccessMode === "ssh";
+  for (const mode of ["ssh", "link"] as const) {
+    const button = document.getElementById(`git-mode-${mode}`)!;
+    button.setAttribute("aria-checked", String(mode === gitAccessMode));
+    button.classList.toggle("active", mode === gitAccessMode);
+  }
+  const url = ssh ? sshGitAccess?.url : currentAccessShare ? `${window.location.origin}${currentAccessShare.clonePath}` : null;
+  elements.clone_command.value = url ? `git clone ${url}` : "";
+  (document.getElementById("copy-clone-command") as HTMLButtonElement).disabled = !url;
+  document.getElementById("git-access-description")!.textContent = ssh
+    ? !sshGitAccess ? "SSH access is unavailable. Ask the administrator to check the SSH configuration."
+      : !sshGitAccess.enabled ? "SSH access is not configured on this server. Ask the administrator to enable it."
+      : sshGitAccess.keyCount ? "Authenticate with the private key matching a public key in your account."
+      : "Add an SSH public key to your account before cloning. Your private key stays on your device."
+    : "Anyone with this access link can clone and push without an SSH key. Keep it private.";
+  document.getElementById("git-host-fingerprint")!.textContent = ssh && sshGitAccess?.hostFingerprint
+    ? `Server fingerprint: ${sshGitAccess.hostFingerprint}` : "";
+  document.getElementById("git-manage-keys")!.hidden = !ssh;
+}
+
+async function refreshSshKeys(): Promise<void> {
+  const { keys } = await request<{ keys: SshKey[] }>("v1/users/me/ssh-keys");
+  const list = document.getElementById("ssh-key-list")!;
+  list.replaceChildren();
+  if (!keys.length) list.textContent = "No SSH keys added yet.";
+  for (const key of keys) {
+    const row = document.createElement("div");
+    row.className = "flex items-center justify-between gap-2 rounded border p-2 text-xs";
+    const text = document.createElement("div");
+    text.className = "min-w-0 break-all";
+    const title = document.createElement("strong");
+    title.textContent = key.title;
+    const fingerprint = document.createElement("div");
+    fingerprint.className = "font-mono text-muted-foreground";
+    fingerprint.textContent = key.fingerprint;
+    text.append(title, fingerprint);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "shrink-0 rounded border px-2 py-1";
+    remove.textContent = "Remove";
+    remove.setAttribute("aria-label", `Remove SSH key ${key.title}`);
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        await request(`v1/users/me/ssh-keys/${encodeURIComponent(key.id)}`, { method: "DELETE" });
+        await refreshSshKeys();
+        showToast("SSH key removed.");
+      } catch (error) { remove.disabled = false; showToast(error.message); }
+    });
+    row.append(text, remove);
+    list.append(row);
+  }
+  if (sshGitAccess) sshGitAccess.keyCount = keys.length;
+}
+
+for (const mode of ["ssh", "link"] as const) {
+  document.getElementById(`git-mode-${mode}`)!.addEventListener("click", () => { gitAccessMode = mode; updateGitAccess(); });
+}
+document.getElementById("git-manage-keys")!.addEventListener("click", () => {
+  elements.git_access_dialog.close();
+  openAccountPanel();
+  document.getElementById("ssh-key-title")!.focus();
+});
+document.getElementById("ssh-key-add")!.addEventListener("click", async () => {
+  const button = document.getElementById("ssh-key-add") as HTMLButtonElement;
+  const title = document.getElementById("ssh-key-title") as HTMLInputElement;
+  const publicKey = document.getElementById("ssh-key-public") as HTMLTextAreaElement;
+  button.disabled = true;
+  try {
+    await request("v1/users/me/ssh-keys", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.value, publicKey: publicKey.value }) });
+    title.value = "";
+    publicKey.value = "";
+    await refreshSshKeys();
+    showToast("SSH key added.");
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
+});
+
 function displayAccessShare(share: ShareDetails): void {
   currentAccessShare = share;
   state.accessShareId = share.id;
-  const cloneUrl = `${window.location.origin}${share.clonePath}`;
-  elements.clone_command.value = `git clone ${cloneUrl}`;
+  updateGitAccess();
   setBrowserShareMode(browserShareMode);
   setAgentEditingMode(agentEditingMode);
 }
@@ -3653,6 +3738,13 @@ async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
     const result = await request<{ share: ShareDetails }>("v1/project/share", { method: "POST" });
     displayAccessShare(result.share);
   }
+  if (panel === "git") {
+    gitAccessMode = "ssh";
+    sshGitAccess = null;
+    try { sshGitAccess = await request<SshGitAccess>("v1/git/ssh"); }
+    catch (error) { showToast(error.message); }
+    updateGitAccess();
+  }
   elements.access_project_name.textContent = project.name;
   const dialog = {
     browser: elements.access_dialog,
@@ -3669,7 +3761,7 @@ async function rotateShareSecret() {
   elements.access_secret_dialog.close();
   const confirmed = await openActionDialog({
     title: "Rotate access secrets?",
-    message: "Your previous View, Edit, Agent editing, and Git links will stop working immediately, and their guest sessions will be signed out. Other registered collaborators and their links keep working.",
+    message: "Your previous View, Edit, Agent editing, and Git access links will stop working immediately, and their guest sessions will be signed out. SSH keys and other collaborators’ links keep working.",
     submitLabel: "Rotate my secrets",
     danger: true,
   });

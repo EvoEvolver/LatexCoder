@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { parseSshPublicKey } from "../ssh-keys.ts";
 import { apiError, cleanDisplayName, cleanUsername, passwordMatches, passwordRecord, randomToken, sessionCookie, sha256, validatePassword } from "../core.ts";
 import { createInvitationRequestSchema, loginRequestSchema, passwordResetRequestSchema, registerRequestSchema, updateProfileRequestSchema } from "../../shared/api-schema.ts";
 import type { ZodType } from "zod";
@@ -80,6 +82,33 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       const displayName = cleanDisplayName(parseBody(updateProfileRequestSchema, request.body).displayName);
       if (!database.updateUserDisplayName(user.username, displayName)) throw apiError("user_not_found", "user does not exist", 404);
       response.json({ user: { username: user.username, displayName, isAdmin: user.isAdmin, userType: user.userType } });
+    } catch (error) { next(error); }
+  });
+  app.get("/v1/users/me/ssh-keys", (request, response, next) => {
+    try {
+      const user = context.requireUser(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ keys: database.listSshKeys(user.username) });
+    } catch (error) { next(error); }
+  });
+  app.post("/v1/users/me/ssh-keys", json({ limit: "20kb" }), (request, response, next) => {
+    try {
+      const user = context.requireUser(request);
+      const title = typeof request.body?.title === "string" ? request.body.title.trim() : "";
+      if (!title || title.length > 80) throw apiError("invalid_ssh_key_title", "Key title must contain 1 to 80 characters.", 400);
+      const parsed = parseSshPublicKey(request.body?.publicKey);
+      if (database.getSshKey(parsed.fingerprint)) throw apiError("ssh_key_exists", "This public key is already registered.", 409);
+      if (database.listSshKeys(user.username).length >= 50) throw apiError("ssh_key_limit", "Remove an unused key before adding another.", 400);
+      const key = { id: randomUUID(), username: user.username, title, ...parsed, createdAt: new Date().toISOString() };
+      database.addSshKey(key);
+      response.status(201).json({ key });
+    } catch (error) { next(error); }
+  });
+  app.delete("/v1/users/me/ssh-keys/:id", (request, response, next) => {
+    try {
+      const user = context.requireUser(request);
+      if (!database.deleteSshKey(user.username, String(request.params.id))) throw apiError("ssh_key_not_found", "SSH key not found.", 404);
+      response.json({ ok: true });
     } catch (error) { next(error); }
   });
   app.get("/v1/invitations/:token", (request, response, next) => {

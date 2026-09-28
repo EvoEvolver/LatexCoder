@@ -36,7 +36,7 @@ export async function withEditor(run: (context: EditorTestContext) => Promise<vo
     await page.close();
   } finally {
     await browser?.close();
-    paper.shutdown();
+    await paper.shutdown();
     paper.sockets.close();
     await new Promise(resolve => paper.server.close(resolve));
     await rm(stateDir, { recursive: true, force: true });

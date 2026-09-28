@@ -42,7 +42,7 @@ ENV NODE_ENV=production \
 
 RUN mkdir -p /data
 
-EXPOSE 8090
+EXPOSE 8090 2222
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./node_modules/.bin/tsx", "src/server/main.ts"]
