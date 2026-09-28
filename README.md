@@ -251,6 +251,7 @@ automatically; no custom start command is required.
 | `LATEXCODER_HOST` | `0.0.0.0` | Listener address. |
 | `LATEXCODER_PORT` | `PORT` or `8090` | Listener port. |
 | `LATEXCODER_LATEX_BIN` | auto-detected | Explicit Tectonic or latexmk executable. |
+| `LATEXCODER_TECTONIC_BUNDLE_URL` | Tectonic default | Tectonic bundle mirror URL, useful when the default package bundle is slow or unavailable. |
 | `LATEXCODER_COMPILE_CONCURRENCY` | `2` | Process-wide concurrent build limit. |
 | `LATEXCODER_RG_BIN` | `rg` | ripgrep executable used by regex search. |
 | `LATEXCODER_BWRAP_BIN` | `bwrap` | bubblewrap executable used to sandbox ripgrep. |

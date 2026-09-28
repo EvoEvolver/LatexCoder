@@ -10,6 +10,7 @@ import { CompileQueue } from "../src/server/compile-queue.ts";
 import { StateDatabase } from "../src/server/database.ts";
 import { createPaperServer } from "../src/server/main.ts";
 import { findCompiler } from "../src/server/compiler.ts";
+import { compilerArguments } from "../src/server/compile-service.ts";
 
 test("SQLite migrations upgrade a version-one database transactionally", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-migration-"));
@@ -139,4 +140,16 @@ test("compiler discovery installs Tectonic once but keeps latexmk explicit", asy
     return error instanceof Error && "code" in error && error.code === "compiler_unavailable";
   });
   assert.equal(installations, 1);
+});
+
+test("compiler arguments configure only Tectonic's bundle source", () => {
+  assert.deepEqual(compilerArguments("tectonic", "/tmp/output", "main.tex"), [
+    "--synctex", "--keep-logs", "--outdir", "/tmp/output", "main.tex",
+  ]);
+  assert.deepEqual(compilerArguments("tectonic", "/tmp/output", "main.tex", " https://mirror.example/bundle.tar "), [
+    "--bundle", "https://mirror.example/bundle.tar", "--synctex", "--keep-logs", "--outdir", "/tmp/output", "main.tex",
+  ]);
+  assert.deepEqual(compilerArguments("latexmk", "/tmp/output", "main.tex", "https://mirror.example/bundle.tar"), [
+    "-pdf", "-synctex=1", "-file-line-error", "-interaction=nonstopmode", "-halt-on-error", "-outdir=/tmp/output", "main.tex",
+  ]);
 });

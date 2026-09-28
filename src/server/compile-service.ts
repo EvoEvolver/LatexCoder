@@ -22,6 +22,14 @@ type CompileServiceOptions = {
   assertWritable(runtime: ProjectRuntime): void;
 };
 
+export function compilerArguments(executable: string, outputDir: string, main: string, tectonicBundleUrl?: string): string[] {
+  if (executable.startsWith("latexmk")) {
+    return ["-pdf", "-synctex=1", "-file-line-error", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main];
+  }
+  const bundleUrl = tectonicBundleUrl?.trim();
+  return [...(bundleUrl ? ["--bundle", bundleUrl] : []), "--synctex", "--keep-logs", "--outdir", outputDir, main];
+}
+
 export function createCompileService({ stateDir, database, queue, logger, serverOptions, assertWritable }: CompileServiceOptions) {
   const performCompile = async (runtime: ProjectRuntime, requestedMain: unknown): Promise<{ success: boolean; build: BuildMetadata }> => {
     let workDir: string | undefined;
@@ -59,9 +67,8 @@ export function createCompileService({ stateDir, database, queue, logger, server
         throw apiError("compiler_unavailable", `The selected compiler ${settings.compiler} is not installed`, 503);
       }
       const executable = path.basename(compiler);
-      const args = executable.startsWith("latexmk")
-        ? ["-pdf", "-synctex=1", "-file-line-error", "-interaction=nonstopmode", "-halt-on-error", `-outdir=${outputDir}`, main]
-        : ["--synctex", "--keep-logs", "--outdir", outputDir, main];
+      const tectonicBundleUrl = serverOptions.tectonicBundleUrl ?? process.env.LATEXCODER_TECTONIC_BUNDLE_URL;
+      const args = compilerArguments(executable, outputDir, main, tectonicBundleUrl);
       const result = await run(compiler, args, { timeoutMs: executable.startsWith("latexmk") ? 60_000 : 180_000, cwd: workDir, env: { ...process.env, XDG_CACHE_HOME: path.join(stateDir, "cache") } });
       const pdfName = `${path.basename(main, ".tex")}.pdf`;
       const outputPdf = path.join(outputDir, pdfName);

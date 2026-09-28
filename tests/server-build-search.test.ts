@@ -18,6 +18,51 @@ import { parseReviews, stripReviewStorage } from "../src/shared/review.ts";
 
 import { execFileAsync, testGit, createIncomingBranch, withServer, waitFor, sha256, createFakeLatexmk, createFakeBwrap } from "./helpers/server.ts";
 
+async function createFakeTectonic(directory: string): Promise<string> {
+  const executable = path.join(directory, "tectonic-fake");
+  await writeFile(executable, [
+    "#!/bin/sh",
+    'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+    'printf "%s\\n" "$@" > "$root/args"',
+    'out=""',
+    'main=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    --outdir) shift; out="$1" ;;',
+    '    *.tex) main="$1" ;;',
+    '  esac',
+    '  shift',
+    'done',
+    'mkdir -p "$out"',
+    'base=${main##*/}',
+    'base=${base%.tex}',
+    'printf "fake-tectonic-pdf\\n" > "$out/$base.pdf"',
+  ].join("\n"), "utf8");
+  await chmod(executable, 0o755);
+  return executable;
+}
+
+test("Tectonic compilation uses the configured bundle URL", async () => {
+  const compilerDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-fake-tectonic-"));
+  const compiler = await createFakeTectonic(compilerDir);
+  const previousBundleUrl = process.env.LATEXCODER_TECTONIC_BUNDLE_URL;
+  process.env.LATEXCODER_TECTONIC_BUNDLE_URL = "https://mirror.example/tectonic-bundle.tar";
+  try {
+    await withServer(async ({ base }) => {
+      const response = await fetch(`${base}/v1/build/pdf`);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), "fake-tectonic-pdf\n");
+    }, { compiler });
+    const args = (await readFile(path.join(compilerDir, "args"), "utf8")).trim().split("\n");
+    assert.deepEqual(args.slice(0, 2), ["--bundle", "https://mirror.example/tectonic-bundle.tar"]);
+    assert.equal(args.at(-1), "main.tex");
+  } finally {
+    if (previousBundleUrl === undefined) delete process.env.LATEXCODER_TECTONIC_BUNDLE_URL;
+    else process.env.LATEXCODER_TECTONIC_BUNDLE_URL = previousBundleUrl;
+    await rm(compilerDir, { recursive: true, force: true });
+  }
+});
+
 test("PDF download compiles current inputs and caches by source revision", async () => {
   const compilerDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-fake-compiler-"));
   const compiler = await createFakeLatexmk(compilerDir);
