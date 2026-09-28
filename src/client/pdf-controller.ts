@@ -249,17 +249,14 @@ export class PdfController {
       this.restoreAnchor(anchor);
       this.pendingRestore = null;
     }
-    if (priorityPage && renders[priorityPage - 1]) {
-      await renders[priorityPage - 1]();
-      void (async () => {
-        for (let index = 0; index < renders.length; index += 1) {
-          if (version !== this.renderVersion) return;
-          if (index !== priorityPage - 1) await renders[index]();
-        }
-      })().catch(error => { if (version === this.renderVersion) console.error("PDF background render failed", error); });
-    } else {
-      for (const render of renders) await render();
-    }
+    const primaryPage = Math.max(1, Math.min(renders.length, priorityPage || anchor?.page || 1));
+    await renders[primaryPage - 1]?.();
+    void (async () => {
+      for (let index = 0; index < renders.length; index += 1) {
+        if (version !== this.renderVersion) return;
+        if (index !== primaryPage - 1) await renders[index]();
+      }
+    })().catch(error => { if (version === this.renderVersion) console.error("PDF background render failed", error); });
     if (version !== this.renderVersion) return;
     this.options.elements.status.textContent = "PDF ready";
     this.renderHighlights();
