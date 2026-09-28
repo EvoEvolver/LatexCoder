@@ -13,7 +13,7 @@ export type GitCommit = { shortId: string; author: string; date: string; subject
 export type GitState = { branch: string; dirty: boolean; files: GitFile[]; history: GitCommit[]; status?: string; conflict?: { branch: string } | null };
 export type PdfBox = { page: number; left: number; top: number; width: number; height: number };
 export type AppState = {
-  activeFile: string; projectId: string; projects: ProjectSummary[]; user: CurrentUser | null; bootstrapReady: boolean;
+  activeFile: string; projectId: string; projects: ProjectSummary[]; user: CurrentUser | null; bootstrapReady: boolean; sshGitEnabled: boolean;
   projectCanManage: boolean; projectCanEdit: boolean; accessShareId: string; git: GitState | null; main: string; files: ProjectFile[]; folders: string[];
   settings: EditorSettings | null; view: EditorView | null; doc: Y.Doc | null; provider: WebsocketProvider | null;
   persistence: IndexeddbPersistence | null; unsaved: boolean;

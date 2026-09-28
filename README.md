@@ -264,6 +264,10 @@ LATEXCODER_SSH_PUBLIC_HOST=shuttle.proxy.rlwy.net
 LATEXCODER_SSH_PUBLIC_PORT=15140
 ```
 
+SSH key management and SSH clone options appear only when both public endpoint
+variables are valid and the SSH listener starts successfully. Otherwise, the Git
+menu provides the existing access link.
+
 Keep the HTTPS domain target port at `8080`; HTTP and SSH must use different
 internal ports. Replace the example hostname and public port with your assigned
 TCP proxy address, then redeploy. The Git menu uses these values for SSH clone commands;
@@ -277,10 +281,10 @@ the existing HTTPS access links remain available under **Access link**.
 | `LATEXCODER_STATE_DIR` | `.latexcoder` | SQLite database, projects, Git repositories, Yjs snapshots, build cache, and PDFs. |
 | `LATEXCODER_HOST` | `0.0.0.0` | Listener address. |
 | `LATEXCODER_PORT` | `PORT` or `8090` | HTTP listener port. |
-| `LATEXCODER_SSH_PORT` | `2222` | SSH Git listener port. |
+| `LATEXCODER_SSH_PORT` | `2222` | SSH Git listener port; enabled only with a valid public host and port. |
 | `LATEXCODER_SSH_HOST` | `0.0.0.0` | SSH listener address. |
-| `LATEXCODER_SSH_PUBLIC_HOST` | Web request hostname | Hostname shown in SSH clone URLs. |
-| `LATEXCODER_SSH_PUBLIC_PORT` | SSH listener port | External SSH port, when forwarded by a TCP proxy. |
+| `LATEXCODER_SSH_PUBLIC_HOST` | none | Required public hostname for SSH Git. |
+| `LATEXCODER_SSH_PUBLIC_PORT` | none | Required external SSH port. |
 | `LATEXCODER_LATEX_BIN` | auto-detected | Explicit Tectonic or latexmk executable. |
 | `LATEXCODER_TECTONIC_BUNDLE_URL` | Tectonic default | Tectonic bundle mirror URL, useful when the default package bundle is slow or unavailable. |
 | `LATEXCODER_COMPILE_CONCURRENCY` | `2` | Process-wide concurrent build limit. |

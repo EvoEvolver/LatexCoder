@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { WebSocketServer } from "ws";
 
-import { createGitSshServer, type SshGitRunner } from "./git-ssh.ts";
+import { createGitSshServer, sshPublicEndpoint, type SshGitRunner } from "./git-ssh.ts";
 import { StateDatabase } from "./database.ts";
 import { parseReviews } from "../shared/review.ts";
 import { apiError, isTextFile, MAX_FILE_BYTES, MAX_TEXT_BYTES, parseCookies, passwordRecord, pathFromRoomName, randomToken, safeRelativePath, sessionCookie, sha256, validatePassword } from "./core.ts";
@@ -1300,7 +1300,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
   });
   registerAuthRoutes(app, {
     database, currentUser, issueUserSession, json: express.json, loginAttempts,
-    requireUser, userSession, invitationSeconds: INVITATION_SECONDS,
+    requireUser, userSession, invitationSeconds: INVITATION_SECONDS, sshGitEnabled,
   });
   registerAdminRoutes(app, {
     database, deleteProject, json: express.json, loadProject, requireAdmin,
@@ -1320,8 +1320,13 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     withGitReader, withTemporaryWorktree,
   });
   const sshPort = options.sshPort ?? (process.env.LATEXCODER_SSH_PORT ? Number(process.env.LATEXCODER_SSH_PORT) : undefined);
-  const ssh = sshPort === undefined ? null : await createGitSshServer({
-    stateDir, database, port: sshPort, host: options.sshHost || process.env.LATEXCODER_SSH_HOST || "0.0.0.0",
+  const sshEndpoint = sshPublicEndpoint(options.sshPublicHost ?? process.env.LATEXCODER_SSH_PUBLIC_HOST,
+    options.sshPublicPort ?? process.env.LATEXCODER_SSH_PUBLIC_PORT);
+  const httpPort = Number(options.port ?? process.env.LATEXCODER_PORT ?? process.env.PORT ?? 8090);
+  const validSshPort = Number.isInteger(sshPort) && sshPort! >= 0 && sshPort! <= 65535;
+  const portsConflict = sshPort !== 0 && sshPort === httpPort;
+  const ssh = !sshEndpoint || !validSshPort || portsConflict ? null : await createGitSshServer({
+    stateDir, database, port: sshPort!, host: options.sshHost || process.env.LATEXCODER_SSH_HOST || "0.0.0.0",
     async run(username, fingerprint, projectId, push, runner) {
       const authorize = () => {
         const key = database.getSshKey(fingerprint);
@@ -1346,27 +1351,21 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
         }
       });
     },
-  }).catch(error => {
-    for (const checkpoint of autoCheckpoints.values()) checkpoint.close();
-    compileQueue.close();
-    for (const runtime of projects.values()) runtime.collaboration.shutdown();
-    database.close();
-    throw error;
+  }).catch((error): null => {
+    logger.error("ssh.unavailable", error);
+    return null;
   });
+  function sshGitEnabled(): boolean { return Boolean(sshEndpoint && ssh?.server.address()); }
   app.get("/v1/git/ssh", async (request, response, next) => {
     try {
       const user = requireUser(request);
       const runtime = await resolveProject(request);
       requireProjectMember(request, runtime);
-      const address = ssh?.server.address();
-      const port = Number(options.sshPublicPort || process.env.LATEXCODER_SSH_PUBLIC_PORT || (address && typeof address === "object" ? address.port : 2222));
-      const hostname = options.sshPublicHost || process.env.LATEXCODER_SSH_PUBLIC_HOST || request.hostname;
-      if (!/^(?:[A-Za-z0-9.-]+|\[[A-Fa-f0-9:]+\])$/.test(hostname) || !Number.isInteger(port) || port < 1 || port > 65535) {
-        throw apiError("ssh_configuration_invalid", "SSH public host or port is invalid.", 503);
-      }
+      const enabled = sshGitEnabled();
       response.setHeader("Cache-Control", "no-store");
-      response.json({ enabled: Boolean(ssh), url: ssh ? `ssh://git@${hostname}:${port}/${runtime.id}.git` : null,
-        keyCount: database.listSshKeys(user.username).length, hostFingerprint: ssh?.fingerprint || null });
+      response.json({ enabled, url: enabled ? `ssh://git@${sshEndpoint!.host}:${sshEndpoint!.port}/${runtime.id}.git` : null,
+        keyCount: enabled ? database.listSshKeys(user.username).length : 0,
+        hostFingerprint: enabled ? ssh!.fingerprint : null });
     } catch (error) { next(error); }
   });
   registerGitRoutes(app, {

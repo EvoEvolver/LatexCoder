@@ -401,21 +401,21 @@ export function AppShell() {
 
       <dialog id="git-access-dialog" className={dialogClass}><div className="space-y-4 p-5">
         <DialogHeader title="Git access" closeId="git-access-close" />
-        <div className="grid grid-cols-2 gap-1 rounded-md border bg-muted p-1" role="radiogroup" aria-label="Git authentication">
+        <div id="git-auth-options" hidden className="grid grid-cols-2 gap-1 rounded-md border bg-muted p-1" role="radiogroup" aria-label="Git authentication">
           <Button id="git-mode-ssh" variant="ghost" role="radio" aria-checked="true" className="[&.active]:bg-background">SSH key</Button>
           <Button id="git-mode-link" variant="ghost" role="radio" aria-checked="false" className="[&.active]:bg-background">Access link</Button>
         </div>
         <p id="git-access-description" className="text-xs text-muted-foreground" />
         <CopyRow inputId="clone-command" buttonId="copy-clone-command" label="Copy" />
-        <p id="git-host-fingerprint" className="break-all font-mono text-xs text-muted-foreground" />
-        <Button id="git-manage-keys" variant="outline" size="sm">Manage SSH keys</Button>
+        <p id="git-host-fingerprint" hidden className="break-all font-mono text-xs text-muted-foreground" />
+        <Button id="git-manage-keys" hidden variant="outline" size="sm">Manage SSH keys</Button>
         <p className="text-xs text-muted-foreground">Pushed commits synchronize into the live document automatically.</p>
         <footer className="flex justify-end"><Button id="git-access-done">Done</Button></footer>
       </div></dialog>
 
       <dialog id="collaborator-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Project members" closeId="collaborator-close" /><div id="collaborator-list" className="space-y-1 text-xs" /><footer className="mt-5 flex justify-end"><Button id="collaborator-done">Done</Button></footer></div></dialog>
 
-      <dialog id="access-secret-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Access secrets" closeId="access-secret-close" /><p id="rotate-secret-warning" className="mb-4 text-xs text-muted-foreground">Rotating your secrets immediately invalidates your previous View, Edit, Agent editing, and Git access links, and signs out their guest sessions. SSH keys and other collaborators’ links keep working.</p><Button id="rotate-share-secret" variant="outline" type="button"><Icon name="refresh-cw" />Rotate my secrets</Button><footer className="mt-5 flex justify-end"><Button id="access-secret-done">Done</Button></footer></div></dialog>
+      <dialog id="access-secret-dialog" className={dialogClass}><div className="p-5"><DialogHeader title="Access secrets" closeId="access-secret-close" /><p id="rotate-secret-warning" className="mb-4 text-xs text-muted-foreground">Rotating your secrets immediately invalidates your previous View, Edit, Agent editing, and Git access links, and signs out their guest sessions. Other collaborators’ links keep working.</p><Button id="rotate-share-secret" variant="outline" type="button"><Icon name="refresh-cw" />Rotate my secrets</Button><footer className="mt-5 flex justify-end"><Button id="access-secret-done">Done</Button></footer></div></dialog>
 
       <dialog id="account-dialog" className={dialogClass}>
         <form id="account-form" className="space-y-4 p-5">
@@ -431,7 +431,7 @@ export function AppShell() {
               <Button data-theme-option="dark" variant="outline" type="button" role="radio" className="h-auto flex-col gap-2 py-3"><Icon name="moon" />Dark</Button>
             </div>
           </section>
-          <section className="space-y-3 border-t pt-4" aria-label="SSH keys">
+          <section id="account-ssh-keys" hidden className="space-y-3 border-t pt-4" aria-label="SSH keys">
             <strong className="text-sm font-medium">SSH keys</strong>
             <p className="text-xs text-muted-foreground">Add a public key to clone and push your projects over SSH. Keep the private key on your device.</p>
             <div id="ssh-key-list" className="max-h-36 space-y-2 overflow-y-auto" aria-live="polite" />

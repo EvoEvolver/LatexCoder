@@ -484,9 +484,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
 
     await chooseAppMenu(page, "collaborate", "#collaborate-git");
     await page.locator("#git-access-dialog").waitFor();
-    assert.equal(await page.locator("#git-mode-ssh").getAttribute("aria-checked"), "true");
-    assert.equal(await page.locator("#copy-clone-command").isDisabled(), true);
-    await page.locator("#git-mode-link").click();
+    assert.equal(await page.locator("#git-mode-ssh").isVisible(), false);
+    assert.equal(await page.locator("#copy-clone-command").isDisabled(), false);
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/${projectId}/[A-Za-z0-9_-]+$`));
     await page.locator("#git-access-close").click();
 
@@ -497,11 +496,11 @@ test("project page exposes sharing while destructive actions stay in menus", asy
 
     await chooseAppMenu(page, "collaborate", "#collaborate-secrets");
     await page.locator("#access-secret-dialog").waitFor();
-    assert.match(await page.locator("#rotate-secret-warning").textContent(), /SSH keys and other collaborators’ links keep working/);
+    assert.match(await page.locator("#rotate-secret-warning").textContent(), /Other collaborators’ links keep working/);
     await page.screenshot({ path: "/tmp/latexcoder-agent-modes.png" });
     await page.locator("#rotate-share-secret").click();
     assert.equal(await page.locator("#action-title").textContent(), "Rotate access secrets?");
-    assert.match(await page.locator("#action-message").textContent(), /SSH keys and other collaborators’ links keep working/);
+    assert.match(await page.locator("#action-message").textContent(), /Other collaborators’ links keep working/);
     await page.locator("#action-submit").click();
     await page.locator("#access-secret-dialog").waitFor();
     assert.equal((await page.request.get(previousShareLink, { maxRedirects: 0 })).status(), 403);

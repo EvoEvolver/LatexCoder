@@ -22,6 +22,7 @@ export interface AuthRouteContext {
   requireUser(request: Request): AuthenticatedUser;
   userSession(request: Request): UserSession | null;
   invitationSeconds: number;
+  sshGitEnabled(): boolean;
 }
 
 export interface AdminRouteContext {

@@ -296,6 +296,7 @@ const state: AppState = {
   projects: [],
   user: null,
   bootstrapReady: true,
+  sshGitEnabled: false,
   projectCanManage: false,
   projectCanEdit: true,
   accessShareId: "",
@@ -384,6 +385,7 @@ function syncAccountUi(): void {
   document.documentElement.dataset.userType = state.user?.isAdmin || state.user?.userType === "internal" ? "internal" : "external";
   elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
   elements.admin_button.hidden = !state.user?.isAdmin;
+  document.getElementById("account-ssh-keys")!.hidden = !registered || !state.sshGitEnabled;
   const editorAdmin = document.getElementById("editor-admin-button");
   if (editorAdmin) editorAdmin.hidden = !state.user?.isAdmin;
 }
@@ -421,7 +423,7 @@ function openAccountPanel(): void {
   elements.account_display_name.value = state.user.displayName || state.user.username;
   syncThemeControls();
   elements.account_dialog.showModal();
-  void refreshSshKeys().catch(error => showToast(error.message));
+  if (state.sshGitEnabled) void refreshSshKeys().catch(error => showToast(error.message));
   queueMicrotask(() => elements.account_display_name.select());
 }
 
@@ -3621,7 +3623,10 @@ let gitAccessMode: "ssh" | "link" = "ssh";
 let sshGitAccess: SshGitAccess | null = null;
 
 function updateGitAccess(): void {
+  const available = state.sshGitEnabled && Boolean(sshGitAccess?.enabled && sshGitAccess.url);
+  if (!available) gitAccessMode = "link";
   const ssh = gitAccessMode === "ssh";
+  document.getElementById("git-auth-options")!.hidden = !available;
   for (const mode of ["ssh", "link"] as const) {
     const button = document.getElementById(`git-mode-${mode}`)!;
     button.setAttribute("aria-checked", String(mode === gitAccessMode));
@@ -3631,11 +3636,11 @@ function updateGitAccess(): void {
   elements.clone_command.value = url ? `git clone ${url}` : "";
   (document.getElementById("copy-clone-command") as HTMLButtonElement).disabled = !url;
   document.getElementById("git-access-description")!.textContent = ssh
-    ? !sshGitAccess ? "SSH access is unavailable. Ask the administrator to check the SSH configuration."
-      : !sshGitAccess.enabled ? "SSH access is not configured on this server. Ask the administrator to enable it."
-      : sshGitAccess.keyCount ? "Authenticate with the private key matching a public key in your account."
+    ? sshGitAccess!.keyCount ? "Authenticate with the private key matching a public key in your account."
       : "Add an SSH public key to your account before cloning. Your private key stays on your device."
-    : "Anyone with this access link can clone and push without an SSH key. Keep it private.";
+    : available ? "Anyone with this access link can clone and push without an SSH key. Keep it private."
+      : "Clone with your personal Git URL. Keep it private: anyone with this link can clone and push.";
+  document.getElementById("git-host-fingerprint")!.hidden = !ssh;
   document.getElementById("git-host-fingerprint")!.textContent = ssh && sshGitAccess?.hostFingerprint
     ? `Server fingerprint: ${sshGitAccess.hostFingerprint}` : "";
   document.getElementById("git-manage-keys")!.hidden = !ssh;
@@ -3740,10 +3745,14 @@ async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
     displayAccessShare(result.share);
   }
   if (panel === "git") {
-    gitAccessMode = "ssh";
     sshGitAccess = null;
-    try { sshGitAccess = await request<SshGitAccess>("v1/git/ssh"); }
-    catch (error) { showToast(error.message); }
+    if (state.sshGitEnabled) {
+      try { sshGitAccess = await request<SshGitAccess>("v1/git/ssh"); }
+      catch { /* Keep access links available when SSH is unavailable. */ }
+      state.sshGitEnabled = Boolean(sshGitAccess?.enabled && sshGitAccess.url);
+      syncAccountUi();
+    }
+    gitAccessMode = state.sshGitEnabled ? "ssh" : "link";
     updateGitAccess();
   }
   elements.access_project_name.textContent = project.name;
@@ -3762,7 +3771,7 @@ async function rotateShareSecret() {
   elements.access_secret_dialog.close();
   const confirmed = await openActionDialog({
     title: "Rotate access secrets?",
-    message: "Your previous View, Edit, Agent editing, and Git access links will stop working immediately, and their guest sessions will be signed out. SSH keys and other collaborators’ links keep working.",
+    message: "Your previous View, Edit, Agent editing, and Git access links will stop working immediately, and their guest sessions will be signed out. Other collaborators’ links keep working.",
     submitLabel: "Rotate my secrets",
     danger: true,
   });
@@ -4715,9 +4724,10 @@ if (testMode) {
   };
 } else {
   if (e2eMode) window.__paperE2E = { state };
-  request<{ user: CurrentUser | null; bootstrapReady: boolean }>("v1/auth/me").then(async auth => {
+  request<{ user: CurrentUser | null; bootstrapReady: boolean; features?: { sshGit?: boolean } }>("v1/auth/me").then(async auth => {
     state.user = auth.user;
     state.bootstrapReady = auth.bootstrapReady;
+    state.sshGitEnabled = auth.features?.sshGit === true;
     syncAccountUi();
     if (e2eMode && state.user && !routeProjectId()) {
       const data = await refreshProjects();

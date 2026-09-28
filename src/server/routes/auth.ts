@@ -29,6 +29,7 @@ export function registerAuthRoutes(app: RouteApp, context: AuthRouteContext): vo
       user: context.currentUser(request),
       invitationOnly: true,
       bootstrapReady: database.countUsers() > 0,
+      features: { sshGit: context.sshGitEnabled() },
     });
   });
   app.post("/v1/auth/login", json({ limit: "16kb" }), (request, response, next) => {

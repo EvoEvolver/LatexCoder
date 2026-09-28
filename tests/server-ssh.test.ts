@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AddressInfo } from "node:net";
+import { createServer, type AddressInfo } from "node:net";
 import test from "node:test";
 import ssh2 from "ssh2";
 import { createPaperServer } from "../src/server/app.ts";
 import { parseSshPublicKey } from "../src/server/ssh-keys.ts";
-import { execFileAsync, testGit } from "./helpers/server.ts";
+import { execFileAsync, testGit, withServer } from "./helpers/server.ts";
 
 const { Client, utils } = ssh2;
 
@@ -23,7 +23,7 @@ test("SSH public key validation accepts supported public keys and rejects privat
 
 test("SSH Git authenticates private keys, enforces membership, synchronizes pushes, and preserves access links", { timeout: 60_000 }, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "latexcoder-ssh-"));
-  let paper = await createPaperServer({ stateDir: temporary, adminPassword: "ssh-test-password", sshPort: 0, sshHost: "127.0.0.1" });
+  let paper = await createPaperServer({ stateDir: temporary, adminPassword: "ssh-test-password", sshPort: 0, sshHost: "127.0.0.1", sshPublicHost: "git.example.test", sshPublicPort: 45124 });
   await new Promise<void>(resolve => paper.server.listen(0, "127.0.0.1", resolve));
   let base = `http://127.0.0.1:${(paper.server.address() as AddressInfo).port}`;
   const api = (url: string, cookie = "", method = "GET", body?: unknown) => fetch(`${base}${url}`, {
@@ -60,11 +60,13 @@ test("SSH Git authenticates private keys, enforces membership, synchronizes push
     const access = await (await api(`/v1/git/ssh?project=${project.id}`, admin)).json();
     assert.equal(access.enabled, true);
     assert.equal(access.keyCount, 1);
-    assert.equal(access.url, `ssh://git@127.0.0.1:${(paper.sshServer!.address() as AddressInfo).port}/${project.id}.git`);
+    assert.equal(access.url, `ssh://git@git.example.test:45124/${project.id}.git`);
+    assert.equal((await (await api("/v1/auth/me", admin)).json()).features.sshGit, true);
+    const sshUrl = () => `ssh://git@127.0.0.1:${(paper.sshServer!.address() as AddressInfo).port}/${project.id}.git`;
     assert.equal((await stat(path.join(temporary, "ssh_host_ed25519_key"))).mode & 0o777, 0o600);
-    await assert.rejects(git(["ls-remote", access.url], temporary, wrongPath), /Permission denied/);
+    await assert.rejects(git(["ls-remote", sshUrl()], temporary, wrongPath), /Permission denied/);
     const clone = path.join(temporary, "clone");
-    await git(["clone", access.url, clone]);
+    await git(["clone", sshUrl(), clone]);
     const original = await readFile(path.join(clone, "main.tex"), "utf8");
     assert.match(original, /documentclass/);
     const runtime = paper.projects.get(project.id)!;
@@ -88,9 +90,9 @@ test("SSH Git authenticates private keys, enforces membership, synchronizes push
     const readerAdded = await api("/v1/users/me/ssh-keys", reader, "POST", { title: "Reader", publicKey: wrongKey.public });
     assert.equal(readerAdded.status, 201);
     assert.equal((await api(`/v1/users/me/ssh-keys/${savedKey.id}`, reader, "DELETE")).status, 404);
-    await assert.rejects(git(["ls-remote", access.url], temporary, wrongPath), /access is no longer valid/);
+    await assert.rejects(git(["ls-remote", sshUrl()], temporary, wrongPath), /access is no longer valid/);
     paper.database.addProjectMember(project.id, "reader", "viewer");
-    await git(["ls-remote", access.url], temporary, wrongPath);
+    await git(["ls-remote", sshUrl()], temporary, wrongPath);
     await assert.rejects(git(["push", "origin", "main"], clone, wrongPath), /access is no longer valid/);
 
     const client = new Client();
@@ -107,21 +109,56 @@ test("SSH Git authenticates private keys, enforces membership, synchronizes push
         channel.once("exit", code => { assert.equal(code, 1); resolve(); });
       }));
     } finally { client.end(); }
-    await assert.rejects(git(["ls-remote", access.url]), /Permission denied/);
+    await assert.rejects(git(["ls-remote", sshUrl()]), /Permission denied/);
     await git(["ls-remote", `${base}${share.clonePath}`]);
     paper.database.softDeleteUser("reader", new Date().toISOString());
-    await assert.rejects(git(["ls-remote", access.url], temporary, wrongPath), /Permission denied/);
+    await assert.rejects(git(["ls-remote", sshUrl()], temporary, wrongPath), /Permission denied/);
 
     assert.equal((await api("/v1/users/me/ssh-keys", admin, "POST", { title: "RSA", publicKey: rsaKey.public })).status, 201);
-    await git(["ls-remote", access.url], temporary, rsaPath);
+    await git(["ls-remote", sshUrl()], temporary, rsaPath);
     await stop();
-    paper = await createPaperServer({ stateDir: temporary, sshPort: 0, sshHost: "127.0.0.1" });
+    paper = await createPaperServer({ stateDir: temporary, sshPort: 0, sshHost: "127.0.0.1", sshPublicHost: "git.example.test", sshPublicPort: 45124 });
     await new Promise<void>(resolve => paper.server.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${(paper.server.address() as AddressInfo).port}`;
     const restarted = await (await api(`/v1/git/ssh?project=${project.id}`, await login("admin"))).json();
     assert.equal(restarted.hostFingerprint, access.hostFingerprint);
     assert.equal(paper.database.listSshKeys("reader").length, 1);
     assert.equal(paper.database.listSshKeys("admin").length, 1);
-    await git(["ls-remote", restarted.url], temporary, rsaPath);
+    await git(["ls-remote", sshUrl()], temporary, rsaPath);
   } finally { await stop(); await rm(temporary, { recursive: true, force: true }); }
+});
+
+
+test("incomplete or invalid SSH configuration hides the feature and keeps HTTP Git working", async t => {
+  const cases = [
+    { name: "missing host", sshPublicHost: "", sshPublicPort: 45124 },
+    { name: "missing port", sshPublicHost: "git.example.test", sshPublicPort: undefined },
+    { name: "URL instead of host", sshPublicHost: "https://git.example.test", sshPublicPort: 45124 },
+    { name: "invalid public port", sshPublicHost: "git.example.test", sshPublicPort: 65536 },
+    { name: "invalid listen port", sshPublicHost: "git.example.test", sshPublicPort: 45124, sshPort: NaN },
+    { name: "HTTP and SSH port conflict", sshPublicHost: "git.example.test", sshPublicPort: 45124, port: 2222, sshPort: 2222 },
+  ];
+  for (const { name, ...options } of cases) await t.test(name, () => withServer(async ({ base, sshServer }) => {
+    assert.equal(sshServer, undefined);
+    assert.equal((await (await fetch(`${base}/v1/auth/me`)).json()).features.sshGit, false);
+    const { projects } = await (await fetch(`${base}/v1/projects`)).json();
+    const projectId = projects[0].id;
+    const metadata = await fetch(`${base}/v1/git/ssh?project=${projectId}`);
+    assert.equal(metadata.status, 200);
+    assert.deepEqual(await metadata.json(), { enabled: false, url: null, keyCount: 0, hostFingerprint: null });
+    const { share } = await (await fetch(`${base}/v1/project/share?project=${projectId}`, { method: "POST" })).json();
+    await execFileAsync("git", ["ls-remote", `${base}${share.clonePath}`], { timeout: 15_000 });
+  }, { sshPort: 0, sshHost: "127.0.0.1", ...options }));
+});
+
+test("SSH bind failure does not crash HTTP or advertise SSH", async () => {
+  const occupied = createServer();
+  await new Promise<void>(resolve => occupied.listen(0, "127.0.0.1", resolve));
+  try {
+    await withServer(async ({ base, sshServer }) => {
+      assert.equal(sshServer, undefined);
+      assert.equal((await (await fetch(`${base}/v1/auth/me`)).json()).features.sshGit, false);
+      assert.equal((await fetch(`${base}/v1/projects`)).status, 200);
+    }, { sshPort: (occupied.address() as AddressInfo).port, sshHost: "127.0.0.1", sshPublicHost: "git.example.test", sshPublicPort: 45124 });
+  } finally { await new Promise<void>(resolve => occupied.close(() => resolve())); }
 });

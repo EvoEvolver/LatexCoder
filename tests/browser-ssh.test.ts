@@ -7,11 +7,11 @@ import test from "node:test";
 import { chromium } from "playwright";
 import ssh2 from "ssh2";
 import { createPaperServer } from "../src/server/app.ts";
-import { chooseAppMenu } from "./helpers/browser.ts";
+import { chooseAppMenu, withEditor } from "./helpers/browser.ts";
 
 test("account SSH keys and default SSH Git menu work end to end", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-ssh-browser-"));
-  const paper = await createPaperServer({ stateDir, adminPassword: "ssh-test-password", sshPort: 0, sshHost: "127.0.0.1" });
+  const paper = await createPaperServer({ stateDir, adminPassword: "ssh-test-password", sshPort: 0, sshHost: "127.0.0.1", sshPublicHost: "127.0.0.1", sshPublicPort: 2222 });
   await new Promise<void>(resolve => paper.server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(paper.server.address() as AddressInfo).port}`;
   const browser = await chromium.launch();
@@ -61,8 +61,10 @@ test("account SSH keys and default SSH Git menu work end to end", async () => {
     await page.route("**/v1/git/ssh?*", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { message: "SSH configuration unavailable" } }) }));
     await chooseAppMenu(page, "collaborate", "#collaborate-git");
     await page.locator("#git-access-dialog").waitFor();
-    assert.equal(await page.locator("#git-mode-ssh").getAttribute("aria-checked"), "true");
-    await page.locator("#git-mode-link").click();
+    assert.equal(await page.locator("#git-mode-ssh").isVisible(), false);
+    assert.equal(await page.locator("#git-manage-keys").isVisible(), false);
+    assert.equal(await page.locator("#account-ssh-keys").isVisible(), false);
+    assert.doesNotMatch(await page.locator("body").innerText(), /SSH configuration unavailable/);
     assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/`));
     assert.deepEqual(errors, []);
   } finally {
@@ -73,3 +75,31 @@ test("account SSH keys and default SSH Git menu work end to end", async () => {
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+
+for (const host of ["", "https://git.example.test"]) {
+  test(`SSH stays hidden with ${host ? "invalid" : "missing"} public configuration`, async () => {
+    await withEditor(async ({ page, base }) => {
+      const sshRequests: string[] = [];
+      page.on("request", request => {
+        if (/\/v1\/(git\/ssh|users\/me\/ssh-keys)/.test(request.url())) sshRequests.push(request.url());
+      });
+      const { projects } = await (await page.request.get(`${base}/v1/projects`)).json();
+      await page.goto(`${base}/projects/${projects[0].id}`);
+      await chooseAppMenu(page, "account", "#editor-account-button");
+      await page.locator("#account-dialog").waitFor();
+      assert.equal(await page.locator("#account-ssh-keys").isVisible(), false);
+      assert.doesNotMatch(await page.locator("#account-dialog").innerText(), /SSH/);
+      await page.locator("#account-close").click();
+      await chooseAppMenu(page, "collaborate", "#collaborate-git");
+      await page.locator("#git-access-dialog").waitFor();
+      assert.equal(await page.locator("#git-auth-options").isVisible(), false);
+      assert.equal(await page.locator("#git-manage-keys").isVisible(), false);
+      assert.equal(await page.locator("#git-host-fingerprint").isVisible(), false);
+      assert.equal(await page.locator("#copy-clone-command").isEnabled(), true);
+      assert.match(await page.locator("#clone-command").inputValue(), new RegExp(`^git clone ${base}/git/`));
+      assert.doesNotMatch(await page.locator("#git-access-dialog").innerText(), /SSH|environment|configur/i);
+      assert.deepEqual(sshRequests, []);
+    }, { sshPort: 0, sshHost: "127.0.0.1", sshPublicHost: host, sshPublicPort: 45124 });
+  });
+}

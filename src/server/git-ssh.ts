@@ -1,11 +1,24 @@
 import { spawn } from "node:child_process";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isIP } from "node:net";
 import ssh2, { type Connection, type ServerChannel } from "ssh2";
 import type { StateDatabase } from "./database.ts";
 import { sshFingerprint } from "./ssh-keys.ts";
 
 const { Server, utils } = ssh2;
+
+export function sshPublicEndpoint(host: unknown, port: unknown): { host: string; port: number } | null {
+  if (typeof host !== "string" || (typeof port !== "string" && typeof port !== "number")) return null;
+  const hostname = host.trim();
+  const validHost = isIP(hostname) === 4
+    || (hostname.startsWith("[") && hostname.endsWith("]") && isIP(hostname.slice(1, -1)) === 6)
+    || (hostname.length <= 253 && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i.test(hostname));
+  const portText = String(port).trim();
+  const portNumber = Number(portText);
+  if (!validHost || !/^[0-9]+$/.test(portText) || portNumber < 1 || portNumber > 65535) return null;
+  return { host: hostname, port: portNumber };
+}
 
 export type SshGitRunner = (args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<Buffer>;
 
