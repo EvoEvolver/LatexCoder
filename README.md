@@ -7,6 +7,12 @@
 <p align="center"><strong>A self-hosted LaTeX workspace where people, coding agents, and Git work on the same paper.</strong></p>
 
 <p align="center">
+  <a href="https://evoevolver.github.io/LatexCoder/">Website</a> ·
+  <a href="https://latexcoder-production.up.railway.app">Live app</a> ·
+  <a href="https://github.com/EvoEvolver/LatexCoder#quick-start">Documentation</a>
+</p>
+
+<p align="center">
   <a href="https://railway.com/deploy/latexcoder?referralCode=4KUZ4o&amp;utm_medium=integration&amp;utm_source=template&amp;utm_campaign=generic"><img src="https://railway.com/button.svg" alt="Deploy on Railway"></a>
 </p>
 

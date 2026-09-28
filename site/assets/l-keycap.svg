@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="48 48 416 416" role="img" aria-labelledby="title description">
+  <title id="title">L keycap</title>
+  <desc id="description">A three-dimensional keyboard keycap marked L, viewed from the front at a forty-five degree downward angle.</desc>
+  <defs>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9cdc8" />
+      <stop offset="1" stop-color="#959b96" />
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b9bfba" />
+      <stop offset="1" stop-color="#858b86" />
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#979d98" />
+      <stop offset="1" stop-color="#6f7571" />
+    </linearGradient>
+    <linearGradient id="top" x1="0.08" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.52" stop-color="#eef0ec" />
+      <stop offset="1" stop-color="#d7dad5" />
+    </linearGradient>
+    <linearGradient id="dish" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f8faf6" />
+      <stop offset="1" stop-color="#e2e5df" />
+    </linearGradient>
+  </defs>
+
+  <!-- The shell flares outward toward its base, producing a true keycap trapezoid. -->
+  <path d="M96 250 C94 266 108 282 127 282 L104 399 Q79 395 81 371 Z" fill="url(#left)" />
+  <path d="M127 282 L380 282 L406 399 L104 399 Z" fill="url(#front)" />
+  <path d="M380 282 C399 281 412 267 410 250 L431 371 Q435 391 406 399 Z" fill="url(#right)" />
+  <path d="M99 375 Q104 389 120 391 L393 391 Q408 389 427 375 L431 371 Q435 391 406 399 L104 399 Q82 395 81 375 Z" fill="#68706b" opacity="0.42" />
+
+  <!-- A rounded trapezoid produces the foreshortened top plane of the keycap. -->
+  <path d="M151 83 Q139 85 134 101 L96 250 C94 266 108 282 127 282 L380 282 C399 281 412 267 410 250 L362 102 Q357 84 342 83 Z" fill="url(#top)" stroke="#aeb4af" stroke-width="3" stroke-linejoin="round" />
+  <path d="M166 105 Q155 106 151 119 L119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250 Q385 244 381 233 L348 118 Q345 106 334 105 Z" fill="url(#dish)" stroke="#ffffff" stroke-opacity="0.72" stroke-width="2" />
+  <path d="M151 119 Q155 106 166 105 L334 105 Q345 106 348 118" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.72" />
+  <path d="M119 235 Q115 249 129 256 Q135 259 146 259 L362 259 Q374 259 381 250" fill="none" stroke="#adb3ae" stroke-width="3" stroke-linecap="round" opacity="0.7" />
+
+  <!-- The legend widens toward the viewer and converges toward the rear vanishing point. -->
+  <path d="M238 141 Q229 141 229 151 L224 215 Q223 233 241 235 L292 235 Q303 235 303 224 Q303 214 293 213 L258 213 L253 152 Q254 142 244 141 Z" fill="#111512" opacity="0.16" transform="translate(2 4)" />
+  <path d="M238 141 Q229 141 229 151 L224 215 Q223 233 241 235 L292 235 Q303 235 303 224 Q303 214 293 213 L258 213 L253 152 Q254 142 244 141 Z" fill="#242a26" />
+</svg>
