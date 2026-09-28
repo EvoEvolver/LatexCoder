@@ -97,7 +97,7 @@ async function main(): Promise<void> {
     await page.screenshot({ path: path.resolve("docs/images/workspace.png") });
     await page.close();
 
-    const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+    const mobilePage = await browser.newPage({ viewport: { width: 430, height: 860 }, deviceScaleFactor: 1 });
     await mobilePage.goto(`${base}/?e2e=1`);
     await mobilePage.locator("#editor-page").waitFor();
     await mobilePage.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
@@ -114,19 +114,25 @@ async function main(): Promise<void> {
     const pdfScreenshot = await mobilePage.screenshot({ type: "png" });
     await mobilePage.close();
 
-    const comparison = await browser.newPage({ viewport: { width: 820, height: 900 }, deviceScaleFactor: 1 });
+    const comparison = await browser.newPage({ viewport: { width: 1040, height: 1004 }, deviceScaleFactor: 1 });
     await comparison.setContent(`<!doctype html>
       <style>
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 16px; background: #e7ebe7; font-family: ui-sans-serif, system-ui, sans-serif; }
-        main { display: grid; grid-template-columns: repeat(2, 390px); gap: 8px; }
-        figure { margin: 0; overflow: hidden; border: 1px solid #b8c1ba; border-radius: 7px; background: #fff; box-shadow: 0 10px 28px rgba(24, 33, 28, .12); }
-        figcaption { height: 24px; padding: 6px 9px 0; color: #536159; background: #f5f7f4; font-size: 10px; font-weight: 700; line-height: 1; text-transform: uppercase; }
-        img { display: block; width: 390px; height: 844px; object-fit: cover; object-position: top; }
+        body { margin: 0; padding: 24px 40px; background: #e5eae5; font-family: ui-sans-serif, system-ui, sans-serif; }
+        main { display: grid; grid-template-columns: repeat(2, 450px); gap: 60px; }
+        figure { margin: 0; }
+        figcaption { height: 32px; color: #435048; font-size: 11px; font-weight: 800; line-height: 24px; text-align: center; text-transform: uppercase; }
+        .phone { width: 450px; overflow: hidden; border: 2px solid #090b0a; border-radius: 42px; background: #191d1a; padding: 10px; box-shadow: 0 24px 55px rgba(24, 33, 28, .24), inset 0 0 0 1px #4c554f; }
+        .hardware { position: relative; height: 26px; }
+        .speaker { position: absolute; top: 8px; left: 50%; width: 56px; height: 5px; border-radius: 5px; background: #050605; transform: translateX(-50%); }
+        .camera { position: absolute; top: 6px; left: calc(50% + 42px); width: 8px; height: 8px; border: 2px solid #303b35; border-radius: 50%; background: #07140f; }
+        img { display: block; width: 426px; height: auto; border: 1px solid #090b0a; border-radius: 19px; }
+        .chin { position: relative; height: 22px; }
+        .home { position: absolute; bottom: 2px; left: 50%; width: 92px; height: 4px; border-radius: 4px; background: #69736d; transform: translateX(-50%); }
       </style>
       <main>
-        <figure><figcaption>Source</figcaption><img alt="Source view" src="data:image/png;base64,${sourceScreenshot.toString("base64")}"></figure>
-        <figure><figcaption>PDF</figcaption><img alt="PDF view" src="data:image/png;base64,${pdfScreenshot.toString("base64")}"></figure>
+        <figure><figcaption>Source</figcaption><div class="phone"><div class="hardware"><span class="speaker"></span><span class="camera"></span></div><img alt="Source view" src="data:image/png;base64,${sourceScreenshot.toString("base64")}"><div class="chin"><span class="home"></span></div></div></figure>
+        <figure><figcaption>PDF</figcaption><div class="phone"><div class="hardware"><span class="speaker"></span><span class="camera"></span></div><img alt="PDF view" src="data:image/png;base64,${pdfScreenshot.toString("base64")}"><div class="chin"><span class="home"></span></div></div></figure>
       </main>`);
     await comparison.screenshot({ path: path.resolve("docs/images/mobile-source-pdf.png") });
     await comparison.close();

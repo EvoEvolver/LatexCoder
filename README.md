@@ -22,10 +22,6 @@ stores application state, and every project is a real Git repository on `main`.
 
 ![LaTeX Coder workspace with files, source editing, and PDF preview](docs/images/workspace.png)
 
-<p align="center">
-  <img src="docs/images/mobile-source-pdf.png" width="760" alt="LaTeX Coder mobile source and PDF views side by side">
-</p>
-
 > Working with BibTeX? See [Biblock](https://github.com/EvoEvolver/biblock), an
 > auditable bibliography workflow for humans and agents.
 
@@ -88,6 +84,10 @@ HTTP 409 rather than overwriting newer work. Agent access can apply changes
 directly or force every edit into reviewable suggestions. The same manual also
 documents project search, PDF and Log diagnostics, blame, reviews, and Git. It
 tells agents to use Git only when the user explicitly asks for it.
+
+<p align="center">
+  <img src="docs/images/mobile-source-pdf.png" width="1000" alt="LaTeX Coder mobile source and PDF views side by side">
+</p>
 
 ## LaTeX Coder vs. Overleaf
 
