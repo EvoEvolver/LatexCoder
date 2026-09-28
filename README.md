@@ -8,7 +8,6 @@
 
 <p align="center">
   <a href="https://evoevolver.github.io/LatexCoder/">Website</a> ·
-  <a href="https://latexcoder-production.up.railway.app">Live app</a> ·
   <a href="https://github.com/EvoEvolver/LatexCoder#quick-start">Documentation</a>
 </p>
 
