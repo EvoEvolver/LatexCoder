@@ -22,6 +22,10 @@ stores application state, and every project is a real Git repository on `main`.
 
 ![LaTeX Coder workspace with files, source editing, and PDF preview](docs/images/workspace.png)
 
+<p align="center">
+  <img src="docs/images/mobile-source-pdf.png" width="760" alt="LaTeX Coder mobile source and PDF views side by side">
+</p>
+
 > Working with BibTeX? See [Biblock](https://github.com/EvoEvolver/biblock), an
 > auditable bibliography workflow for humans and agents.
 

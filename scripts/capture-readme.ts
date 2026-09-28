@@ -96,6 +96,40 @@ async function main(): Promise<void> {
     await page.locator("#sync-state", { hasText: "Saved live" }).waitFor();
     await page.screenshot({ path: path.resolve("docs/images/workspace.png") });
     await page.close();
+
+    const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+    await mobilePage.goto(`${base}/?e2e=1`);
+    await mobilePage.locator("#editor-page").waitFor();
+    await mobilePage.waitForFunction(() => document.querySelector("#sync-state")?.textContent === "Saved live");
+    await mobilePage.evaluate(() => {
+      const files = document.querySelector<HTMLElement>("#files-pane");
+      files?.classList.remove("mobile-open");
+      if (files) files.style.transform = "translateX(-100%)";
+    });
+    await mobilePage.waitForFunction(() => document.querySelector("#files-pane")!.getBoundingClientRect().right <= 0);
+    const sourceScreenshot = await mobilePage.screenshot({ type: "png" });
+    await mobilePage.locator("#open-pdf").click();
+    await mobilePage.locator("#output-pane").waitFor();
+    await mobilePage.locator("#pdf-document canvas").first().waitFor();
+    const pdfScreenshot = await mobilePage.screenshot({ type: "png" });
+    await mobilePage.close();
+
+    const comparison = await browser.newPage({ viewport: { width: 820, height: 900 }, deviceScaleFactor: 1 });
+    await comparison.setContent(`<!doctype html>
+      <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 16px; background: #e7ebe7; font-family: ui-sans-serif, system-ui, sans-serif; }
+        main { display: grid; grid-template-columns: repeat(2, 390px); gap: 8px; }
+        figure { margin: 0; overflow: hidden; border: 1px solid #b8c1ba; border-radius: 7px; background: #fff; box-shadow: 0 10px 28px rgba(24, 33, 28, .12); }
+        figcaption { height: 24px; padding: 6px 9px 0; color: #536159; background: #f5f7f4; font-size: 10px; font-weight: 700; line-height: 1; text-transform: uppercase; }
+        img { display: block; width: 390px; height: 844px; object-fit: cover; object-position: top; }
+      </style>
+      <main>
+        <figure><figcaption>Source</figcaption><img alt="Source view" src="data:image/png;base64,${sourceScreenshot.toString("base64")}"></figure>
+        <figure><figcaption>PDF</figcaption><img alt="PDF view" src="data:image/png;base64,${pdfScreenshot.toString("base64")}"></figure>
+      </main>`);
+    await comparison.screenshot({ path: path.resolve("docs/images/mobile-source-pdf.png") });
+    await comparison.close();
   } finally {
     await browser?.close();
     paper.shutdown();
