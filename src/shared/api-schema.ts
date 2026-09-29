@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+// Zod probes `new Function("")` while constructing schemas to detect whether
+// eval is allowed. Under the client's strict CSP (`script-src 'self'`) browsers
+// report that blocked evaluation to the console even though zod catches the
+// error. Disable JIT schema compilation in browser realms (`window` on the main
+// thread, `WorkerGlobalScope` in workers) so the probe is never attempted; Node
+// keeps JIT. Validation results are identical either way.
+if ("window" in globalThis || "WorkerGlobalScope" in globalThis) z.config({ jitless: true });
+
 export const usernameSchema = z.string().trim().min(1).max(64);
 export const passwordSchema = z.string().min(10).max(1024);
 export const projectNameSchema = z.string().trim().min(1).max(120);

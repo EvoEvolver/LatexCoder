@@ -53,6 +53,9 @@ test("root negotiates Agent and human representations", async () => {
     assert.match(human.headers.get("vary"), /Accept/);
     assert.match(human.headers.get("vary"), /User-Agent/);
     assert.match(human.headers.get("content-security-policy"), /object-src 'none'/);
+    // KaTeX inlines a small font as a data: URL and pdf.js builds data: fonts at
+    // runtime, so font-src must allow data: or those @font-face loads are blocked.
+    assert.match(human.headers.get("content-security-policy"), /font-src 'self' data:/);
     const humanHtml = await human.text();
     assert.match(humanHtml, /<title>LaTeX Coder<\/title>/);
 
