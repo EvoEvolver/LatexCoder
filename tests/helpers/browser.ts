@@ -17,7 +17,7 @@ export type EditorTestContext = { page: Page; base: string; browser: Browser };
 // Drives the real bundled LaTeX Coder editor in headless Chromium against the real
 // server, so these tests exercise the exact suggesting-mode transaction
 // filter, keymap, and DOM that users hit in the browser.
-export async function withEditor(run: (context: EditorTestContext) => Promise<void>, options: ServerOptions = {}): Promise<void> {
+export async function withEditor(run: (context: EditorTestContext) => Promise<void>, options: ServerOptions = {}, init?: () => void): Promise<void> {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "latexcoder-e2e-"));
   const paper = await createPaperServer({ stateDir, authDisabled: true, ...options });
   await new Promise<void>((resolve, reject) => {
@@ -30,6 +30,7 @@ export async function withEditor(run: (context: EditorTestContext) => Promise<vo
     browser = await chromium.launch();
     const page = await browser.newPage();
     page.setDefaultTimeout(5000);
+    if (init) await page.addInitScript(init);
     await page.goto(`${base}/?test=1`);
     await page.waitForFunction(() => globalThis.__paperTest);
     await run({ page, base, browser });

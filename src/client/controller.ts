@@ -120,6 +120,7 @@ import { TreeWriterEditor } from "./tree-writer-editor.ts";
 import { editorDefaultKeymap } from "./editor-keymap.ts";
 import { sourceEditorInteractions, sourceModifierIsMeta, sourceModifierLabel, sourceModifierPressed } from "./source-editor-interactions.ts";
 import { loadEditorScroll, saveEditorScroll } from "./view-state.ts";
+import { randomUUID } from "./lib/random.ts";
 import type {
   AppState, BlameRun, BuildInfo, CurrentUser, DialogOptions, EditorSettings, GitState, PdfPosition,
   ProjectDetail, ProjectFile, ProjectMember, ProjectSummary, ReplacementPreview, ReviewDecision, ReviewGroup,
@@ -2281,7 +2282,7 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   elements.sync_state.textContent = "Connecting";
   let guestAuthorId = localStorage.getItem("latexcoder-guest-author-id");
   if (!guestAuthorId) {
-    guestAuthorId = `guest-${crypto.randomUUID()}`;
+    guestAuthorId = `guest-${randomUUID()}`;
     localStorage.setItem("latexcoder-guest-author-id", guestAuthorId);
   }
   let scrollRestored = false;
