@@ -4089,6 +4089,12 @@ elements.new_project.addEventListener("click", async () => {
   } catch (error) { showToast(error.message); }
 });
 elements.compile_button.addEventListener("click", compile);
+window.addEventListener("keydown", event => {
+  if (elements.editor_page.hidden || !(sourceModifierIsMeta ? event.metaKey : event.ctrlKey)
+    || event.shiftKey || event.altKey || event.key.toLowerCase() !== "s") return;
+  event.preventDefault();
+  if (!event.repeat && !elements.compile_button.disabled) void compile();
+}, { capture: true });
 elements.selection_comment.addEventListener("mousedown", (event: Event) => event.preventDefault());
 elements.selection_comment.addEventListener("click", openReviewDialog);
 elements.selection_accept.addEventListener("mousedown", (event: Event) => event.preventDefault());

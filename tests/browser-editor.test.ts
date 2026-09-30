@@ -452,7 +452,10 @@ test("compile button shows Compiling until completion and resets on success or f
       await page.route("**/v1/build/pdf*", route => route.fulfill({ contentType: "application/pdf", body: previewPdf() }));
       const button = page.locator("#compile-button");
       const width = (await button.boundingBox()).width;
-      await button.click();
+      if (status === 200) {
+        const modifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta" : "Control");
+        await page.keyboard.press(`${modifier}+s`);
+      } else await button.click();
       await page.waitForFunction(() => document.querySelector("#compile-button span")?.textContent === "Compiling");
       assert.equal(await button.isDisabled(), true);
       assert.equal(await button.getAttribute("aria-busy"), "true");
