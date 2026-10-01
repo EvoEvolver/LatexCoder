@@ -444,7 +444,8 @@ test("project page exposes sharing while destructive actions stay in menus", asy
     assert.equal(await page.locator("#menu-download-project").isVisible(), true);
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".topbar #compile-button").count(), 0);
-    assert.equal(await page.locator(".output-header #compile-button + .segmented").count(), 1);
+    assert.equal(await page.locator(".output-header #compile-mode").count(), 1);
+    assert.equal(await page.locator(".output-header #output-view-tabs.segmented").count(), 1);
     assert.equal((await page.locator("#compile-button").textContent())?.trim(), "Compile");
     assert.ok((await page.locator("#compile-button").boundingBox())!.width >= 108);
 

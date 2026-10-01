@@ -91,7 +91,7 @@ export class PdfController {
     this.requestVersion += 1;
     this.renderVersion += 1;
     cancelAnimationFrame(this.resizeFrame);
-    if (this.loadingTask) await this.loadingTask.destroy().catch(() => {});
+    const previousTask = this.loadingTask;
     this.loadingTask = null;
     this.documentProxy = null;
     this.highlights = null;
@@ -104,6 +104,7 @@ export class PdfController {
     this.options.elements.document.hidden = true;
     this.options.elements.empty.hidden = false;
     this.options.elements.status.textContent = "No compiled PDF";
+    if (previousTask) await previousTask.destroy().catch(() => {});
   }
 
   setFitMode(mode: "width" | "page"): void {

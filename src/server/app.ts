@@ -1195,7 +1195,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     };
   };
 
-  const { compileProject, ensureLatestPdf } = createCompileService({
+  const { compileProject, ensureLatestPdf, resolveBuildRuntime } = createCompileService({
     stateDir,
     database,
     queue: compileQueue,
@@ -1380,7 +1380,7 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     isProposalAccess, json: express.json, raw: express.raw, requestBlameActor,
     resolveProject, withAgentHistory, withGitOperation, withGitReader,
   });
-  registerBuildRoutes(app, { compileProject, database, ensureLatestPdf, json: express.json, options, resolveProject });
+  registerBuildRoutes(app, { compileProject, database, ensureLatestPdf, resolveBuildRuntime, json: express.json, options, resolveProject });
 
   app.use(express.static(path.join(APP_DIR, "dist"), { index: false, maxAge: "1y", immutable: true }));
   app.use((request, _response, next) => next(apiError("route_not_found", `route ${request.method} ${request.path} does not exist`, 404)));

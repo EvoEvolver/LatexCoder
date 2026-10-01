@@ -54,9 +54,10 @@ export function contentEntries(root: string, relativePath: string): ContentEntry
   return entries;
 }
 
-export async function compilationSourceRevision(projectDir: string, main = "main.tex", compiler = "auto"): Promise<string> {
+export async function compilationSourceRevision(projectDir: string, main = "main.tex", compiler = "auto", target = ""): Promise<string> {
   const digest = createHash("sha256");
   digest.update(`${main}\0${compiler}\0`);
+  if (target) digest.update(`${target}\0`);
   async function visit(directory: string, prefix = ""): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));

@@ -5,6 +5,7 @@ import type { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import type * as Y from "yjs";
 import type { BuildMetadata, ProjectMetadata, StateDatabase } from "./database.ts";
+import type { CompileTarget } from "../shared/compile-directives.ts";
 
 export type ApiError = Error & { code: string; status: number; details?: Record<string, unknown> };
 export type PasswordRecord = { salt: string; hash: string };
@@ -66,6 +67,7 @@ export interface ProjectRuntime {
   database: StateDatabase;
   collaboration: CollaborationStore;
   build: BuildMetadata;
+  compileTarget?: CompileTarget;
   compilePromise: Promise<{ success: boolean; build: BuildMetadata }> | null;
   gitBusy: boolean;
   gitLiveOperation: Promise<unknown> | null;

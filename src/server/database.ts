@@ -25,6 +25,7 @@ export type BuildMetadata = {
   pdf: boolean;
   sourceRevision: string | null;
   errors?: Array<{ path: string; line: number; message: string }>;
+  target?: import("../shared/compile-directives.ts").CompileTarget;
 };
 
 export type BlameChange = {

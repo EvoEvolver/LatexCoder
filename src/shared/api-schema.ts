@@ -33,7 +33,8 @@ export const settingsRequestSchema = z.strictObject({
   compiler: z.enum(["auto", "tectonic", "latexmk"]),
   autoCompile: z.boolean(),
 });
-export const compileRequestSchema = z.strictObject({ main: z.string().optional() });
+export const compileSelectionSchema = z.strictObject({ mode: z.enum(["project", "chapter"]).optional(), file: z.string().min(1).optional() });
+export const compileRequestSchema = compileSelectionSchema.extend({ main: z.string().optional() });
 
 export const currentUserSchema = z.object({
   username: z.string(),

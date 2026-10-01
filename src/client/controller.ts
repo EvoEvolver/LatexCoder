@@ -1,4 +1,5 @@
 import { createVersionHistory } from "./version-history";
+import type { CompileMode, CompileSelection } from "../shared/compile-directives.ts";
 import { createFileTabs } from "./file-tabs.ts";
 import { createFileTree } from "./file-tree.ts";
 import { renderMarkdownPreview as renderMarkdownDocument } from "./markdown-preview.ts";
@@ -337,6 +338,59 @@ const editorUndoManagers = new WeakMap<EditorView, Y.UndoManager>();
 let autoCompileTimer: ReturnType<typeof setTimeout>;
 let compileRunning = false;
 let compileQueued = false;
+let compileMode: CompileMode = "project";
+let previewSelection: CompileSelection = {};
+let buildEpoch = 0;
+const compileModeSelect = document.getElementById("compile-mode") as HTMLSelectElement;
+
+function currentCompileSelection(): CompileSelection {
+  return { mode: compileMode, file: state.activeFile.endsWith(".tex") ? state.activeFile : state.main };
+}
+
+function buildEndpoint(endpoint: string, selection = previewSelection): string {
+  const query = new URLSearchParams();
+  if (selection.mode) query.set("mode", selection.mode);
+  if (selection.file) query.set("file", selection.file);
+  return `${endpoint}${query.size ? `?${query}` : ""}`;
+}
+
+function describeBuild(build: BuildInfo): void {
+  const target = build.target;
+  const main = target?.main || build.main || state.main;
+  compileModeSelect.title = `${target?.mode === "chapter" ? "Chapter root" : "Top-level root"}: ${main}${target?.template ? `\nTemplate: ${target.template}` : ""}`;
+  elements.pdf_download.download = `${main.split("/").at(-1)?.replace(/\.tex$/, "") || "paper"}.pdf`;
+}
+
+async function selectBuild(selection: CompileSelection): Promise<number> {
+  const epoch = ++buildEpoch;
+  previewSelection = selection;
+  state.compileDiagnostics = [];
+  elements.build_output.textContent = "No compilation yet for this target.";
+  renderBuildErrors("");
+  await pdfController.reset();
+  return epoch;
+}
+
+compileModeSelect.addEventListener("change", async () => {
+  compileMode = compileModeSelect.value as CompileMode;
+  const project = state.projectId;
+  const selection = currentCompileSelection();
+  const epoch = await selectBuild(selection);
+  try {
+    if (project !== state.projectId || epoch !== buildEpoch) return;
+    const { build } = await request<{ build: BuildInfo }>(buildEndpoint("v1/build", selection));
+    if (project !== state.projectId || epoch !== buildEpoch) return;
+    describeBuild(build);
+    elements.build_output.textContent = build.log || "No compilation yet for this target.";
+    renderBuildErrors(build.log, build.errors, build.status === "error");
+    if (build.pdf) await showPdf(true);
+  } catch (error) {
+    if (project !== state.projectId || epoch !== buildEpoch) return;
+    elements.build_output.textContent = error.message;
+    elements.pdf_status.textContent = error.message;
+    showToast(error.message);
+  }
+});
 let editorSession: EditorSession | null = null;
 let editorScrollCleanup: (() => void) | null = null;
 let editorScrollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2642,9 +2696,11 @@ async function refreshProject(open = false, recordOpen = false) {
   state.settings = data.project.settings;
   renderFiles();
   syncProjectPermissionUi();
-  elements.build_output.textContent = data.project.build.log || "No compilation yet.";
-  renderBuildErrors(data.project.build.log, data.project.build.errors, data.project.build.status === "error");
-  if (data.project.build.pdf) showPdf();
+  if (!previewSelection.mode && !previewSelection.file) {
+    elements.build_output.textContent = data.project.build.log || "No compilation yet.";
+    renderBuildErrors(data.project.build.log, data.project.build.errors, data.project.build.status === "error");
+    if (data.project.build.pdf) showPdf();
+  }
   if (open) {
     const target = state.files.find(file => file.path === state.activeFile)?.path
       || state.files.find(file => file.path === data.project.main)?.path
@@ -3256,6 +3312,10 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   document.title = `${project.name} · LaTeX Coder`;
   if (!changed && state.view) return;
   state.activeFile = "";
+  buildEpoch++;
+  previewSelection = {};
+  compileMode = "project";
+  compileModeSelect.value = "project";
   await pdfController.reset();
   elements.build_output.textContent = "";
   await refreshProject(true, true);
@@ -3277,16 +3337,17 @@ const pdfController = new PdfController({
   modifierLabel: sourceModifierLabel,
   modifierPressed: sourceModifierPressed,
   onViewStateChange: updatePdfFitButtons,
-  pdfUrl: () => projectApiUrl("v1/build/pdf"),
-  projectId: () => state.projectId,
+  pdfUrl: () => projectApiUrl(buildEndpoint("v1/build/pdf")),
+  projectId: () => `${state.projectId}:${JSON.stringify(previewSelection)}`,
   sourceAt: async (page, x, y, revision) => {
     const projectId = state.projectId;
-    const destination = await request<SourcePosition>("v1/build/source", {
+    const epoch = buildEpoch;
+    const destination = await request<SourcePosition>(buildEndpoint("v1/build/source"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page, x, y, revision }),
     });
-    if (state.projectId !== projectId) throw new Error("The project changed. Try again.");
+    if (state.projectId !== projectId || epoch !== buildEpoch) throw new Error("The compile target changed. Try again.");
     return destination;
   },
   revealSource,
@@ -3311,26 +3372,33 @@ async function compile() {
   if (compileRunning) { compileQueued = true; return; }
   compileRunning = true;
   const project = state.projectId;
+  const selection = currentCompileSelection();
+  let epoch = buildEpoch;
   elements.compile_button.disabled = true;
   elements.compile_button.querySelector("span").textContent = "Compiling";
   elements.compile_button.setAttribute("aria-busy", "true");
   elements.sync_state.textContent = "Compiling";
   try {
+    if (JSON.stringify(selection) !== JSON.stringify(previewSelection)) epoch = await selectBuild(selection);
+    if (state.projectId !== project || epoch !== buildEpoch) return;
     const result = await request<{ build: BuildInfo }>("v1/compile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ main: state.main }),
+      body: JSON.stringify(selection),
     });
-    if (state.projectId !== project) return;
+    if (state.projectId !== project || epoch !== buildEpoch) return;
+    describeBuild(result.build);
     elements.build_output.textContent = result.build.log;
     renderBuildErrors(result.build.log, result.build.errors);
     await showPdf(true);
+    if (state.projectId !== project || epoch !== buildEpoch) return;
     selectOutput("pdf");
     setOutputViewOpen(true);
     showToast("PDF compiled.");
   } catch (error) {
-    const build = await request<{ build: BuildInfo }>("v1/build").catch((): null => null);
-    if (state.projectId !== project) return;
+    if (state.projectId !== project || epoch !== buildEpoch) return;
+    const build = await request<{ build: BuildInfo }>(buildEndpoint("v1/build", selection)).catch((): null => null);
+    if (state.projectId !== project || epoch !== buildEpoch) return;
     elements.build_output.textContent = build?.build?.log || error.message;
     renderBuildErrors(build?.build?.log || error.message, build?.build?.errors, true);
     selectOutput("log");
@@ -3353,12 +3421,13 @@ function markPdfStale() {
 
 async function refreshPdfStatus() {
   const project = state.projectId;
+  const epoch = buildEpoch;
   if (!project || !pdfController.hasDocument) return;
   try {
-    const { build } = await request<{ build: BuildInfo }>("v1/build");
-    if (project !== state.projectId) return;
+    const { build } = await request<{ build: BuildInfo }>(buildEndpoint("v1/build"));
+    if (project !== state.projectId || epoch !== buildEpoch) return;
     pdfController.setStale(Boolean(build.stale || pdfController.sourceRevision !== build.sourceRevision));
-  } catch { markPdfStale(); }
+  } catch { if (project === state.projectId && epoch === buildEpoch) markPdfStale(); }
 }
 
 function resolveDiagnosticPath(pathname?: string): string | undefined {
@@ -4388,6 +4457,7 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
 
 async function goToPdf(view: EditorView) {
   const project = state.projectId;
+  const epoch = buildEpoch;
   const file = state.activeFile;
   const source = view.state.doc.toString();
   const { from, to } = view.state.selection.main;
@@ -4396,7 +4466,7 @@ async function goToPdf(view: EditorView) {
   elements.pdf_status.textContent = "Locating source; updating PDF if needed...";
   let position;
   try {
-    position = await request<PdfPosition>("v1/build/position", {
+    position = await request<PdfPosition>(buildEndpoint("v1/build/position"), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
     });
   } finally {
@@ -4404,7 +4474,7 @@ async function goToPdf(view: EditorView) {
       elements.pdf_status.textContent = pdfController.hasDocument ? "PDF ready" : "No compiled PDF";
     }
   }
-  if (state.projectId !== project || state.view !== view) return;
+  if (state.projectId !== project || state.view !== view || epoch !== buildEpoch) return;
   selectOutput("pdf");
   const revealedOutput = workspaceController.isNarrow || workspaceController.isOutputHidden;
   if (revealedOutput) {

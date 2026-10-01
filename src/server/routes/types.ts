@@ -54,6 +54,7 @@ export interface GitRouteContext {
 }
 
 export interface BuildRouteContext {
+  resolveBuildRuntime: (runtime: ProjectRuntime, selection: import("../../shared/compile-directives.ts").CompileSelection) => Promise<ProjectRuntime>;
   compileProject: (runtime: ProjectRuntime, main: string) => Promise<{ success: boolean; build: ProjectRuntime["build"] }>;
   database: StateDatabase;
   ensureLatestPdf: (runtime: ProjectRuntime) => Promise<ProjectRuntime["build"]>;

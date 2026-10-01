@@ -84,7 +84,8 @@ test("workspace panels resize, collapse from arrow handles, and switch the singl
     };
     const files = await width("#files-pane");
     const toolbarHeights = await page.locator("#files-toolbar, #file-tabs, .output-header").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
-    assert.deepEqual(toolbarHeights, [44, 44, 44]);
+    assert.deepEqual(toolbarHeights.slice(0, 2), [44, 44]);
+    assert.ok(toolbarHeights[2] >= 44, "the PDF toolbar can wrap its compile target and preview controls in a narrow pane");
     const toolbarStyles = await page.locator("#files-toolbar, #file-tabs, .output-header").evaluateAll(elements => elements.map(element => ({ background: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderBottomColor })));
     assert.equal(new Set(toolbarStyles.map(style => style.background)).size, 1);
     assert.equal(new Set(toolbarStyles.map(style => style.border)).size, 1);

@@ -5,9 +5,10 @@ import path from "node:path";
 import { buildDiagnostics, compileErrors } from "../../shared/compile-errors.ts";
 import { projectedPosition } from "../../shared/source-map.ts";
 import { syncTexPositions } from "../../shared/pdf-map.ts";
-import { compileRequestSchema } from "../../shared/api-schema.ts";
+import { compileRequestSchema, compileSelectionSchema } from "../../shared/api-schema.ts";
 import { apiError, MAX_TEXT_BYTES, safeRelativePath } from "../core.ts";
-import { compilationSourceRevision } from "../project-files.ts";
+import { buildSourceRevision } from "../compile-target.ts";
+import type { Request } from "express";
 import { run } from "../process.ts";
 import type { ZodType } from "zod";
 import type { BuildRouteContext, RouteApp } from "./types.ts";
@@ -21,13 +22,26 @@ function parseBody<T>(schema: ZodType<T>, value: unknown): T {
 }
 
 export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): void {
-  const { database, json, options } = context;
+  const { json, options } = context;
+  const resolveBuild = async (request: Request) => {
+    const project = await context.resolveProject(request);
+    const selection = parseBody(compileSelectionSchema, { mode: request.query.mode, file: request.query.file });
+    return selection.mode || selection.file ? context.resolveBuildRuntime(project, selection) : project;
+  };
+
+  app.get("/v1/compile-target", async (request, response, next) => {
+    try {
+      const runtime = await resolveBuild(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ target: runtime.compileTarget || { mode: "project", main: runtime.build.main } });
+    } catch (error) { next(error); }
+  });
 
   app.get("/v1/build", async (request, response, next) => {
     try {
-      const runtime = await context.resolveProject(request);
+      const runtime = await resolveBuild(request);
       runtime.collaboration.flush();
-      const currentRevision = await compilationSourceRevision(runtime.projectDir, runtime.build.main, database.getSettings(runtime.id).compiler);
+      const currentRevision = await buildSourceRevision(runtime);
       const diagnostics = buildDiagnostics(runtime.build.log, runtime.build.errors, runtime.build.main);
       response.setHeader("Cache-Control", "no-store");
       response.json({ build: { ...runtime.build, stale: currentRevision !== runtime.build.sourceRevision, errors: runtime.build.errors?.length ? runtime.build.errors : compileErrors(runtime.build.log, runtime.build.main), diagnostics, firstFatalError: diagnostics.find(item => item.severity === "error") || null } });
@@ -35,7 +49,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
   });
   app.get("/v1/build/pdf", async (request, response, next) => {
     try {
-      const runtime = await context.resolveProject(request);
+      const runtime = await resolveBuild(request);
       response.setHeader("Cache-Control", "no-store");
       const build = request.query.cached === "1" ? runtime.build : await context.ensureLatestPdf(runtime);
       if (!build.pdf || !existsSync(path.join(runtime.buildDir, "latest.pdf"))) throw apiError("pdf_not_found", "No successful PDF yet", 404);
@@ -44,6 +58,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
       response.setHeader("X-Build-Error-Count", diagnostics.filter(item => item.severity === "error").length);
       response.setHeader("X-Build-Warning-Count", diagnostics.filter(item => item.severity === "warning").length);
       const logQuery = new URLSearchParams({ project: runtime.id });
+      for (const key of ["mode", "file"]) if (typeof request.query[key] === "string") logQuery.set(key, request.query[key]);
       if (typeof request.query.access === "string") logQuery.set("access", request.query.access);
       response.setHeader("Link", `</v1/build?${logQuery}>; rel="describedby"; type="application/json"`);
       response.setHeader("ETag", `"${build.sourceRevision}"`);
@@ -53,7 +68,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
   });
   app.post("/v1/build/position", json({ limit: `${MAX_TEXT_BYTES * 2}b` }), async (request, response, next) => {
     try {
-      const runtime = await context.resolveProject(request);
+      const runtime = await resolveBuild(request);
       const file = safeRelativePath(request.body?.path);
       const { line, source, from, to } = request.body || {};
       if (!file.endsWith(".tex") || !Number.isSafeInteger(line) || line < 1 || typeof source !== "string") throw apiError("invalid_position", "Expected a LaTeX file, source, and positive line number");
@@ -80,7 +95,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
       try {
         for (let batch = start.line; batch <= Math.min(end.line, start.line + 19); batch += 4) {
           const lines = Array.from({ length: Math.min(4, Math.min(end.line, start.line + 19) - batch + 1) }, (_, index) => batch + index);
-          const results = await Promise.all(lines.map(targetLine => run(options.synctex || "synctex", ["view", "-i", `${targetLine}:${targetLine === start.line ? start.column : 0}:${path.join(snapshot.root, file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 1000, env: { ...process.env, SYNCTEX_VIEWER: "" } })));
+          const results = await Promise.all(lines.map(targetLine => run(options.synctex || "synctex", ["view", "-i", `${targetLine}:${targetLine === start.line ? start.column : 0}:${path.join(snapshot.root, snapshot.inputPaths?.[file] || file)}`, "-o", path.join(runtime.buildDir, "latest.pdf")], { cwd: runtime.buildDir, timeoutMs: 1000, env: { ...process.env, SYNCTEX_VIEWER: "" } })));
           for (const result of results) boxes.push(...syncTexPositions(result.output));
         }
       } catch { throw apiError("synctex_unavailable", "SyncTeX is not installed on the server", 503); }
@@ -94,7 +109,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
   });
   app.post("/v1/build/source", json({ limit: "16kb" }), async (request, response, next) => {
     try {
-      const runtime = await context.resolveProject(request);
+      const runtime = await resolveBuild(request);
       const { page, x, y, revision } = request.body || {};
       if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 100000 || y > 100000) throw apiError("invalid_position", "Invalid PDF position");
       if (runtime.compilePromise || revision !== runtime.build.sourceRevision) throw apiError("stale_pdf", "The PDF changed. Refresh the preview and try again.", 409);
@@ -112,6 +127,7 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
       if (!snapshot.files[file] && snapshot.files[`${file}.tex`]) file += ".tex";
       const map = snapshot.files[file];
       if (!map) throw apiError("source_not_found", "The source is outside this project", 404);
+      file = map.path || file;
       runtime.collaboration.flush();
       const current = await readFile(path.join(runtime.projectDir, safeRelativePath(file)), "utf8");
       if (current !== map.source) throw apiError("stale_source", "This source changed since compilation. Compile again to navigate accurately.", 409);
@@ -121,8 +137,10 @@ export function registerBuildRoutes(app: RouteApp, context: BuildRouteContext): 
   });
   app.post("/v1/compile", json({ limit: "16kb" }), async (request, response, next) => {
     try {
-      const runtime = await context.resolveProject(request);
+      const project = await context.resolveProject(request);
       const body = parseBody(compileRequestSchema, request.body);
+      if (body.main && (body.mode || body.file)) throw apiError("invalid_request", "Use main or mode/file, not both");
+      const runtime = body.mode || body.file ? await context.resolveBuildRuntime(project, body) : project;
       const main = safeRelativePath(body.main || runtime.build.main || "main.tex");
       let result = await context.compileProject(runtime, main);
       if (result.build.main !== main) result = await context.compileProject(runtime, main);
