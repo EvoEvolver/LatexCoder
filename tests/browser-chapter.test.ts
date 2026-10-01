@@ -19,6 +19,16 @@ test("Compile switches between the top-level document and the whole chapter from
     }
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
+    // The unmarked main file uses the full document even in Chapter root mode.
+    await page.locator("#compile-mode").selectOption("chapter");
+    await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title") === "Top-level root: main.tex");
+    const fallbackResponse = page.waitForResponse(response => response.url().includes("/v1/compile") && response.request().method() === "POST");
+    await page.locator("#compile-button").click();
+    const fallback = await fallbackResponse;
+    assert.equal(fallback.status(), 200);
+    assert.equal((await fallback.json()).build.main, "main.tex");
+    await page.locator("#pdf-document canvas").first().waitFor();
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#compile-button")?.disabled);
     await page.locator('[data-tree-path="chapters"]').click();
     await page.locator('[data-tree-path="chapters/child.tex"]').click();
     await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "chapters/child.tex" && globalThis.__paperE2E.state.provider?.synced);

@@ -9,25 +9,32 @@ export async function resolveCompileTarget(projectDir: string, fallback: string,
     if (!file.endsWith(".tex")) throw new Error(`${file}: compile entry must be a .tex file`);
     try { return await readFile(checkedContentTarget(projectDir, file), "utf8"); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${file}: file does not exist`);
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
   };
   try {
     const mode = selection.mode || "project";
     let file = contentPath(selection.file || fallback);
+    const projectRoot = () => resolveCompileTarget(projectDir, fallback, { ...selection, mode: "project" });
     let explicitRoot = false;
     const visited = new Set<string>();
     while (true) {
       if (visited.has(file)) throw new Error(`${file}: circular latexcoder:${mode === "chapter" ? "chapter-root" : "root"} chain`);
       visited.add(file);
-      const directives = compileDirectives(await read(file), file);
+      const source = await read(file);
+      if (source === null) {
+        if (mode === "chapter") return await projectRoot();
+        if (!explicitRoot && file !== fallback) { file = contentPath(fallback); continue; }
+        throw new Error(`${file}: file does not exist`);
+      }
+      const directives = compileDirectives(source, file);
       const entry = directives[mode === "chapter" ? "chapter-root" : "root"];
       if (entry) {
         if (mode === "project") explicitRoot = true;
         const next = contentPath(entry.value);
         if (next !== file) { file = next; continue; }
-      } else if (mode === "project" && visited.size === 1 && file !== fallback) {
+      } else if (mode === "project" && !explicitRoot && file !== fallback) {
         // A child may inherit the top-level root declaration from its chapter.
         if (directives["chapter-root"] && contentPath(directives["chapter-root"].value) !== file) {
           file = contentPath(directives["chapter-root"].value);
@@ -36,7 +43,7 @@ export async function resolveCompileTarget(projectDir: string, fallback: string,
         file = contentPath(fallback);
         continue;
       } else if (mode === "chapter" && visited.size === 1 && !directives.template) {
-        throw new Error(`${file}: add %% latexcoder:chapter-root <project-relative chapter.tex> to select a chapter`);
+        return await projectRoot();
       }
       if (mode === "project") {
         // Following a chapter marker does not make that chapter the project root.
@@ -48,7 +55,9 @@ export async function resolveCompileTarget(projectDir: string, fallback: string,
       if (template === "none") return { mode, main: file };
       const templatePath = contentPath(template);
       if (templatePath === file) throw new Error(`${file}: a chapter cannot be its own template`);
-      compileTemplate(await read(templatePath), templatePath, file);
+      const templateSource = await read(templatePath);
+      if (templateSource === null) throw new Error(`${templatePath}: file does not exist`);
+      compileTemplate(templateSource, templatePath, file);
       return { mode, main: file, template: templatePath };
     }
   } catch (error) {

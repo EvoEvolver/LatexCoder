@@ -222,6 +222,20 @@ PDF navigation requires the `synctex` executable. The Docker image includes it.
 Compile an older project once after deployment to generate its synchronization
 data.
 
+Choose **Top-level root** or **Chapter root** beside Compile to build the whole
+document or just the chapter you are working on, including its child files.
+If no chapter root is declared or its file is missing, compilation automatically
+falls back to the top-level root.
+
+Keep chapter configuration in the project source: a child file declares
+`%% latexcoder:chapter-root chapters/methods.tex`, and the chapter entry declares
+`%% latexcoder:template templates/chapter.tex`. The template supplies the document
+class, packages, and surrounding content, with `%% latexcoder:content` marking
+where the chapter is inserted. An optional `%% latexcoder:root main.tex` selects
+the top-level entry. Paths are relative to the project root, and chapter builds
+keep their own PDF, log, and source-navigation data. See the
+[chapter compilation guide](docs/chapter-compilation.md) for a complete example.
+
 The Agent PDF endpoint always represents current source. It compiles when
 needed and reuses the cached artifact otherwise. A failed current build returns
 HTTP 422 JSON with the compiler log, structured diagnostics, and the first fatal

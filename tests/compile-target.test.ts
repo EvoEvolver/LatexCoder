@@ -89,10 +89,8 @@ test("source declarations support root overrides, complete chapters and actionab
     await put(base, "standalone.tex", "%% latexcoder:template none\n" + main);
     assert.deepEqual((await target("standalone.tex")).body.target, { mode: "chapter", main: "standalone.tex" });
     for (const [source, expected] of [
-      ["%% latexcoder:chapter-root missing.tex", /file does not exist/],
       ["%% latexcoder:chapter-root ../outside.tex", /inside the project/],
       ["%% latexcoder:chapter-root loops.tex", /circular/],
-      ["No configuration", /add %% latexcoder:chapter-root/],
       ["%% latexcoder:template missing.tex", /file does not exist/],
     ] as const) {
       await put(base, "bad.tex", source);
@@ -105,6 +103,41 @@ test("source declarations support root overrides, complete chapters and actionab
     assert.match((await target("chapters/part-a.tex")).body.error.message, /exactly one/);
     assert.equal((await (await fetch(`${base}/v1/settings`)).json()).settings.main, "main.tex");
   });
+});
+
+test("missing chapter roots fall back to the top-level root for compilation and PDF requests", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "latexcoder-chapter-fallback-"));
+  try {
+    const compiler = await createFakeLatexmk(directory);
+    await withServer(async ({ base }) => {
+      await fixture(base);
+      await put(base, "alternate.tex", "Alternate full document");
+      await put(base, "chapters/intermediate.tex", "%% latexcoder:root alternate.tex\n%% latexcoder:chapter-root missing.tex\n");
+      for (const [source, expected] of [
+        ["Unmarked child", "main.tex"],
+        ["%% latexcoder:chapter-root missing.tex", "main.tex"],
+        ["%% latexcoder:root alternate.tex\n%% latexcoder:chapter-root missing.tex", "alternate.tex"],
+        ["%% latexcoder:root alternate.tex\nUnmarked child", "alternate.tex"],
+        ["%% latexcoder:chapter-root chapters/intermediate.tex", "alternate.tex"],
+      ]) {
+        await put(base, "child.tex", source);
+        const query = new URLSearchParams({ mode: "chapter", file: "child.tex" });
+        const targetResponse = await fetch(`${base}/v1/compile-target?${query}`);
+        assert.equal(targetResponse.status, 200);
+        assert.deepEqual((await targetResponse.json()).target, { mode: "project", main: expected });
+        const response = await compile(base, { mode: "chapter", file: "child.tex" });
+        assert.equal(response.status, 200, await response.clone().text());
+        assert.equal((await response.json()).build.main, expected);
+        const pdf = await fetch(`${base}/v1/build/pdf?${query}`);
+        assert.equal(pdf.status, 200);
+        assert.match(await pdf.text(), expected === "main.tex" ? /Full document only/ : /Alternate full document/);
+        const report = await (await fetch(`${base}/v1/build?${query}`)).json();
+        assert.equal(report.build.status, "success");
+        assert.equal(report.build.main, expected);
+        assert.equal(report.build.stale, false);
+      }
+    }, { compiler });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 const realLatexmk = ["/Library/TeX/texbin/latexmk", "/usr/bin/latexmk"].find(existsSync);

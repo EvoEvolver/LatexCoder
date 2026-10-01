@@ -44,10 +44,13 @@ An already complete chapter document can declare `%% latexcoder:template none`.
 
 Top-level mode uses `%% latexcoder:root` on the current file or its chapter entry,
 falling back to the project's existing main document setting. Top-level builds
-do not wrap the root in a chapter template. Root and chapter-root declarations
+do not wrap the root in a chapter template. If no chapter root is declared or
+the chapter entry does not exist, Chapter root mode uses the top-level root
+automatically. Template errors still produce diagnostics for the selected chapter.
+Root and chapter-root declarations
 may point to another entry; circular chains are rejected. A self-reference
 identifies the entry itself. Configuration comments must precede document content;
-duplicate declarations and missing files produce explicit errors.
+duplicate declarations, missing templates, and missing top-level roots produce explicit errors.
 
 Chapter PDFs, logs, and SyncTeX data are cached separately from full-project builds.
 Downloads and source navigation use the displayed target. A failed chapter build
