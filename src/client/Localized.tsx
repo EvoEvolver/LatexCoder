@@ -32,6 +32,7 @@ export function LanguageSelector({ compact = false }: { compact?: boolean }) {
       <option value="system">{t(compact ? "Auto" : "Follow browser")}</option>
       <option value="en">{compact ? "EN" : "English"}</option>
       <option value="zh-CN">{compact ? "中文" : "简体中文"}</option>
+      <option value="ja">日本語</option>
     </select>
   </label>;
 }

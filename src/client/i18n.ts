@@ -1,16 +1,18 @@
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import zhCN from "./locales/zh-CN.json";
+import ja from "./locales/ja.json";
 
-export type LanguagePreference = "system" | "en" | "zh-CN";
+export type LanguagePreference = "system" | "en" | "zh-CN" | "ja";
 const storageKey = "latexcoder-language";
 let sessionPreference: LanguagePreference | undefined;
 export const i18n = i18next.createInstance();
 
-export function resolveLanguage(preference: LanguagePreference, languages: readonly string[]): "en" | "zh-CN" {
+export function resolveLanguage(preference: LanguagePreference, languages: readonly string[]): Exclude<LanguagePreference, "system"> {
   if (preference !== "system") return preference;
   for (const language of languages) {
     if (/^zh(?:$|-(?:CN|SG|Hans)(?:-|$))/i.test(language)) return "zh-CN";
+    if (/^ja(?:-|$)/i.test(language)) return "ja";
     if (/^en(?:-|$)/i.test(language)) return "en";
   }
   return "en";
@@ -20,7 +22,7 @@ export function languagePreference(): LanguagePreference {
   if (sessionPreference) return sessionPreference;
   try {
     const stored = localStorage.getItem(storageKey);
-    if (stored === "en" || stored === "zh-CN") return stored;
+    if (stored === "en" || stored === "zh-CN" || stored === "ja") return stored;
   } catch { /* The app also works when browser storage is unavailable. */ }
   return "system";
 }
@@ -29,7 +31,7 @@ export async function initializeLanguage(): Promise<void> {
   await i18n.use(initReactI18next).init({
     lng: resolveLanguage(languagePreference(), navigator.languages),
     fallbackLng: "en",
-    supportedLngs: ["en", "zh-CN"],
+    supportedLngs: ["en", "zh-CN", "ja"],
     keySeparator: false,
     nsSeparator: false,
     interpolation: { escapeValue: false },
@@ -47,6 +49,7 @@ export async function initializeLanguage(): Promise<void> {
         comments_other: "{{name}} commented · {{count}} messages",
       } },
       "zh-CN": { translation: zhCN },
+      ja: { translation: ja },
     },
   });
   document.documentElement.lang = i18n.resolvedLanguage || "en";

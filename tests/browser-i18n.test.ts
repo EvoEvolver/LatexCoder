@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { withEditor, openRootFileMenu } from "./helpers/browser.ts";
 
-test("language switching preserves the live editor and updates React and controller UI", async () => {
+for (const locale of [
+  { code: "zh-CN", browser: "zh-Hans-CN", compile: "编译", chapter: "章节入口", root: "顶层入口:", newFile: "新建文件", settings: "项目设置" },
+  { code: "ja", browser: "ja-JP", compile: "組版", chapter: "章の起点", root: "全体の起点:", newFile: "新規ファイル", settings: "プロジェクト設定" },
+]) {
+test(`${locale.code} language switching preserves the live editor and updates React and controller UI`, async () => {
   await withEditor(async ({ page, base }) => {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
@@ -19,19 +23,19 @@ test("language switching preserves the live editor and updates React and control
       view.dispatch({ changes: { from: 0, insert: "% Project — user content\n" }, selection: { anchor: 8 } });
     });
     const before = await page.evaluate(() => ({ text: globalThis.__paperE2E.state.view.state.doc.toString(), selection: globalThis.__paperE2E.state.view.state.selection.toJSON() }));
-    await language.selectOption("zh-CN");
-    await page.waitForFunction(() => document.querySelector("#compile-button")?.textContent === "编译");
-    assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
-    assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), "章节入口");
-    assert.match(await page.locator("#compile-mode").getAttribute("title") || "", /^顶层入口:/);
+    await language.selectOption(locale.code);
+    await page.waitForFunction(text => document.querySelector("#compile-button")?.textContent === text, locale.compile);
+    assert.equal(await page.locator("html").getAttribute("lang"), locale.code);
+    assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), locale.chapter);
+    assert.ok((await page.locator("#compile-mode").getAttribute("title"))?.startsWith(locale.root));
     assert.ok(await page.evaluate(view => view === globalThis.__paperE2E.state.view, view));
     assert.ok(await page.evaluate(provider => provider === globalThis.__paperE2E.state.provider, provider));
     assert.deepEqual(await page.evaluate(() => ({ text: globalThis.__paperE2E.state.view.state.doc.toString(), selection: globalThis.__paperE2E.state.view.state.selection.toJSON() })), before);
     await openRootFileMenu(page);
-    assert.match(await page.locator(".tree-context-menu").textContent() || "", /新建文件/);
+    assert.ok((await page.locator(".tree-context-menu").textContent())?.includes(locale.newFile));
     await page.keyboard.press("Escape");
     await page.locator("#project-menu").click();
-    assert.match(await page.locator("#project-settings").textContent() || "", /项目设置/);
+    assert.ok((await page.locator("#project-settings").textContent())?.includes(locale.settings));
     await page.keyboard.press("Escape");
     await language.selectOption("en");
     await page.waitForFunction(() => document.querySelector("#compile-button")?.textContent === "Compile");
@@ -40,33 +44,36 @@ test("language switching preserves the live editor and updates React and control
     await page.locator("#editor .cm-content").focus();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
     assert.ok(!(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString())).includes("Project — user content"));
-    await language.selectOption("zh-CN");
+    await language.selectOption(locale.code);
     await page.reload();
     await page.waitForFunction(() => globalThis.__paperE2E);
-    assert.equal(await language.inputValue(), "zh-CN");
-    assert.equal(await page.locator("#compile-button").textContent(), "编译");
+    assert.equal(await language.inputValue(), locale.code);
+    assert.equal(await page.locator("#compile-button").textContent(), locale.compile);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    await page.screenshot({ path: "/tmp/latexcoder-i18n-mobile.png" });
+    await page.screenshot({ path: `/tmp/latexcoder-i18n-${locale.code}-mobile.png` });
     await language.selectOption("en");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.setViewportSize({ width: 1280, height: 800 });
-    await language.selectOption("zh-CN");
-    await page.screenshot({ path: "/tmp/latexcoder-i18n-desktop.png" });
+    await language.selectOption(locale.code);
+    await page.screenshot({ path: `/tmp/latexcoder-i18n-${locale.code}-desktop.png` });
     assert.deepEqual(errors, []);
   });
 });
 
-test("browser language is used when no personal preference exists", async () => {
+test(`${locale.browser} browser language is used when no personal preference exists`, async () => {
   await withEditor(async ({ page }) => {
-    assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
-    assert.equal(await page.locator("#compile-button").textContent(), "编译");
+    assert.equal(await page.locator("html").getAttribute("lang"), locale.code);
+    assert.equal(await page.locator("#compile-button").textContent(), locale.compile);
     await page.locator("#editor-page [data-language-select]").selectOption("en");
     await page.waitForFunction(() => document.documentElement.lang === "en");
     await page.locator("#editor-page [data-language-select]").selectOption("system");
-    await page.waitForFunction(() => document.documentElement.lang === "zh-CN");
-  }, {}, () => Object.defineProperty(navigator, "languages", { value: ["zh-Hans-CN", "en"] }));
+    await page.waitForFunction(language => document.documentElement.lang === language, locale.code);
+  }, {}, locale.code === "ja"
+    ? () => Object.defineProperty(navigator, "languages", { value: ["ja-JP", "en"] })
+    : () => Object.defineProperty(navigator, "languages", { value: ["zh-Hans-CN", "en"] }));
 });
+}
 
 test("language switching after closing TreeWriter does not access the closed tab state", async () => {
   await withEditor(async ({ page }) => {

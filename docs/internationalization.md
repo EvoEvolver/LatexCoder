@@ -1,10 +1,11 @@
 # Interface languages
 
-LaTeX Coder supports English and Simplified Chinese through i18next and
+LaTeX Coder supports English, Simplified Chinese, and Japanese through i18next and
 react-i18next. The language selector is available on the sign-in page, project
 list, administration page, editor toolbar, and account settings. Choose **Auto**
 (**Follow browser** in account settings) to use the
-first supported browser language, with English as the fallback.
+first supported browser language, with English as the fallback. Japanese browser
+locales such as `ja-JP` resolve to `ja`.
 
 The preference is local to the browser and is shared between its tabs. It does
 not modify project files or change another collaborator's interface. Switching
@@ -19,12 +20,20 @@ original text.
 `src/client/i18n.ts` initializes the shared instance before the application shell
 mounts. English messages serve as catalog keys; key and namespace separators are
 disabled so punctuation in messages is literal. The Simplified Chinese catalog
-is `src/client/locales/zh-CN.json`. English plural forms are defined alongside
+is `src/client/locales/zh-CN.json`; the Japanese catalog is
+`src/client/locales/ja.json`. Both catalogs contain the same message keys and
+preserve all interpolation parameters. English plural forms are defined alongside
 initialization, and i18next selects forms using `count`.
 
 Pass dynamic values as interpolation parameters. Do not translate user-provided
 strings or build sentences by concatenating translated fragments. Date displays
 use the selected interface locale.
+
+For Japanese, prefer natural Japanese wording to phonetic English translations:
+use 設定, 履歴, 共有, 検索, 置換, and 組版 where appropriate. Keep established terms
+such as ファイル and プロジェクト when they aid understanding, and leave product
+names and source identifiers unchanged. Use the same wording across labels,
+instructions, and errors.
 
 ## React and controller ownership
 
