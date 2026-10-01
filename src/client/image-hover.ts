@@ -1,3 +1,4 @@
+import { localizedAttribute, localizedText, t } from './i18n.ts';
 import type { Extension } from "@codemirror/state";
 import { EditorView, hoverTooltip, type TooltipView } from "@codemirror/view";
 import { getDocument, type PDFDocumentLoadingTask } from "pdfjs-dist/build/pdf.mjs";
@@ -28,22 +29,22 @@ function tooltipShell(path: string, titleText = "Image preview"): { dom: HTMLEle
   dom.className = "cm-image-tooltip";
   const header = document.createElement("header");
   const title = document.createElement("strong");
-  title.textContent = titleText;
+  localizedText(title, () => t(titleText));
   const status = document.createElement("span");
-  status.textContent = "Loading";
+  localizedText(status, () => t("Loading"));
   header.append(title, status);
   const preview = document.createElement("div");
   preview.className = "cm-image-preview";
   const footer = document.createElement("footer");
-  footer.textContent = path;
+  localizedText(footer, () => path);
   dom.append(header, preview, footer);
   return { dom, preview, status };
 }
 
 function errorMessage(preview: HTMLElement, status: HTMLElement, message: string): void {
   preview.classList.add("error");
-  preview.textContent = message;
-  status.textContent = "Unavailable";
+  localizedText(preview, () => message);
+  localizedText(status, () => t("Unavailable"));
 }
 
 function imageTooltip(path: string, url: string): TooltipView {
@@ -51,10 +52,10 @@ function imageTooltip(path: string, url: string): TooltipView {
   const image = document.createElement("img");
   image.alt = path;
   image.onload = () => {
-    status.textContent = `${image.naturalWidth} × ${image.naturalHeight}`;
+    localizedText(status, () => `${image.naturalWidth} × ${image.naturalHeight}`);
     preview.classList.add("loaded");
   };
-  image.onerror = () => errorMessage(preview, status, "Image could not be loaded");
+  image.onerror = () => errorMessage(preview, status, t("Image could not be loaded"));
   image.src = url;
   preview.append(image);
   return { dom, destroy: () => { image.src = ""; } };
@@ -63,7 +64,7 @@ function imageTooltip(path: string, url: string): TooltipView {
 function pdfTooltip(path: string, url: string): TooltipView {
   const { dom, preview, status } = tooltipShell(path, "PDF preview");
   const canvas = document.createElement("canvas");
-  canvas.setAttribute("aria-label", `First page of ${path}`);
+  localizedAttribute(canvas, "aria-label", () => t("First page of {{v0}}", { v0: path }));
   preview.append(canvas);
   const abort = new AbortController();
   let loadingTask: PDFDocumentLoadingTask | null = null;
@@ -72,7 +73,7 @@ function pdfTooltip(path: string, url: string): TooltipView {
   void (async () => {
     try {
       const response = await fetch(url, { signal: abort.signal });
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      if (!response.ok) throw new Error(t("Request failed ({{v0}})", { v0: response.status }));
       loadingTask = getDocument({ data: await response.arrayBuffer() });
       const pdf = await loadingTask.promise;
       if (destroyed) return;
@@ -93,12 +94,12 @@ function pdfTooltip(path: string, url: string): TooltipView {
       }).promise;
       if (!destroyed) {
         preview.classList.add("loaded");
-        status.textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`;
+        localizedText(status, () => t("pages", { count: pdf.numPages }));
       }
     } catch (error) {
       if (!destroyed && !abort.signal.aborted) {
         console.error("graphics PDF hover preview failed", error);
-        errorMessage(preview, status, "PDF preview could not be rendered");
+        errorMessage(preview, status, t("PDF preview could not be rendered"));
       }
     }
   })();
@@ -168,12 +169,12 @@ export function imageHover(data: ImageHoverData): Extension {
         end: link.to,
         above: true,
         create: () => {
-          if (projectId !== data.projectId() || activeFile !== data.activeFile()) return unavailableTooltip(asset, "Preview is no longer current");
-          if (!path) return unavailableTooltip(asset, "Project file not found");
+          if (projectId !== data.projectId() || activeFile !== data.activeFile()) return unavailableTooltip(asset, t("Preview is no longer current"));
+          if (!path) return unavailableTooltip(asset, t("Project file not found"));
           const url = data.fileUrl(path);
           if (IMAGE_PATTERN.test(path)) return imageTooltip(path, url);
           if (/\.pdf$/i.test(path)) return pdfTooltip(path, url);
-          return unavailableTooltip(path, "This image format cannot be previewed");
+          return unavailableTooltip(path, t("This image format cannot be previewed"));
         },
       };
     }, { hoverTime: 650, hideOnChange: true }),

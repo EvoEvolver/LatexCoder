@@ -1,3 +1,4 @@
+import { localizedText, t } from './i18n.ts';
 import type { Extension } from "@codemirror/state";
 import { EditorView, hoverTooltip } from "@codemirror/view";
 
@@ -19,23 +20,23 @@ function citationTooltipDom(citation: LocatedCitation): HTMLElement {
 
   const header = document.createElement("header");
   const key = document.createElement("code");
-  key.textContent = citation.key;
+  localizedText(key, () => citation.key);
   const metadata = document.createElement("span");
-  metadata.textContent = [citation.type, citation.year].filter(Boolean).join(" · ");
+  localizedText(metadata, () => [citation.type, citation.year].filter(Boolean).join(" · "));
   header.append(key, metadata);
 
   const title = document.createElement("strong");
-  title.textContent = citation.title || "Untitled bibliography entry";
+  localizedText(title, () => citation.title || t("Untitled bibliography entry"));
   dom.append(header, title);
 
   if (citation.authors.length) {
     const authors = document.createElement("p");
-    authors.textContent = citation.authors.join("; ");
+    localizedText(authors, () => citation.authors.join("; "));
     dom.append(authors);
   }
 
   const source = document.createElement("footer");
-  source.textContent = [citation.venue, citation.path].filter(Boolean).join(" · ");
+  localizedText(source, () => [citation.venue, citation.path].filter(Boolean).join(" · "));
   dom.append(source);
   return dom;
 }

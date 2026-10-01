@@ -1,3 +1,4 @@
+import { localizedAttribute, localizedText, t } from './i18n.ts';
 import { getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/build/pdf.mjs";
 import type { PdfBox, PdfPosition, SourcePosition } from "./types.ts";
 import { loadPdfView, savePdfView, type PdfViewState } from "./view-state.ts";
@@ -103,7 +104,7 @@ export class PdfController {
     this.options.elements.document.replaceChildren();
     this.options.elements.document.hidden = true;
     this.options.elements.empty.hidden = false;
-    this.options.elements.status.textContent = "No compiled PDF";
+    localizedText(this.options.elements.status, () => t("No compiled PDF"));
     if (previousTask) await previousTask.destroy().catch(() => {});
   }
 
@@ -123,12 +124,12 @@ export class PdfController {
   markStale(): void {
     if (!this.documentProxy) return;
     this.options.elements.freshness.hidden = false;
-    this.options.elements.freshness.textContent = "PDF outdated";
+    localizedText(this.options.elements.freshness, () => t("PDF outdated"));
   }
 
   setStale(stale: boolean): void {
     this.options.elements.freshness.hidden = !stale;
-    this.options.elements.freshness.textContent = stale ? "PDF outdated" : "";
+    localizedText(this.options.elements.freshness, () => stale ? t("PDF outdated") : "");
   }
 
   async show(force = false, priorityPage?: number): Promise<void> {
@@ -140,7 +141,7 @@ export class PdfController {
     downloadUrl.searchParams.set("v", String(Date.now()));
     downloadUrl.searchParams.set("cached", "1");
     this.options.elements.download.href = downloadUrl.toString();
-    this.options.elements.status.textContent = "Loading PDF";
+    localizedText(this.options.elements.status, () => t("Loading PDF"));
     this.options.elements.empty.hidden = false;
     try {
       if (force && this.loadingTask) {
@@ -153,7 +154,7 @@ export class PdfController {
       if (!this.documentProxy) {
         const response = await fetch(this.options.elements.download.href);
         if (requestVersion !== this.requestVersion) return;
-        if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
+        if (!response.ok) throw new Error(t("PDF request failed ({{v0}})", { v0: response.status }));
         this.sourceRevisionValue = response.headers.get("X-LaTeX-Coder-Source-Revision");
         const loadingTask = getDocument({ data: await response.arrayBuffer() });
         this.loadingTask = loadingTask;
@@ -169,7 +170,7 @@ export class PdfController {
       if (requestVersion !== this.requestVersion) return;
       console.error("paper PDF preview failed", error);
       this.options.elements.document.hidden = true;
-      this.options.elements.status.textContent = "Preview failed. Download the PDF instead.";
+      localizedText(this.options.elements.status, () => t("Preview failed. Download the PDF instead."));
     }
   }
 
@@ -199,10 +200,10 @@ export class PdfController {
       canvas.height = Math.floor(viewport.height * pixelRatio);
       canvas.style.width = `${Math.floor(viewport.width)}px`;
       canvas.style.height = `${Math.floor(viewport.height)}px`;
-      canvas.setAttribute("aria-label", `PDF page ${pageNumber}`);
+      localizedAttribute(canvas, "aria-label", () => t("PDF page {{v0}}", { v0: pageNumber }));
       canvas.dataset.page = String(pageNumber);
       canvas.dataset.pdfScale = String(scale);
-      canvas.title = `${this.options.modifierLabel}+click to open source`;
+      localizedAttribute(canvas, "title", () => t("{{modifier}}+click to open source", { modifier: this.options.modifierLabel }));
       const sourcePoint = (event: MouseEvent) => {
         const bounds = canvas.getBoundingClientRect();
         return {
@@ -259,7 +260,7 @@ export class PdfController {
       }
     })().catch(error => { if (version === this.renderVersion) console.error("PDF background render failed", error); });
     if (version !== this.renderVersion) return;
-    this.options.elements.status.textContent = "PDF ready";
+    localizedText(this.options.elements.status, () => t("PDF ready"));
     this.renderHighlights();
     this.scheduleSave();
   }
@@ -274,9 +275,9 @@ export class PdfController {
     } else if (revealedOutput || !this.options.elements.document.querySelector(`canvas[data-page="${position.page}"]`)) {
       await this.render(position.page);
     }
-    if (this.sourceRevisionValue !== position.revision) throw new Error("The PDF changed. Try navigating again.");
+    if (this.sourceRevisionValue !== position.revision) throw new Error(t("The PDF changed. Try navigating again."));
     const canvas = this.options.elements.document.querySelector<HTMLCanvasElement>(`canvas[data-page="${position.page}"]`);
-    if (!canvas || !this.documentProxy) throw new Error("PDF page not found");
+    if (!canvas || !this.documentProxy) throw new Error(t("PDF page not found"));
     const page = await this.documentProxy.getPage(position.page);
     const viewport = page.getViewport({ scale: 1 });
     const x = Math.max(0, Math.min(viewport.width, position.x)) / viewport.width * canvas.clientWidth;

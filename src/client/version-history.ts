@@ -1,3 +1,4 @@
+import { formatDate, localizedAttribute, localizedText, t } from './i18n.ts';
 import { diffWordsWithSpace } from "diff";
 
 type Version = { id: string; shortId: string; date: string; subject: string; labels: string[]; metadata?: { kind?: string; agentName?: string; mode?: string } };
@@ -24,7 +25,7 @@ type ParsedDiffLine = {
 function appendWordDiff(code: HTMLElement, line: ParsedDiffLine): void {
   const marker = line.kind === "added" ? "+" : line.kind === "removed" ? "-" : "";
   if (!line.counterpart || !marker) {
-    code.textContent = line.text || " ";
+    localizedText(code, () => line.text || " ");
     return;
   }
   code.append(document.createTextNode(marker));
@@ -35,7 +36,7 @@ function appendWordDiff(code: HTMLElement, line: ParsedDiffLine): void {
     if ((line.kind === "removed" && part.removed) || (line.kind === "added" && part.added)) {
       const changed = document.createElement("mark");
       changed.className = line.kind === "removed" ? "diff-word-removed" : "diff-word-added";
-      changed.textContent = part.value;
+      localizedText(changed, () => part.value);
       code.append(changed);
     } else code.append(document.createTextNode(part.value));
   }
@@ -63,27 +64,27 @@ export function createVersionHistory(deps: Dependencies) {
   const restore = node<HTMLButtonElement>("history-restore"), restoreFile = node<HTMLButtonElement>("history-restore-file");
   const more = node<HTMLButtonElement>("history-more"), versionCount = node("history-version-count");
   const labelForm = node<HTMLFormElement>("history-label-form"), labelInput = node<HTMLInputElement>("history-label-input");
-  function fail(reason: unknown) { error.textContent = reason instanceof Error ? reason.message : "Could not load version history. Try refreshing."; error.hidden = false; }
+  function fail(reason: unknown) { localizedText(error, () => reason instanceof Error ? reason.message : t("Could not load version history. Try refreshing.")); error.hidden = false; }
   function clearPreview() {
     node("history-preview").setAttribute("aria-busy", "false");
     selected = null; file = ""; selectionGeneration++; fileGeneration++;
     restore.disabled = true; restoreFile.hidden = true;
     labelForm.hidden = true;
     node("history-labels").replaceChildren();
-    node("history-title").textContent = "Select a version";
-    node("history-meta").textContent = "Inspect changes before restoring. Restores always preserve your current work.";
+    localizedText(node("history-title"), () => t("Select a version"));
+    localizedText(node("history-meta"), () => t("Inspect changes before restoring. Restores always preserve your current work."));
     node("history-structure").hidden = true;
     node("history-files").replaceChildren(); diff.replaceChildren(); error.hidden = true;
-    node("history-file-label").textContent = "Changes compared with the previous version";
-    node("history-diff-note").textContent = "";
+    localizedText(node("history-file-label"), () => t("Changes compared with the previous version"));
+    localizedText(node("history-diff-note"), () => "");
   }
   function labelBadge(value: string, removable: boolean): HTMLElement {
     const badge = document.createElement("span");
     badge.className = "inline-flex max-w-full items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-foreground";
-    const text = document.createElement("span"); text.className = "truncate"; text.textContent = value; badge.append(text);
+    const text = document.createElement("span"); text.className = "truncate"; localizedText(text, () => value); badge.append(text);
     if (removable) {
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "text-muted-foreground hover:text-foreground";
-      remove.textContent = "x"; remove.title = `Remove ${value}`; remove.setAttribute("aria-label", `Remove label ${value}`);
+      localizedText(remove, () => "x"); localizedAttribute(remove, "title", () => t("Remove {{v0}}", { v0: value })); localizedAttribute(remove, "aria-label", () => t("Remove label {{v0}}", { v0: value }));
       remove.addEventListener("click", () => void changeLabel(value, true)); badge.append(remove);
     }
     return badge;
@@ -121,9 +122,9 @@ export function createVersionHistory(deps: Dependencies) {
     file = path;
     const id = selected.version.id, epoch = ++fileGeneration, project = deps.project();
     restoreFile.hidden = !deps.editable(); restoreFile.disabled = true;
-    node("history-file-label").textContent = path;
-    node("history-diff-note").textContent = "";
-    diff.textContent = "Loading changes…";
+    localizedText(node("history-file-label"), () => path);
+    localizedText(node("history-diff-note"), () => "");
+    localizedText(diff, () => t("Loading changes…"));
     for (const button of node("history-files").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.path === path));
     try {
       const result = await deps.request<{ patch: string; truncated: boolean }>(`v1/history/${id}?path=${encodeURIComponent(path)}`);
@@ -146,20 +147,20 @@ export function createVersionHistory(deps: Dependencies) {
       for (const parsed of lines) {
         const line = document.createElement("span");
         line.className = `version-diff-line diff-${parsed.kind}`;
-        for (const value of [parsed.before, parsed.after]) { const gutter = document.createElement("span"); gutter.className = "diff-line-number"; gutter.textContent = value; gutter.setAttribute("aria-hidden", "true"); line.append(gutter); }
+        for (const value of [parsed.before, parsed.after]) { const gutter = document.createElement("span"); gutter.className = "diff-line-number"; localizedText(gutter, () => value); gutter.setAttribute("aria-hidden", "true"); line.append(gutter); }
         const code = document.createElement("span"); code.className = "diff-code"; appendWordDiff(code, parsed); line.append(code); diff.append(line);
       }
-      if (!result.patch) diff.textContent = "No textual changes in this file.";
-      node("history-diff-note").textContent = result.truncated ? "Large diff truncated. Clone the project to inspect the complete change." : "− removed  /  + added";
+      if (!result.patch) localizedText(diff, () => t("No textual changes in this file."));
+      localizedText(node("history-diff-note"), () => result.truncated ? t("Large diff truncated. Clone the project to inspect the complete change.") : t("− removed  /  + added"));
       restoreFile.disabled = false;
-    } catch (reason) { if (epoch === fileGeneration && project === deps.project()) { diff.textContent = ""; fail(reason); } }
+    } catch (reason) { if (epoch === fileGeneration && project === deps.project()) { localizedText(diff, () => ""); fail(reason); } }
   }
   async function select(version: Version) {
     if (restoring) return;
     clearPreview();
     const epoch = ++selectionGeneration, project = deps.project();
-    node("history-title").textContent = version.subject;
-    node("history-meta").textContent = "Loading version…";
+    localizedText(node("history-title"), () => version.subject);
+    localizedText(node("history-meta"), () => t("Loading version…"));
     node("history-preview").setAttribute("aria-busy", "true");
     for (const button of list.querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.version === version.id));
     try {
@@ -168,59 +169,59 @@ export function createVersionHistory(deps: Dependencies) {
       selected = detail;
       showSelectedLabels();
       const structure = detail.structure;
-      const structureText = [structure.foldersAdded.length ? `Folders added: ${structure.foldersAdded.join(", ")}` : "", structure.foldersRemoved.length ? `Folders removed: ${structure.foldersRemoved.join(", ")}` : "", structure.main ? `Main document: ${structure.main.before} → ${structure.main.after}` : ""].filter(Boolean).join(" · ");
-      node("history-structure").textContent = structureText;
+      const structureText = [structure.foldersAdded.length ? t("Folders added: {{v0}}", { v0: structure.foldersAdded.join(", ") }) : "", structure.foldersRemoved.length ? t("Folders removed: {{v0}}", { v0: structure.foldersRemoved.join(", ") }) : "", structure.main ? t("Main document: {{v0}} → {{v1}}", { v0: structure.main.before, v1: structure.main.after }) : ""].filter(Boolean).join(" · ");
+      localizedText(node("history-structure"), () => structureText);
       node("history-structure").hidden = !structureText;
       const metadata = version.metadata;
-      node("history-meta").textContent = `${new Date(version.date).toLocaleString()} · ${version.shortId}${metadata?.kind === "agent" ? ` · ${metadata.agentName || "Coding agent"} · ${metadata.mode === "suggesting" ? "Suggestions" : "Direct edit"}` : ""}`;
+      localizedText(node("history-meta"), () => `${formatDate(version.date)} · ${version.shortId}${metadata?.kind === "agent" ? ` · ${metadata.agentName || t("Coding agent")} · ${metadata.mode === "suggesting" ? t("Suggestions") : t("Direct edit")}` : ""}`);
       for (const item of detail.files) {
         const button = document.createElement("button"); button.type = "button"; button.dataset.path = item.path;
-        const label = document.createElement("span"); label.textContent = item.path;
-        const count = document.createElement("small"); count.textContent = item.added === null ? "Binary" : `+${item.added} −${item.removed}`;
+        const label = document.createElement("span"); localizedText(label, () => item.path);
+        const count = document.createElement("small"); localizedText(count, () => item.added === null ? t("Binary") : `+${item.added} −${item.removed}`);
         button.append(label, count); button.addEventListener("click", () => void showFile(item.path)); node("history-files").append(button);
       }
       restore.disabled = !deps.editable();
       if (detail.files.length) await showFile(detail.files[0].path);
-      else diff.textContent = "No file changes in this checkpoint.";
+      else localizedText(diff, () => t("No file changes in this checkpoint."));
     } catch (reason) { if (epoch === selectionGeneration && project === deps.project()) fail(reason); }
     finally { if (epoch === selectionGeneration) node("history-preview").setAttribute("aria-busy", "false"); }
   }
   async function refresh(append = false) {
     if (restoring) return;
     const epoch = ++generation, project = deps.project();
-    if (!append) { cursor = null; list.replaceChildren(); clearPreview(); list.textContent = "Loading versions…"; versionCount.textContent = ""; }
+    if (!append) { cursor = null; list.replaceChildren(); clearPreview(); localizedText(list, () => t("Loading versions…")); localizedText(versionCount, () => ""); }
     more.disabled = true; error.hidden = true;
     try {
       const result = await deps.request<{ items: Version[]; next: string | null; total: number }>(`v1/history?filter=${filter}${append && cursor ? `&before=${cursor}` : ""}`);
       if (epoch !== generation || project !== deps.project()) return;
-      versionCount.textContent = `${result.total} ${result.total === 1 ? "version" : "versions"}`;
+      localizedText(versionCount, () => t("versions", { count: result.total }));
       if (!append) list.replaceChildren();
       for (const version of result.items) {
         const button = document.createElement("button"); button.type = "button"; button.className = "version-row"; button.dataset.version = version.id; button.setAttribute("aria-pressed", "false");
-        const title = document.createElement("strong"); title.textContent = version.subject;
-        const subtitle = document.createElement("span"); subtitle.textContent = `${new Date(version.date).toLocaleString()} · ${version.shortId}`;
-        const kind = document.createElement("small"); kind.textContent = version.metadata?.kind === "agent" ? `Agent · ${version.metadata.agentName || "Coding agent"}` : version.metadata?.kind === "restore" ? "Restored version" : "Checkpoint";
+        const title = document.createElement("strong"); localizedText(title, () => version.subject);
+        const subtitle = document.createElement("span"); localizedText(subtitle, () => `${formatDate(version.date)} · ${version.shortId}`);
+        const kind = document.createElement("small"); localizedText(kind, () => version.metadata?.kind === "agent" ? t("Agent · {{v0}}", { v0: version.metadata.agentName || t("Coding agent") }) : version.metadata?.kind === "restore" ? t("Restored version") : t("Checkpoint"));
         const labels = document.createElement("span"); labels.className = "version-labels flex flex-wrap gap-1"; showRowLabels(version, labels);
         button.append(kind, title, subtitle, labels); button.addEventListener("click", () => void select(version)); list.append(button);
       }
-      if (!list.childElementCount) list.textContent = filter === "agent" ? "No agent edits yet. Checked API edits appear here automatically." : filter === "labeled" ? "No labeled versions yet. Add a label to a saved version to keep it easy to find." : "No saved versions yet.";
+      if (!list.childElementCount) localizedText(list, () => filter === "agent" ? t("No agent edits yet. Checked API edits appear here automatically.") : filter === "labeled" ? t("No labeled versions yet. Add a label to a saved version to keep it easy to find.") : t("No saved versions yet."));
       cursor = result.next; more.hidden = !cursor;
       if (!append && result.items.length) await select(result.items[0]);
-    } catch (reason) { if (epoch === generation && project === deps.project()) { if (!append) list.textContent = "History unavailable"; fail(reason); } }
+    } catch (reason) { if (epoch === generation && project === deps.project()) { if (!append) localizedText(list, () => t("History unavailable")); fail(reason); } }
     finally { if (epoch === generation) more.disabled = false; }
   }
   async function restoreSelected(singleFile: boolean) {
     if (!selected || restoring) return;
     const detail = selected, path = singleFile ? file : undefined, project = deps.project();
-    const confirmed = await deps.confirm({ title: path ? "Restore file?" : "Restore project version?", message: `Restore ${path || "all project files"} to ${detail.version.shortId}? Your current work will be saved as a checkpoint first. You can restore that checkpoint to undo this action.`, submitLabel: path ? "Restore file" : "Restore version", danger: true });
+    const confirmed = await deps.confirm({ title: path ? t("Restore file?") : t("Restore project version?"), message: t("Restore {{v0}} to {{v1}}? Your current work will be saved as a checkpoint first. You can restore that checkpoint to undo this action.", { v0: path || t("all project files"), v1: detail.version.shortId }), submitLabel: path ? t("Restore file") : t("Restore version"), danger: true });
     if (!confirmed || project !== deps.project()) return;
     restoring = true; restore.disabled = true; restoreFile.disabled = true; error.hidden = true;
-    restore.textContent = "Restoring…";
+    localizedText(restore, () => t("Restoring…"));
     try {
       await deps.request(`v1/history/${detail.version.id}/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentRevision: detail.currentRevision, path }) });
       await deps.restored(); restoring = false; await refresh();
     } catch (reason) { fail(reason); }
-    finally { restoring = false; restore.textContent = "Restore this version"; restore.disabled = !selected; restoreFile.disabled = false; }
+    finally { restoring = false; localizedText(restore, () => t("Restore this version")); restore.disabled = !selected; restoreFile.disabled = false; }
   }
   node("history-all").addEventListener("click", () => setFilter("all"));
   node("history-agents").addEventListener("click", () => setFilter("agent"));

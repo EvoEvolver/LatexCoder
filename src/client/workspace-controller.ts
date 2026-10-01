@@ -1,3 +1,4 @@
+import { localizedAttribute, t } from './i18n.ts';
 type WorkspaceElements = {
   closeFiles: HTMLElement;
   closeOutput: HTMLElement;
@@ -132,7 +133,7 @@ export class WorkspaceController {
       ));
       this.elements.workspace.style.gridTemplateColumns = `${filesWidth}px ${COLUMN_HANDLE_WIDTH}px minmax(${editorMinimum}px,1fr) ${COLUMN_HANDLE_WIDTH}px ${this.outputHidden ? 0 : output}px`;
     }
-    this.elements.toggleFiles.title = mobile ? "Files" : this.filesHidden ? "Show files" : "Hide files";
+    localizedAttribute(this.elements.toggleFiles, "title", () => mobile ? t("Files") : this.filesHidden ? t("Show files") : t("Hide files"));
     this.elements.toggleFiles.setAttribute("aria-expanded", String(mobile ? this.elements.filesPane.classList.contains("mobile-open") : !this.filesHidden));
     this.elements.viewSwitch.hidden = !mobile && !this.outputHidden;
     this.elements.closeOutput.hidden = !mobile && !singlePaneOutput;
@@ -141,8 +142,8 @@ export class WorkspaceController {
   }
 
   private syncColumnToggle(button: HTMLElement, hidden: boolean, labels: [string, string]): void {
-    button.title = hidden ? labels[1] : labels[0];
-    button.setAttribute("aria-label", button.title);
+    localizedAttribute(button, "title", () => t(hidden ? labels[1] : labels[0]));
+    localizedAttribute(button, "aria-label", () => button.title);
     button.setAttribute("aria-expanded", String(!hidden));
     button.querySelector("[data-collapse-icon]")?.toggleAttribute("hidden", hidden);
     button.querySelector("[data-expand-icon]")?.toggleAttribute("hidden", !hidden);

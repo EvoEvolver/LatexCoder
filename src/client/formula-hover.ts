@@ -1,3 +1,4 @@
+import { localizedText, t } from './i18n.ts';
 import type { Extension } from "@codemirror/state";
 import { EditorView, hoverTooltip } from "@codemirror/view";
 import katex from "katex";
@@ -27,13 +28,13 @@ function formulaTooltipDom(formula: LocatedFormula, macros: ReadonlyMap<string, 
   dom.className = "cm-formula-tooltip";
   const header = document.createElement("header");
   const kind = document.createElement("strong");
-  kind.textContent = formula.region.display ? "Display formula" : "Inline formula";
+  localizedText(kind, () => formula.region.display ? t("Display formula") : t("Inline formula"));
   const location = document.createElement("span");
-  location.textContent = formula.label
+  localizedText(location, () => formula.label
     ? `\\label{${formula.label}}`
     : formula.region.environment
       ? `\\begin{${formula.region.environment}}`
-      : "";
+      : "");
   header.append(kind);
   if (location.textContent) header.append(location);
   const preview = document.createElement("div");
@@ -49,13 +50,13 @@ function formulaTooltipDom(formula: LocatedFormula, macros: ReadonlyMap<string, 
   } catch (error) {
     preview.classList.add("fallback");
     const source = document.createElement("pre");
-    source.textContent = formula.region.source.trim();
+    localizedText(source, () => formula.region.source.trim());
     const message = document.createElement("p");
-    message.textContent = `Preview unavailable: ${error instanceof Error ? error.message : "unsupported formula"}`;
+    localizedText(message, () => t("Preview unavailable: {{v0}}", { v0: error instanceof Error ? error.message : t("unsupported formula") }));
     preview.append(source, message);
   }
   const footer = document.createElement("footer");
-  footer.textContent = formula.path;
+  localizedText(footer, () => formula.path);
   dom.append(header, preview, footer);
   return dom;
 }

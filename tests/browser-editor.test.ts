@@ -589,7 +589,7 @@ test("project search opens cross-file matches and respects case", async () => {
     await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "2 matches");
     await page.locator("#search-case").check();
     await page.locator("#search-form button").click();
-    await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "1 matches");
+    await page.waitForFunction(() => document.querySelector("#search-status")?.textContent === "1 match");
     await page.screenshot({ path: "/tmp/latexcoder-project-search.png" });
     await page.locator(".search-result").click();
     await page.waitForFunction(() => {

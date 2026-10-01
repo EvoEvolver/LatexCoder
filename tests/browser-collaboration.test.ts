@@ -587,7 +587,7 @@ test("login, invitations, and capability links separate members from guests", as
     await page.waitForURL(`${base}/admin`);
     await page.locator("#admin-table tbody tr").first().waitFor();
     assert.match(await page.locator("#admin-table").textContent(), /admin/);
-    assert.match(await page.locator("#admin-total").textContent(), /users/);
+    assert.match(await page.locator("#admin-total").textContent(), /users?/);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => document.documentElement.scrollWidth <= 390);
     const userCard = page.locator("#admin-table tbody tr").first();
@@ -598,7 +598,7 @@ test("login, invitations, and capability links separate members from guests", as
     }
     await page.screenshot({ path: "/tmp/latexcoder-admin-users-mobile.png", fullPage: true });
     await page.locator("#admin-projects-tab").click();
-    await page.waitForFunction(() => document.querySelector("#admin-total")?.textContent?.includes("projects"));
+    await page.waitForFunction(() => document.querySelector("#admin-total")?.textContent?.includes("project"));
     assert.match(await page.locator("#admin-table").textContent(), /Paper/);
     const projectCard = page.locator("#admin-table tbody tr").first();
     for (const label of ["Project", "Owner", "Members", "Last opened", "Created", "Actions"]) {

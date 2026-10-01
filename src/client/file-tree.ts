@@ -1,3 +1,4 @@
+import { localizedAttribute, localizedText, t } from './i18n.ts';
 import { Braces, ChevronRight, createIcons, File, FileCheck2, FileCode2, FileText, Folder, FolderOpen, Image, MoreHorizontal } from "lucide";
 
 export type TreeFile = { path: string; text: boolean };
@@ -38,11 +39,11 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
 
   function sharedActions(directory: string): MenuAction[] {
     return [
-      { label: "Search", run: callbacks.search },
+      { label: t("Search"), run: callbacks.search },
       ...(current?.editable === false ? [] : [
-      { label: "New file", run: () => callbacks.create(directory, false) },
-      { label: "New folder", run: () => callbacks.create(directory, true) },
-      { label: "Upload", run: () => callbacks.upload(directory) },
+      { label: t("New file"), run: () => callbacks.create(directory, false) },
+      { label: t("New folder"), run: () => callbacks.create(directory, true) },
+      { label: t("Upload"), run: () => callbacks.upload(directory) },
       ] satisfies MenuAction[]),
     ];
   }
@@ -51,16 +52,16 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
     if (!entry || !current) return sharedActions("");
     const directory = entry.folder ? entry.path : parent(entry.path);
     const specific: MenuAction[] = current.editable === false
-      ? entry.folder ? [] : [{ label: "Download", run: () => callbacks.download(entry.path) }]
+      ? entry.folder ? [] : [{ label: t("Download"), run: () => callbacks.download(entry.path) }]
       : entry.folder
       ? [
-          { label: "Rename folder", run: () => callbacks.rename(entry.path, true) },
-          { label: "Delete folder", run: () => callbacks.remove(entry.path, true), danger: true, disabled: current.main.startsWith(`${entry.path}/`), title: "The folder containing the main document cannot be deleted" },
+          { label: t("Rename folder"), run: () => callbacks.rename(entry.path, true) },
+          { label: t("Delete folder"), run: () => callbacks.remove(entry.path, true), danger: true, disabled: current.main.startsWith(`${entry.path}/`), title: t("The folder containing the main document cannot be deleted") },
         ]
       : [
-          { label: "Download", run: () => callbacks.download(entry.path) },
-          { label: "Rename", run: () => callbacks.rename(entry.path, false) },
-          { label: "Delete file", run: () => callbacks.remove(entry.path, false), danger: true, disabled: entry.path === current.main, title: "The main document cannot be deleted" },
+          { label: t("Download"), run: () => callbacks.download(entry.path) },
+          { label: t("Rename"), run: () => callbacks.rename(entry.path, false) },
+          { label: t("Delete file"), run: () => callbacks.remove(entry.path, false), danger: true, disabled: entry.path === current.main, title: t("The main document cannot be deleted") },
         ];
     return [...sharedActions(directory), "separator", ...specific];
   }
@@ -72,8 +73,8 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
       if (action === "separator") {
         const separator = document.createElement("div"); separator.className = "tree-menu-separator"; separator.setAttribute("role", "separator"); panel.append(separator); continue;
       }
-      const item = document.createElement("button"); item.type = "button"; item.textContent = action.label; item.className = action.danger ? "danger" : "";
-      item.setAttribute("role", "menuitem"); item.disabled = Boolean(action.disabled); if (action.title) item.title = action.title;
+      const item = document.createElement("button"); item.type = "button"; localizedText(item, () => action.label); item.className = action.danger ? "danger" : "";
+      item.setAttribute("role", "menuitem"); item.disabled = Boolean(action.disabled); if (action.title) localizedAttribute(item, "title", () => action.title);
       item.addEventListener("click", () => { close(); action.run(); }); panel.append(item);
     }
   }
@@ -119,7 +120,7 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
     const scrollTop = host.scrollTop;
     host.replaceChildren();
     host.setAttribute("role", "tree");
-    host.setAttribute("aria-label", "Project files");
+    localizedAttribute(host, "aria-label", () => t("Project files"));
 
     const directories = new Set(current.directories);
     for (const file of current.files) for (let directory = parent(file.path); directory; directory = parent(directory)) directories.add(directory);
@@ -146,7 +147,7 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
         row.addEventListener("dragend", () => { dragged = ""; clearTimeout(hoverTimer); hoverTimer = undefined; host.querySelectorAll(".drop-target").forEach(element => element.classList.remove("drop-target")); });
 
         const button = document.createElement("button");
-        button.type = "button"; button.className = "tree-row file-row"; button.dataset.treePath = entry.path; button.title = entry.path;
+        button.type = "button"; button.className = "tree-row file-row"; button.dataset.treePath = entry.path; localizedAttribute(button, "title", () => entry.path);
         button.setAttribute("role", "treeitem"); button.setAttribute("aria-level", String(depth + 1));
         button.setAttribute("aria-selected", String(entry.folder ? selectedFolder === entry.path : current.active === entry.path));
         let icon = entry.text ? "file-text" : "file";
@@ -156,7 +157,7 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
         else if (/\.(sty|cls|py|js|ts|css)$/i.test(entry.path)) icon = "file-code-2";
         if (entry.folder) { icon = expanded ? "folder-open" : "folder"; button.setAttribute("aria-expanded", String(expanded)); addDropTarget(row, entry.path); }
         button.innerHTML = `<span class="tree-chevron ${expanded && entry.folder ? "expanded" : ""}">${entry.folder ? '<i data-lucide="chevron-right"></i>' : ""}</span><i data-lucide="${icon}" class="tree-file-icon icon-${icon}"></i><span class="tree-name"></span>`;
-        button.querySelector(".tree-name")!.textContent = basename(entry.path);
+        localizedText(button.querySelector(".tree-name")!, () => basename(entry.path));
         button.addEventListener("click", () => {
           if (entry.folder) { selectedFolder = entry.path; expanded ? closed.add(entry.path) : closed.delete(entry.path); render(); }
           else { selectedFolder = parent(entry.path); callbacks.open(entry.path); }
@@ -175,6 +176,8 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
         const menu = document.createElement("details");
         menu.className = "file-actions tree-menu";
         menu.innerHTML = '<summary aria-label="Actions" title="Actions"><i data-lucide="more-horizontal"></i></summary><div class="tree-menu-panel"></div>';
+        localizedAttribute(menu.querySelector("summary")!, "aria-label", () => t("Actions"));
+        localizedAttribute(menu.querySelector("summary")!, "title", () => t("Actions"));
         const panel = menu.querySelector<HTMLElement>("div")!;
         populateMenu(panel, entryActions(entry), () => { menu.open = false; });
         let contextPoint: { x: number; y: number } | undefined;
@@ -197,7 +200,7 @@ export function createFileTree(host: HTMLElement, callbacks: TreeCallbacks) {
       }
     }
     branch("", 0);
-    if (!current.files.length && !directories.size) { const empty = document.createElement("p"); empty.className = "tree-empty"; empty.textContent = "No files"; host.append(empty); }
+    if (!current.files.length && !directories.size) { const empty = document.createElement("p"); empty.className = "tree-empty"; localizedText(empty, () => t("No files")); host.append(empty); }
     contextPanel = document.createElement("div"); contextPanel.className = "tree-menu-panel tree-context-menu"; contextPanel.hidden = true; host.append(contextPanel);
     createIcons({ root: host, icons: { Braces, ChevronRight, File, FileCheck2, FileCode2, FileText, Folder, FolderOpen, Image, MoreHorizontal } });
     host.querySelectorAll("svg[data-lucide]").forEach(icon => icon.removeAttribute("data-lucide"));

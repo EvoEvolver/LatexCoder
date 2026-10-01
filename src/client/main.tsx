@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AppShell } from "@/App";
 import { initializeTheme } from "@/theme";
+import { initializeLanguage } from "@/i18n";
 import "@/index.css";
 
 initializeTheme();
@@ -9,5 +10,7 @@ initializeTheme();
 const root = document.getElementById("root");
 if (!root) throw new Error("missing application root");
 
-flushSync(() => createRoot(root).render(<AppShell />));
-void import("@/controller");
+void initializeLanguage().then(() => {
+  flushSync(() => createRoot(root).render(<AppShell />));
+  void import("@/controller");
+});

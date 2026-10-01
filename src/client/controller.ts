@@ -1,3 +1,4 @@
+import { formatDate, localizedDocumentTitle, localizedAttribute, localizedText, t } from './i18n.ts';
 import { createVersionHistory } from "./version-history";
 import type { CompileMode, CompileSelection } from "../shared/compile-directives.ts";
 import { createFileTabs } from "./file-tabs.ts";
@@ -357,7 +358,7 @@ function buildEndpoint(endpoint: string, selection = previewSelection): string {
 function describeBuild(build: BuildInfo): void {
   const target = build.target;
   const main = target?.main || build.main || state.main;
-  compileModeSelect.title = `${target?.mode === "chapter" ? "Chapter root" : "Top-level root"}: ${main}${target?.template ? `\nTemplate: ${target.template}` : ""}`;
+  localizedAttribute(compileModeSelect, "title", () => `${target?.mode === "chapter" ? t("Chapter root") : t("Top-level root")}: ${main}${target?.template ? `\n${t("Template: {{template}}", { template: target.template })}` : ""}`);
   elements.pdf_download.download = `${main.split("/").at(-1)?.replace(/\.tex$/, "") || "paper"}.pdf`;
 }
 
@@ -365,7 +366,7 @@ async function selectBuild(selection: CompileSelection): Promise<number> {
   const epoch = ++buildEpoch;
   previewSelection = selection;
   state.compileDiagnostics = [];
-  elements.build_output.textContent = "No compilation yet for this target.";
+  localizedText(elements.build_output, () => t("No compilation yet for this target."));
   renderBuildErrors("");
   await pdfController.reset();
   return epoch;
@@ -381,13 +382,13 @@ compileModeSelect.addEventListener("change", async () => {
     const { build } = await request<{ build: BuildInfo }>(buildEndpoint("v1/build", selection));
     if (project !== state.projectId || epoch !== buildEpoch) return;
     describeBuild(build);
-    elements.build_output.textContent = build.log || "No compilation yet for this target.";
+    localizedText(elements.build_output, () => build.log || t("No compilation yet for this target."));
     renderBuildErrors(build.log, build.errors, build.status === "error");
     if (build.pdf) await showPdf(true);
   } catch (error) {
     if (project !== state.projectId || epoch !== buildEpoch) return;
-    elements.build_output.textContent = error.message;
-    elements.pdf_status.textContent = error.message;
+    localizedText(elements.build_output, () => error.message);
+    localizedText(elements.pdf_status, () => error.message);
     showToast(error.message);
   }
 });
@@ -400,14 +401,14 @@ let markdownRenderQueued = false;
 function updateSyncStatus() {
   if (!state.provider) return;
   if (state.projectCanEdit && editorSession && !editorSession.canEdit) {
-    elements.sync_state.textContent = "Loading document";
+    localizedText(elements.sync_state, () => t("Loading document"));
     return;
   }
   const connected = state.provider.wsconnected;
-  elements.sync_state.textContent = !connected ? state.unsaved ? "Offline - unsynced edits" : "Reconnecting"
-    : !state.provider.synced ? "Synchronizing"
-    : !state.projectCanEdit ? "Viewing live"
-    : state.unsaved ? "Saving..." : "Saved live";
+  localizedText(elements.sync_state, () => !connected ? state.unsaved ? t("Offline - unsynced edits") : t("Reconnecting")
+    : !state.provider.synced ? t("Synchronizing")
+    : !state.projectCanEdit ? t("Viewing live")
+    : state.unsaved ? t("Saving...") : t("Saved live"));
 }
 
 function scheduleAutoCompile() {
@@ -428,7 +429,7 @@ function colorFor(name: string): string {
 }
 
 function displayName(): string {
-  return state.user?.displayName || elements.display_name.value.trim() || "Guest";
+  return state.user?.displayName || elements.display_name.value.trim() || t("Guest");
 }
 
 function syncAccountUi(): void {
@@ -438,7 +439,7 @@ function syncAccountUi(): void {
   document.documentElement.dataset.authState = registered ? "registered" : "guest";
   document.documentElement.dataset.adminState = state.user?.isAdmin ? "admin" : "member";
   document.documentElement.dataset.userType = state.user?.isAdmin || state.user?.userType === "internal" ? "internal" : "external";
-  elements.current_user.textContent = state.user?.displayName || state.user?.username || "";
+  localizedText(elements.current_user, () => state.user?.displayName || state.user?.username || "");
   elements.admin_button.hidden = !state.user?.isAdmin;
   document.getElementById("account-ssh-keys")!.hidden = !registered || !state.sshGitEnabled;
   const editorAdmin = document.getElementById("editor-admin-button");
@@ -492,7 +493,7 @@ function encodeRoom(relativePath: string): string {
 function showToast(message: string): void {
   if (testMode) return;
   clearTimeout(state.toastTimer);
-  elements.toast.textContent = message;
+  localizedText(elements.toast, () => message);
   elements.toast.hidden = false;
   state.toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3200);
 }
@@ -503,7 +504,7 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
     const field = document.createElement("label");
     field.id = "project-zip-field";
     field.className = "grid gap-1.5 text-sm font-medium";
-    field.textContent = "Import ZIP (optional)";
+    localizedText(field, () => t("Import ZIP (optional)"));
     const input = document.createElement("input");
     input.id = "project-zip-input";
     input.type = "file";
@@ -513,8 +514,8 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
     elements.action_form.querySelector("footer").before(field);
   }
   const hasInput = Boolean(label);
-  elements.action_title.textContent = title;
-  elements.action_label.textContent = label;
+  localizedText(elements.action_title, () => title);
+  localizedText(elements.action_label, () => label);
   elements.action_label.hidden = !hasInput;
   elements.action_input.hidden = !hasInput;
   elements.action_input.disabled = !hasInput;
@@ -522,9 +523,9 @@ function openActionDialog({ title, label = "", value = "", maxLength = 512, mess
   elements.action_input.type = inputType;
   elements.action_input.value = value;
   elements.action_input.maxLength = maxLength;
-  elements.action_message.textContent = message;
+  localizedText(elements.action_message, () => message);
   elements.action_message.hidden = !message;
-  elements.action_submit.textContent = submitLabel;
+  localizedText(elements.action_submit, () => submitLabel);
   elements.action_submit.classList.toggle("danger-button", danger);
   elements.action_dialog.showModal();
 
@@ -581,9 +582,9 @@ function renderSelectionActions() {
   state.selectionSuggestionIds = ids;
   elements.selection_comment.hidden = !canComment;
   elements.selection_accept.hidden = ids.length === 0;
-  elements.selection_accept.querySelector("span").textContent = ids.length === 1
-    ? "Accept suggestion"
-    : `Accept ${ids.length} suggestions`;
+  localizedText(elements.selection_accept.querySelector("span"), () => ids.length === 1
+    ? t("Accept suggestion")
+    : t("Accept {{v0}} suggestions", { v0: ids.length }));
   menu.hidden = false;
   const bounds = menu.getBoundingClientRect();
   const left = Math.min(window.innerWidth - bounds.width - 8, Math.max(8, caret.left));
@@ -626,6 +627,13 @@ function renderFiles(): void {
   fileTabs.update(state.files, state.activeFile, state.projectId, { transient: activeFileIsTransient });
   fileTree.render({ files: state.files, directories: state.folders || [], active: state.activeFile, main: state.main || "", editable: state.projectCanEdit }, state.projectId);
 }
+
+window.addEventListener("latexcoder-language-change", () => {
+  // Refresh cached navigation labels without recreating editors or forms.
+  if (!elements.editor_page.hidden) renderFiles();
+  if (!elements.projects_page.hidden) renderProjects();
+  if (!elements.admin_page.hidden) { renderCurrentAdminTable?.(); createIcons({ icons: ICONS }); }
+});
 
 function syncProjectPermissionUi(): void {
   const editable = state.projectCanEdit;
@@ -672,7 +680,7 @@ async function refreshStructure(): Promise<void> {
     const pairs = await Promise.all(texFiles.map(async file => {
       if (file.path === state.activeFile && editorSession?.synced) return [file.path, editorSession.text.toString()] as const;
       const response = await fetch(projectApiUrl(`v1/files?path=${encodeURIComponent(file.path)}`));
-      if (!response.ok) throw new Error(`Could not read ${file.path}`);
+      if (!response.ok) throw new Error(t("Could not read {{v0}}", { v0: file.path }));
       return [file.path, await response.text()] as const;
     }));
     if (version !== structureVersion || project !== state.projectId) return;
@@ -682,7 +690,7 @@ async function refreshStructure(): Promise<void> {
   } catch (error) {
     if (version === structureVersion && project === state.projectId) {
       elements.structure_list.innerHTML = '<p class="px-2 py-3 text-xs text-destructive"></p>';
-      elements.structure_list.querySelector("p")!.textContent = error instanceof Error ? error.message : String(error);
+      localizedText(elements.structure_list.querySelector("p")!, () => error instanceof Error ? error.message : String(error));
     }
   } finally {
     if (version === structureVersion && project === state.projectId) elements.refresh_structure.disabled = false;
@@ -693,7 +701,7 @@ function structureSourceButton(entry: StructureEntry, level: number): HTMLButton
   const button = document.createElement("button");
   button.type = "button";
   button.className = "structure-item block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
-  button.title = `${entry.path}:${entry.line} - ${entry.title}`;
+  localizedAttribute(button, "title", () => `${entry.path}:${entry.line} - ${entry.title}`);
   button.dataset.path = entry.path;
   button.dataset.line = String(entry.line);
   button.dataset.structureType = entry.type;
@@ -710,12 +718,12 @@ function structureSummaryButton(heading: StructureHeading, summary: StructureSum
   button.style.paddingLeft = `${8 + Math.min(4, level) * 6}px`;
   button.dataset.structureType = "point";
   button.dataset.structureKind = "section";
-  button.title = `${heading.path}:${summary.line} - ${summary.title}`;
+  localizedAttribute(button, "title", () => `${heading.path}:${summary.line} - ${summary.title}`);
   const bullet = document.createElement("span");
   bullet.className = "mt-[7px] size-1.5 shrink-0 rounded-full bg-primary";
   const text = document.createElement("span");
   text.className = "line-clamp-2";
-  text.textContent = summary.title;
+  localizedText(text, () => summary.title);
   button.append(bullet, text);
   button.addEventListener("click", () => { void revealTreePosition({ path: heading.path, line: summary.line }).catch(error => showToast(error.message)); });
   return button;
@@ -742,7 +750,7 @@ function treeWriterPanel(nodeId: string): TreeWriterPanel {
   const done = document.createElement("button");
   done.type = "button";
   done.className = "tree-writer-done";
-  done.textContent = "Done";
+  localizedText(done, () => t("Done"));
   done.addEventListener("click", () => {
     closeTreeWriterEditor();
     void refreshStructure();
@@ -756,12 +764,12 @@ function treeWriterPanel(nodeId: string): TreeWriterPanel {
   return { host, panel, status, title };
 }
 
-function treeWriterIconButton(icon: "code-2", title: string): HTMLButtonElement {
+function treeWriterIconButton(icon: "code-2", title: () => string): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "tree-writer-icon-button";
-  button.title = title;
-  button.setAttribute("aria-label", title);
+  localizedAttribute(button, "title", title);
+  localizedAttribute(button, "aria-label", title);
   button.innerHTML = `<i data-lucide="${icon}"></i>`;
   return button;
 }
@@ -771,8 +779,8 @@ function treeWriterAddMenu(insertions: StructureInsertion[], open: (insertion: S
   menu.className = "tree-writer-add-menu";
   const trigger = document.createElement("summary");
   trigger.className = "tree-writer-icon-button";
-  trigger.title = "Add node";
-  trigger.setAttribute("aria-label", "Add node");
+  localizedAttribute(trigger, "title", () => t("Add node"));
+  localizedAttribute(trigger, "aria-label", () => t("Add node"));
   trigger.innerHTML = '<i data-lucide="plus"></i>';
   trigger.addEventListener("click", () => {
     elements.structure_document.querySelectorAll<HTMLDetailsElement>(".tree-writer-add-menu[open]")
@@ -783,7 +791,7 @@ function treeWriterAddMenu(insertions: StructureInsertion[], open: (insertion: S
   for (const insertion of insertions) {
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = insertion.label;
+    localizedText(item, () => t(insertion.label));
     item.addEventListener("click", () => {
       menu.removeAttribute("open");
       open(insertion);
@@ -809,7 +817,7 @@ function treeWriterTldrList(titles: readonly string[]): HTMLUListElement {
   list.className = "tree-writer-tldr-list";
   for (const title of titles) {
     const item = document.createElement("li");
-    item.textContent = title;
+    localizedText(item, () => title);
     list.append(item);
   }
   return list;
@@ -837,12 +845,12 @@ function treeWriterPointGroup(points: readonly StructurePoint[], depth: number):
 
   const editorPanel = treeWriterPanel(`tldr:${first.id}`);
   if (state.projectCanEdit) {
-    const sourceButton = treeWriterIconButton("code-2", "Edit TL;DR source");
+    const sourceButton = treeWriterIconButton("code-2", () => t("Edit TL;DR source"));
     sourceButton.dataset.treeEditorTrigger = `tldr:${first.id}`;
     sourceButton.addEventListener("click", () => {
       void openTreeWriterRange({
         id: `tldr:${first.id}:source`,
-        label: "Editing TL;DR source",
+        label: t("Editing TL;DR source"),
         range: first.macroRange,
         selectMacroArgument: points.length === 1,
       }, sourceButton, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
@@ -861,7 +869,7 @@ function treeWriterPointGroup(points: readonly StructurePoint[], depth: number):
     }
     void openTreeWriterRange({
       id: `tldr:${first.id}:body`,
-      label: "Editing source text",
+      label: t("Editing source text"),
       range: first.sourceRange,
     }, button, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
   });
@@ -907,22 +915,22 @@ function treeWriterNode(entry: StructureHeading, depth: number): HTMLElement {
   button.dataset.treeLeaf = String(remainingChildren.length === 0);
   const chevron = document.createElement("span");
   chevron.className = "tree-writer-chevron";
-  chevron.textContent = "›";
+  localizedText(chevron, () => "›");
   chevron.hidden = remainingChildren.length === 0;
   const label = document.createElement("span");
   label.className = "tree-writer-label";
-  label.textContent = entry.title;
+  localizedText(label, () => entry.title);
   button.append(chevron, label);
   row.append(button);
 
   const editorPanel = treeWriterPanel(entry.id);
   if (state.projectCanEdit) {
-    const sourceButton = treeWriterIconButton("code-2", `Edit ${entry.kind} source`);
+    const sourceButton = treeWriterIconButton("code-2", () => t("Edit {{v0}} source", { v0: entry.kind }));
     sourceButton.dataset.treeEditorTrigger = entry.id;
     sourceButton.addEventListener("click", () => {
       void openTreeWriterRange({
         id: `${entry.id}:command`,
-        label: `Editing \\${entry.kind} source`,
+        label: t("Editing \\{{v0}} source", { v0: entry.kind }),
         range: entry.commandRange,
         selectMacroArgument: true,
       }, sourceButton, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
@@ -942,12 +950,12 @@ function treeWriterNode(entry: StructureHeading, depth: number): HTMLElement {
     summaryRow.className = "tree-writer-summary-row tree-writer-tldr-row";
     summaryRow.append(treeWriterTldrList([entry.summary.title, ...summaryPoints.map(point => point.title)]));
     if (state.projectCanEdit) {
-      const summaryButton = treeWriterIconButton("code-2", "Edit TL;DR source");
+      const summaryButton = treeWriterIconButton("code-2", () => t("Edit TL;DR source"));
       summaryButton.dataset.treeEditorTrigger = `${entry.id}:summary`;
       summaryButton.addEventListener("click", () => {
         void openTreeWriterRange({
           id: `${entry.id}:summary`,
-          label: "Editing TL;DR source",
+          label: t("Editing TL;DR source"),
           range: entry.summary!.macroRange,
           selectMacroArgument: summaryPoints.length === 0,
         }, summaryButton, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
@@ -981,7 +989,7 @@ function treeWriterNode(entry: StructureHeading, depth: number): HTMLElement {
     }
     void openTreeWriterRange({
       id: `${entry.id}:body`,
-      label: "Editing source text",
+      label: t("Editing source text"),
       range: entry.sourceRange,
     }, button, editorPanel).catch(error => showTreeWriterError(error, editorPanel));
   });
@@ -991,7 +999,7 @@ function treeWriterNode(entry: StructureHeading, depth: number): HTMLElement {
 function showTreeWriterError(error: unknown, panel: TreeWriterPanel): void {
   panel.panel.hidden = false;
   panel.status.hidden = false;
-  panel.status.textContent = error instanceof Error ? error.message : String(error);
+  localizedText(panel.status, () => error instanceof Error ? error.message : String(error));
   showToast(panel.status.textContent);
 }
 
@@ -1005,23 +1013,23 @@ async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButton
   treeWriterNodeId = target.id;
   trigger.setAttribute(trigger.dataset.treeLeaf === "true" ? "aria-expanded" : "aria-pressed", "true");
   panel.panel.hidden = false;
-  panel.title.textContent = target.label;
+  localizedText(panel.title, () => target.label);
   panel.status.hidden = false;
-  panel.status.textContent = "Opening source...";
+  localizedText(panel.status, () => t("Opening source..."));
   const session = editorSession;
-  if (!session) throw new Error("Could not open the source document");
+  if (!session) throw new Error(t("Could not open the source document"));
   const deadline = Date.now() + 5000;
   while (!session.synced && editorSession === session && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   if (version !== treeWriterOpenVersion || editorSession !== session || !document.contains(panel.host)) return;
   const snapshot = structureSources.get(target.range.path);
   if (!target.skipSnapshotCheck && snapshot !== undefined && snapshot !== session.text.toString()) {
-    panel.status.textContent = "The source changed. Refreshing the tree...";
+    localizedText(panel.status, () => t("The source changed. Refreshing the tree..."));
     await refreshStructure();
-    showToast("The Tree was refreshed because the source changed. Try the action again.");
+    showToast(t("The Tree was refreshed because the source changed. Try the action again."));
     return;
   }
   if (target.range.to > session.text.length) {
-    panel.status.textContent = "This source range no longer exists.";
+    localizedText(panel.status, () => t("This source range no longer exists."));
     return;
   }
   panel.status.hidden = true;
@@ -1045,7 +1053,7 @@ async function openTreeWriterRange(target: TreeWriterTarget, trigger: HTMLButton
     ],
     onInvalidated: () => {
       panel.status.hidden = false;
-      panel.status.textContent = "This source range was removed. Refresh the Tree to continue.";
+      localizedText(panel.status, () => t("This source range was removed. Refresh the Tree to continue."));
     },
   });
   treeWriterEditor = editor;
@@ -1061,15 +1069,15 @@ async function insertTreeWriterNode(insertion: StructureInsertion, panel: TreeWr
   }
   showExpandedStructure();
   const session = editorSession;
-  if (!session) throw new Error("Could not open the source document");
+  if (!session) throw new Error(t("Could not open the source document"));
   const deadline = Date.now() + 5000;
   while (!session.synced && editorSession === session && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   const snapshot = structureSources.get(insertion.path);
   if (snapshot !== undefined && snapshot !== session.text.toString()) {
     await refreshStructure();
-    throw new Error("The Tree was refreshed because the source changed. Try the action again.");
+    throw new Error(t("The Tree was refreshed because the source changed. Try the action again."));
   }
-  if (insertion.at > session.text.length) throw new Error("The insertion point no longer exists");
+  if (insertion.at > session.text.length) throw new Error(t("The insertion point no longer exists"));
   session.doc.transact(() => session.text.insert(insertion.at, insertion.template));
   const braces = insertion.template.indexOf("{}");
   const cursor = braces < 0 ? insertion.template.length : braces + 1;
@@ -1077,7 +1085,7 @@ async function insertTreeWriterNode(insertion: StructureInsertion, panel: TreeWr
   trigger.dataset.treeEditorTrigger = "inserted";
   await openTreeWriterRange({
     id: `inserted:${insertion.path}:${insertion.at}`,
-    label: `Editing ${insertion.template.trim().split("{")[0]} source`,
+    label: t("Editing {{v0}} source", { v0: insertion.template.trim().split("{")[0] }),
     range: { path: insertion.path, from: insertion.at, to: insertion.at + insertion.template.length },
     selection: { anchor: cursor },
     skipSnapshotCheck: true,
@@ -1093,12 +1101,12 @@ function renderStructure(): void {
   const heading = document.createElement("div");
   const title = document.createElement("h1");
   title.className = "text-xl font-semibold";
-  title.textContent = documentTitle(structureSources.get(state.main) || "")
+  localizedText(title, () => documentTitle(structureSources.get(state.main) || "")
     || state.projects.find(project => project.id === state.projectId)?.name
-    || "Untitled paper";
+    || t("Untitled paper"));
   const source = document.createElement("p");
   source.className = "mt-1 text-xs text-muted-foreground";
-  source.textContent = state.main;
+  localizedText(source, () => state.main);
   heading.append(title, source);
   overview.append(heading);
   const rootPanel = treeWriterPanel("root-insertion");
@@ -1108,10 +1116,11 @@ function renderStructure(): void {
     addSection.type = "button";
     addSection.className = "tree-writer-add-root";
     addSection.innerHTML = '<i data-lucide="plus"></i><span>Add section</span>';
+    localizedText(addSection.querySelector("span")!, () => t("Add section"));
     addSection.addEventListener("click", () => {
       const mainSource = structureSources.get(state.main);
       if (mainSource === undefined) {
-        showToast("Refresh the Tree before adding a section.");
+        showToast(t("Refresh the Tree before adding a section."));
         return;
       }
       void insertTreeWriterNode(rootStructureInsertion(state.main, mainSource), rootPanel)
@@ -1123,7 +1132,7 @@ function renderStructure(): void {
   if (!structureEntries.length) {
     const empty = document.createElement("p");
     empty.className = "px-2 py-3 text-xs text-muted-foreground";
-    empty.textContent = "No sections or TL;DR points found";
+    localizedText(empty, () => t("No sections or TL;DR points found"));
     elements.structure_list.append(empty);
     const expandedEmpty = empty.cloneNode(true) as HTMLElement;
     expandedEmpty.className = "py-16 text-center text-sm text-muted-foreground";
@@ -1138,14 +1147,14 @@ function renderStructure(): void {
     const button = structureSourceButton(entry, entry.level - baseLevel);
     if (entry.type === "heading") {
       button.classList.add("truncate", "font-medium");
-      button.textContent = entry.title;
+      localizedText(button, () => entry.title);
     } else {
       button.classList.add("flex", "items-start", "gap-2", "whitespace-normal", "leading-4", "text-muted-foreground");
       const bullet = document.createElement("span");
       bullet.className = "mt-[7px] size-1.5 shrink-0 rounded-full bg-muted-foreground/70";
       const text = document.createElement("span");
       text.className = "line-clamp-2";
-      text.textContent = entry.title;
+      localizedText(text, () => entry.title);
       button.append(bullet, text);
     }
     elements.structure_list.append(button);
@@ -1224,8 +1233,8 @@ class RevisionDeletionWidget extends WidgetType {
   toDOM(): HTMLElement {
     const deletion = document.createElement("span");
     deletion.className = "cm-review-deletion";
-    deletion.textContent = this.text;
-    deletion.title = `Original text changed by ${this.author || "Guest"}`;
+    localizedText(deletion, () => this.text);
+    localizedAttribute(deletion, "title", () => t("Original text changed by {{v0}}", { v0: this.author || t("Guest") }));
     return deletion;
   }
 
@@ -1264,7 +1273,7 @@ const reviewDecorations = StateField.define({
 function tooltipButton(label: string, action: () => void): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = label;
+  localizedText(button, () => t(label));
   button.addEventListener("click", event => {
     event.preventDefault();
     action();
@@ -1285,25 +1294,25 @@ const reviewTooltip = hoverTooltip((view, position) => {
       const dom = document.createElement("div");
       dom.className = `cm-review-tooltip ${item.kind}`;
       const meta = document.createElement("strong");
-      meta.textContent = item.kind === "comment"
-        ? `${item.author || "Guest"} commented · ${item.messages.length} message${item.messages.length === 1 ? "" : "s"}`
-        : `${item.author || "Guest"} suggested an edit`;
+      localizedText(meta, () => item.kind === "comment"
+        ? t("comments", { name: item.author || t("Guest"), count: item.messages.length })
+        : t("{{name}} suggested an edit", { name: item.author || t("Guest") }));
       const note = document.createElement("p");
       if (item.kind === "comment") {
         const latest = item.messages.at(-1);
-        note.textContent = latest.root
+        localizedText(note, () => latest.root
           ? latest.body
-          : `${latest.author || "Guest"}: ${latest.body}`;
+          : `${latest.author || t("Guest")}: ${latest.body}`);
       } else if (item.kind === "revision") {
-        note.textContent = `Original: ${item.note}`;
+        localizedText(note, () => t("Original: {{v0}}", { v0: item.note }));
       } else {
         const related = reviews.filter(candidate => candidate.id === item.id && candidate.kind !== "comment");
         const addition = related.find(candidate => candidate.kind === "addition");
         const deletion = related.find(candidate => candidate.kind === "deletion");
-        note.textContent = [
-          addition?.body ? `Added: ${addition.body}` : "",
-          deletion?.body ? `Deleted: ${deletion.body}` : "",
-        ].filter(Boolean).join("\n");
+        localizedText(note, () => [
+          addition?.body ? t("Added: {{v0}}", { v0: addition.body }) : "",
+          deletion?.body ? t("Deleted: {{v0}}", { v0: deletion.body }) : "",
+        ].filter(Boolean).join("\n"));
       }
       const actions = document.createElement("div");
       actions.className = "cm-review-tooltip-actions";
@@ -1333,7 +1342,7 @@ function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Tra
     changes.push({ from, to, inserted: inserted.toString() });
   });
   if (changes.length !== 1) {
-    queueMicrotask(() => showToast("Suggestion mode supports one selection at a time."));
+    queueMicrotask(() => showToast(t("Suggestion mode supports one selection at a time.")));
     return [];
   }
 
@@ -1347,11 +1356,11 @@ function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Tra
     ? 0
     : documentClass.index + documentClass[0].length;
   if (change.from < reviewableFrom) {
-    queueMicrotask(() => showToast("Turn off Suggesting to edit the document class."));
+    queueMicrotask(() => showToast(t("Turn off Suggesting to edit the document class.")));
     return [];
   }
   if (/\\(?:cmtbg|cmted|cmtrpl|revbg|reved|addbg|added|delbg|deled)\b/.test(change.inserted)) {
-    queueMicrotask(() => showToast("Review storage macros are managed by LaTeX Coder."));
+    queueMicrotask(() => showToast(t("Review storage macros are managed by LaTeX Coder.")));
     return [];
   }
 
@@ -1424,7 +1433,7 @@ function trackedSuggestion(transaction: Transaction, reviews: ReviewItem[]): Tra
   }
 
   if (reviews.some(item => change.from < item.to && change.to > item.from)) {
-    queueMicrotask(() => showToast("Resolve the existing review before editing this text."));
+    queueMicrotask(() => showToast(t("Resolve the existing review before editing this text.")));
     return [];
   }
   const id = randomId();
@@ -1478,7 +1487,7 @@ const protectReviewStorage = EditorState.transactionFilter.of(transaction => {
     }
   });
   if (!blocked) return transaction;
-  queueMicrotask(() => showToast("Use Review actions to change comments and suggestions."));
+  queueMicrotask(() => showToast(t("Use Review actions to change comments and suggestions.")));
   return [];
 });
 
@@ -1488,7 +1497,7 @@ async function followReference(link: ReferenceLink) {
   try {
     if (link.kind === "url") {
       const url = new URL(link.key);
-      if (!["http:", "https:", "mailto:"].includes(url.protocol)) throw new Error("Unsupported URL protocol");
+      if (!["http:", "https:", "mailto:"].includes(url.protocol)) throw new Error(t("Unsupported URL protocol"));
       window.open(url.href, "_blank", "noopener,noreferrer");
       return;
     }
@@ -1514,7 +1523,7 @@ async function followReference(link: ReferenceLink) {
       }
     }
     if (state.projectId !== projectId || state.activeFile !== originFile) return;
-    if (!destination) { showToast(`Definition not found: ${link.key}`); return; }
+    if (!destination) { showToast(t("Definition not found: {{v0}}", { v0: link.key })); return; }
     await openFile(destination.path);
     if (link.kind === "asset") return;
     const provider = state.provider;
@@ -1526,7 +1535,7 @@ async function followReference(link: ReferenceLink) {
     if (state.view !== view || !provider.synced) return;
     const source = view.state.doc.toString();
     const current = link.kind === "file" ? { from: 0, to: 0 } : referenceDefinition(source, link.key, link.kind);
-    if (!current) { showToast(`Definition not found: ${link.key}`); return; }
+    if (!current) { showToast(t("Definition not found: {{v0}}", { v0: link.key })); return; }
     setOutputViewOpen(false);
     view.dispatch({ selection: { anchor: current.from, head: current.to }, effects: EditorView.scrollIntoView(current.from, { y: "center" }) });
     view.focus();
@@ -1594,7 +1603,7 @@ const editorDiagnosticTooltip = hoverTooltip((view, position) => {
       for (const diagnostic of diagnostics) {
         const row = document.createElement("div");
         row.className = diagnostic.severity;
-        row.textContent = diagnostic.message;
+        localizedText(row, () => diagnostic.message);
         dom.append(row);
       }
       return { dom };
@@ -1609,8 +1618,8 @@ let blameModeEnabled = false;
 function blameDetails(blame: BlameRun): string {
   const details = [blame.authorName];
   if (blame.gitAuthor) details.push(`Git author: ${blame.gitAuthor.name} <${blame.gitAuthor.email}>`);
-  if (blame.createdAt) details.push(new Date(blame.createdAt).toLocaleString());
-  details.push(blame.commit ? `Commit ${blame.commit.slice(0, 7)}` : "Uncommitted");
+  if (blame.createdAt) details.push(formatDate(blame.createdAt));
+  details.push(blame.commit ? t("Commit {{v0}}", { v0: blame.commit.slice(0, 7) }) : t("Uncommitted"));
   return details.join(" · ");
 }
 
@@ -1641,8 +1650,8 @@ class BlameAuthorWidget extends WidgetType {
   toDOM(): HTMLElement {
     const label = document.createElement("span");
     label.className = "cm-blame-author";
-    label.textContent = this.blame.authorName;
-    label.title = blameDetails(this.blame);
+    localizedText(label, () => this.blame.authorName);
+    localizedAttribute(label, "title", () => blameDetails(this.blame));
     label.style.setProperty("--blame-color", colorFor(this.blame.authorId || this.blame.authorName));
     return label;
   }
@@ -1819,7 +1828,7 @@ function renderMarkdownPreview(): void {
     elements.markdown_preview_content.replaceChildren();
     const message = document.createElement("p");
     message.className = "text-sm text-destructive";
-    message.textContent = error instanceof Error ? `Markdown preview failed: ${error.message}` : "Markdown preview failed";
+    localizedText(message, () => error instanceof Error ? t("Markdown preview failed: {{v0}}", { v0: error.message }) : t("Markdown preview failed"));
     elements.markdown_preview_content.append(message);
   }
 }
@@ -2088,7 +2097,7 @@ function syncBlameMenuItem(): void {
   item.setAttribute("aria-pressed", String(blameModeEnabled));
   item.classList.toggle("bg-accent", blameModeEnabled);
   const stateLabel = item.querySelector<HTMLElement>("#blame-menu-state");
-  if (stateLabel) stateLabel.textContent = blameModeEnabled ? "On" : "Off";
+  if (stateLabel) localizedText(stateLabel, () => blameModeEnabled ? t("On") : t("Off"));
 }
 
 function resetFilePreview() {
@@ -2138,7 +2147,7 @@ async function renderFilePdf() {
     canvas.height = Math.floor(viewport.height * pixelRatio);
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
-    canvas.setAttribute("aria-label", `Preview page ${pageNumber}`);
+    localizedAttribute(canvas, "aria-label", () => t("Preview page {{v0}}", { v0: pageNumber }));
     fragment.append(canvas);
     await page.render({
       canvas,
@@ -2150,13 +2159,13 @@ async function renderFilePdf() {
   if (version !== state.filePreviewVersion) return;
   elements.file_pdf_document.replaceChildren(fragment);
   elements.file_pdf_document.hidden = false;
-  elements.binary_status.textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`;
+  localizedText(elements.binary_status, () => t("pages", { count: pdf.numPages }));
 }
 
-function showFilePreviewFallback(relativePath: string, message = "Preview unavailable"): void {
-  elements.binary_kind.textContent = "Binary file";
-  elements.binary_status.textContent = message;
-  elements.binary_name.textContent = relativePath;
+function showFilePreviewFallback(relativePath: string, message = t("Preview unavailable")): void {
+  localizedText(elements.binary_kind, () => t("Binary file"));
+  localizedText(elements.binary_status, () => message);
+  localizedText(elements.binary_name, () => relativePath);
   elements.binary_fallback.hidden = false;
   elements.file_preview_zoom_in.disabled = true;
   elements.file_preview_zoom_out.disabled = true;
@@ -2175,28 +2184,28 @@ async function showFilePreview(file: ProjectFile): Promise<void> {
   const version = state.filePreviewVersion;
 
   if (IMAGE_PREVIEW_PATTERN.test(relativePath)) {
-    elements.binary_kind.textContent = "Image preview";
-    elements.binary_status.textContent = "Loading";
+    localizedText(elements.binary_kind, () => t("Image preview"));
+    localizedText(elements.binary_status, () => t("Loading"));
     elements.image_preview.alt = relativePath;
     elements.image_preview.onload = () => {
       if (version !== state.filePreviewVersion) return;
       elements.image_preview.hidden = false;
-      elements.binary_status.textContent = `${elements.image_preview.naturalWidth} × ${elements.image_preview.naturalHeight}`;
+      localizedText(elements.binary_status, () => `${elements.image_preview.naturalWidth} × ${elements.image_preview.naturalHeight}`);
       sizeImagePreview();
     };
     elements.image_preview.onerror = () => {
-      if (version === state.filePreviewVersion) showFilePreviewFallback(relativePath, "Image preview failed");
+      if (version === state.filePreviewVersion) showFilePreviewFallback(relativePath, t("Image preview failed"));
     };
     elements.image_preview.src = url.toString();
     return;
   }
 
   if (/\.pdf$/i.test(relativePath)) {
-    elements.binary_kind.textContent = "PDF preview";
-    elements.binary_status.textContent = "Loading";
+    localizedText(elements.binary_kind, () => t("PDF preview"));
+    localizedText(elements.binary_status, () => t("Loading"));
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
+      if (!response.ok) throw new Error(t("PDF request failed ({{v0}})", { v0: response.status }));
       const loadingTask = getDocument({ data: await response.arrayBuffer() });
       state.filePreviewLoadingTask = loadingTask;
       const pdf = await loadingTask.promise;
@@ -2209,7 +2218,7 @@ async function showFilePreview(file: ProjectFile): Promise<void> {
     } catch (error) {
       if (state.activeFile !== relativePath) return;
       console.error("project PDF preview failed", error);
-      showFilePreviewFallback(relativePath, "PDF preview failed");
+      showFilePreviewFallback(relativePath, t("PDF preview failed"));
     }
     return;
   }
@@ -2240,20 +2249,20 @@ function jumpToCollaborator(clientId: number, name: string): void {
   const cursor = awarenessState?.cursor as { head?: Y.RelativePosition } | null | undefined;
   const ytext = state.doc?.getText("content");
   if (!state.view || !state.doc || !ytext || !cursor?.head) {
-    showToast(`${name} is not currently editing.`);
+    showToast(t("{{name}} is not currently editing.", { name }));
     return;
   }
   try {
     const position = Y.createAbsolutePositionFromRelativePosition(cursor.head, state.doc);
     if (!position || position.type !== ytext) {
-      showToast(`${name} is not currently editing.`);
+      showToast(t("{{name}} is not currently editing.", { name }));
       return;
     }
     const anchor = Math.max(0, Math.min(position.index, state.view.state.doc.length));
     state.view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: "center" }) });
     state.view.focus();
   } catch {
-    showToast(`${name} is not currently editing.`);
+    showToast(t("{{name}} is not currently editing.", { name }));
   }
 }
 
@@ -2270,11 +2279,11 @@ function updatePresence(): void {
     avatar.type = "button";
     avatar.className = "presence-avatar group relative -ml-1.5 grid size-7 place-items-center rounded-full border-2 border-background text-[9px] font-bold text-white shadow-sm outline-none transition-transform hover:z-20 hover:-translate-y-0.5 focus-visible:z-20 focus-visible:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1";
     avatar.style.backgroundColor = user.color;
-    avatar.setAttribute("aria-label", `Go to ${user.name}${user.username ? ` (@${user.username})` : ""}`);
+    localizedAttribute(avatar, "aria-label", () => t("Go to {{v0}}{{v1}}", { v0: user.name, v1: user.username ? ` (@${user.username})` : "" }));
     avatar.addEventListener("click", () => jumpToCollaborator(clientId, user.name));
 
     const initials = document.createElement("span");
-    initials.textContent = Array.from(user.name.trim()).slice(0, 2).join("").toUpperCase();
+    localizedText(initials, () => Array.from(user.name.trim()).slice(0, 2).join("").toUpperCase());
     const tooltip = document.createElement("span");
     tooltip.id = `presence-details-${clientId}`;
     tooltip.className = "presence-tooltip pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-max min-w-44 max-w-64 gap-0.5 rounded-md border bg-card px-3 py-2 text-left font-normal text-card-foreground shadow-xl group-hover:grid group-focus-visible:grid";
@@ -2282,13 +2291,13 @@ function updatePresence(): void {
     avatar.setAttribute("aria-describedby", tooltip.id);
     const fullName = document.createElement("strong");
     fullName.className = "break-words text-xs font-semibold";
-    fullName.textContent = user.name;
+    localizedText(fullName, () => user.name);
     const username = document.createElement("span");
     username.className = "break-all text-[10px] text-muted-foreground";
-    username.textContent = user.username ? `@${user.username}` : "Guest collaborator";
+    localizedText(username, () => user.username ? `@${user.username}` : t("Guest collaborator"));
     const status = document.createElement("span");
     status.className = `mt-1 text-[10px] ${hasCursor ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`;
-    status.textContent = hasCursor ? "Editing this file" : "No active cursor";
+    localizedText(status, () => hasCursor ? t("Editing this file") : t("No active cursor"));
     tooltip.append(fullName, username, status);
     avatar.append(initials, tooltip);
     elements.presence.append(avatar);
@@ -2320,20 +2329,20 @@ async function openFile(relativePath: string, options: { keepAuxiliary?: boolean
   resetFilePreview();
   state.activeFile = relativePath;
   fileTree.reveal(relativePath);
-  elements.active_file_label.textContent = relativePath;
+  localizedText(elements.active_file_label, () => relativePath);
   elements.binary_view.hidden = file.text;
   elements.editor.hidden = !file.text;
   elements.review_actions.hidden = !file.text;
   elements.suggest_edit.hidden = !state.projectCanEdit || !file.text;
   renderFiles();
   if (!file.text) {
-    elements.sync_state.textContent = "Preview";
+    localizedText(elements.sync_state, () => t("Preview"));
     renderReviews();
     await showFilePreview(file);
     return;
   }
 
-  elements.sync_state.textContent = "Connecting";
+  localizedText(elements.sync_state, () => t("Connecting"));
   let guestAuthorId = localStorage.getItem("latexcoder-guest-author-id");
   if (!guestAuthorId) {
     guestAuthorId = `guest-${randomUUID()}`;
@@ -2412,7 +2421,7 @@ function appendCommentReply(threadId: string, value: string): boolean {
   const thread = parseReviews(state.view.state.doc.toString())
     .find(item => item.kind === "comment" && item.id === threadId);
   if (!thread || !thread.repliesValid || thread.replyInsertAt === null) {
-    showToast("This comment thread cannot accept a reply.");
+    showToast(t("This comment thread cannot accept a reply."));
     return false;
   }
   const reply = `\\cmtrpl{${randomId()}}{${cleanMetadata(displayName())}}{${cleanMetadata(value)}}`;
@@ -2439,7 +2448,7 @@ function openCommentThread(threadId: string, reply = false): void {
 function reviewButton(label: string, action: () => void | Promise<void>): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "h-7 rounded-md border bg-background px-2.5 text-[11px] font-medium hover:bg-accent";
-  button.textContent = label;
+  localizedText(button, () => t(label));
   button.addEventListener("click", event => {
     event.stopPropagation();
     action();
@@ -2454,7 +2463,7 @@ function openReplyComposer(article: HTMLElement, threadId: string): void {
   form.className = "comment-reply-form mb-2 space-y-2 border-t pt-2";
   const input = document.createElement("textarea");
   input.className = "min-h-16 w-full resize-y rounded-md border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
-  input.placeholder = "Write a reply";
+  localizedAttribute(input, "placeholder", () => t("Write a reply"));
   input.required = true;
   const controls = document.createElement("div");
   controls.className = "flex justify-end gap-1.5";
@@ -2468,9 +2477,9 @@ function openReplyComposer(article: HTMLElement, threadId: string): void {
   form.addEventListener("click", event => event.stopPropagation());
   form.addEventListener("submit", event => {
     event.preventDefault();
-    if (state.activeFile !== article.dataset.filePath) { showToast("Open this comment's file before replying."); return; }
+    if (state.activeFile !== article.dataset.filePath) { showToast(t("Open this comment's file before replying.")); return; }
     form.remove();
-    if (appendCommentReply(threadId, input.value)) showToast("Reply added.");
+    if (appendCommentReply(threadId, input.value)) showToast(t("Reply added."));
   });
   article.querySelector(".review-buttons").before(form);
   input.focus();
@@ -2532,12 +2541,13 @@ function drawReviews() {
     }
     }
   }
-  elements.review_count.textContent = String(groups.length);
+  localizedText(elements.review_count, () => String(groups.length));
   elements.review_list.replaceChildren();
   if (!groups.length) {
     const empty = document.createElement("div");
     empty.className = "empty-output flex min-h-52 flex-col items-center justify-center gap-3 text-sm text-muted-foreground [&_svg]:size-8";
     empty.innerHTML = '<i data-lucide="file-check-2"></i><span>No open reviews</span>';
+    localizedText(empty.querySelector("span")!, () => t("No open reviews"));
     elements.review_list.append(empty);
     createIcons({ icons: ICONS });
     return;
@@ -2550,29 +2560,29 @@ function drawReviews() {
     article.dataset.filePath = group.path;
     const path = document.createElement("div");
     path.className = "mb-2 truncate font-mono text-[11px] text-muted-foreground";
-    path.textContent = group.path;
-    path.title = group.path;
+    localizedText(path, () => group.path);
+    localizedAttribute(path, "title", () => group.path);
     const decide = async (decision: ReviewDecision): Promise<void> => {
       if (await selectReviewFile(group.path)) applyReviewDecision(group.id, decision);
     };
     const meta = document.createElement("div");
     meta.className = "review-meta mb-2 flex items-center justify-between gap-2 text-xs [&_strong]:truncate [&_span]:uppercase [&_span]:text-[9px] [&_span]:text-muted-foreground";
     const author = document.createElement("strong");
-    author.textContent = item.author || "Guest";
+    localizedText(author, () => item.author || t("Guest"));
     const type = document.createElement("span");
-    type.textContent = group.kind;
+    localizedText(type, () => group.kind === "comment" ? t("Comment") : t("Tracked change"));
     meta.append(author, type);
     const quote = document.createElement("pre");
     quote.className = "review-quote mb-2 overflow-hidden whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground";
     if (group.kind === "comment" || item.kind === "revision") {
-      quote.textContent = item.body.trim().slice(0, 240) || "Empty selection";
+      localizedText(quote, () => item.body.trim().slice(0, 240) || t("Empty selection"));
     } else {
       const addition = group.items.find(candidate => candidate.kind === "addition");
       const deletion = group.items.find(candidate => candidate.kind === "deletion");
-      quote.textContent = [
+      localizedText(quote, () => [
         deletion?.body ? `- ${deletion.body.trim()}` : "",
         addition?.body ? `+ ${addition.body.trim()}` : "",
-      ].filter(Boolean).join("\n");
+      ].filter(Boolean).join("\n"));
     }
     const note = document.createElement("div");
     note.className = "review-note mb-2 text-sm leading-relaxed";
@@ -2583,15 +2593,15 @@ function drawReviews() {
         messageRow.className = `comment-message rounded-md px-2.5 py-2 ${message.root ? "bg-amber-50 dark:bg-amber-950/40" : "bg-muted"}`;
         const messageAuthor = document.createElement("strong");
         messageAuthor.className = "mb-0.5 block text-[11px]";
-        messageAuthor.textContent = message.author || "Guest";
+        localizedText(messageAuthor, () => message.author || t("Guest"));
         const messageBody = document.createElement("p");
         messageBody.className = "whitespace-pre-wrap text-sm";
-        messageBody.textContent = message.body;
+        localizedText(messageBody, () => message.body);
         messageRow.append(messageAuthor, messageBody);
         note.append(messageRow);
       }
     } else {
-      note.textContent = item.kind === "revision" ? `Before: ${item.note}` : "Tracked change";
+      localizedText(note, () => item.kind === "revision" ? t("Before: {{v0}}", { v0: item.note }) : t("Tracked change"));
     }
     const actions = document.createElement("div");
     actions.className = "review-buttons flex flex-wrap gap-1.5";
@@ -2635,17 +2645,17 @@ function cleanMetadata(value: string): string {
 }
 
 function openReviewDialog() {
-  if (!state.projectCanEdit) return showToast("This link has View access.");
-  if (!state.view) return showToast("Open a text file first.");
+  if (!state.projectCanEdit) return showToast(t("This link has View access."));
+  if (!state.view) return showToast(t("Open a text file first."));
   const selection = state.view.state.selection.main;
   const selected = state.view.state.sliceDoc(selection.from, selection.to);
-  if (!selected) return showToast("Select text first.");
+  if (!selected) return showToast(t("Select text first."));
   if (parseReviews(state.view.state.doc.toString()).some(item => selection.from < item.to && selection.to > item.from)) {
-    return showToast("Resolve the existing review before adding another one.");
+    return showToast(t("Resolve the existing review before adding another one."));
   }
   state.reviewSelection = { from: selection.from, to: selection.to, selected };
-  document.getElementById("dialog-title").textContent = "Inline comment";
-  document.getElementById("dialog-label").textContent = "Comment";
+  localizedText(document.getElementById("dialog-title"), () => t("Inline comment"));
+  localizedText(document.getElementById("dialog-label"), () => t("Comment"));
   elements.review_text.value = "";
   elements.review_dialog.showModal();
   elements.review_text.focus();
@@ -2686,8 +2696,8 @@ async function refreshProject(open = false, recordOpen = false) {
   state.projectCanManage = Boolean(data.project.permissions?.manage);
   state.projectCanEdit = Boolean(data.project.permissions?.edit);
   elements.collaborate_menu.hidden = !data.project.permissions?.collaborate;
-  elements.project_name.textContent = data.project.name;
-  document.title = `${data.project.name} · LaTeX Coder`;
+  localizedText(elements.project_name, () => data.project.name);
+  localizedDocumentTitle(() => `${data.project.name} · LaTeX Coder`);
   state.main = data.project.main;
   state.files = data.project.files;
   state.folders = data.project.folders || [];
@@ -2697,7 +2707,7 @@ async function refreshProject(open = false, recordOpen = false) {
   renderFiles();
   syncProjectPermissionUi();
   if (!previewSelection.mode && !previewSelection.file) {
-    elements.build_output.textContent = data.project.build.log || "No compilation yet.";
+    localizedText(elements.build_output, () => data.project.build.log || t("No compilation yet."));
     renderBuildErrors(data.project.build.log, data.project.build.errors, data.project.build.status === "error");
     if (data.project.build.pdf) showPdf();
   }
@@ -2738,7 +2748,7 @@ function projectTagButton(tag: string, selected: boolean): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"}`;
-  button.textContent = tag;
+  localizedText(button, () => tag);
   button.setAttribute("aria-pressed", String(selected));
   button.addEventListener("click", () => {
     selectedProjectTag = selectedProjectTag.toLocaleLowerCase() === tag.toLocaleLowerCase() ? "" : tag;
@@ -2773,7 +2783,7 @@ function renderProjects() {
   if (!projects.length) {
     const empty = document.createElement("p");
     empty.className = "px-5 py-12 text-center text-sm text-muted-foreground";
-    empty.textContent = query || selectedTag ? "No projects match these filters." : archived ? "No archived projects." : "No active projects yet.";
+    localizedText(empty, () => query || selectedTag ? t("No projects match these filters.") : archived ? t("No archived projects.") : t("No active projects yet."));
     elements.project_list.append(empty);
     return;
   }
@@ -2782,7 +2792,7 @@ function renderProjects() {
     row.className = "project-row grid min-h-20 cursor-pointer grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-3 outline-none last:border-b-0 hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&>svg]:size-5 [&>svg]:text-primary max-sm:grid-cols-[1.5rem_minmax(0,1fr)_auto]";
     row.tabIndex = 0;
     row.setAttribute("role", "link");
-    row.setAttribute("aria-label", `Open ${project.name}`);
+    localizedAttribute(row, "aria-label", () => t("Open {{v0}}", { v0: project.name }));
     const openProject = () => { void openProjectPage(project.id); };
     row.addEventListener("click", event => {
       if ((event.target as Element).closest("button, a, details, summary")) return;
@@ -2798,12 +2808,12 @@ function renderProjects() {
     main.className = "project-row-main min-w-0";
     const name = document.createElement("strong");
     name.className = "block truncate text-sm font-semibold";
-    name.textContent = project.name;
+    localizedText(name, () => project.name);
     const details = document.createElement("span");
     details.className = "mt-1 block text-[10px] text-muted-foreground";
-    details.textContent = project.lastOpenedAt
-      ? `Last opened ${new Date(project.lastOpenedAt).toLocaleString()}`
-      : "Collaborative LaTeX project";
+    localizedText(details, () => project.lastOpenedAt
+      ? t("Last opened {{v0}}", { v0: formatDate(project.lastOpenedAt) })
+      : t("Collaborative LaTeX project"));
     main.append(name, details);
     if (project.tags.length) {
       const tags = document.createElement("div");
@@ -2814,17 +2824,19 @@ function renderProjects() {
     const menu = document.createElement("details");
     menu.className = "context-menu relative";
     menu.innerHTML = '<summary class="icon-button grid size-8 cursor-pointer list-none place-items-center rounded-md hover:bg-accent" aria-label="Project actions" title="Project actions"><i data-lucide="more-horizontal"></i></summary><div class="context-menu-panel absolute right-0 top-9 z-20 w-44 rounded-md border bg-card p-1 shadow-xl"></div>';
+    localizedAttribute(menu.querySelector("summary")!, "aria-label", () => t("Project actions"));
+    localizedAttribute(menu.querySelector("summary")!, "title", () => t("Project actions"));
     menu.addEventListener("toggle", () => {
       if (menu.open) closeProjectActionMenus(menu);
     });
     const panel = menu.querySelector("div");
     const actions: Array<[string, string, () => void | Promise<void>, boolean?]> = [
-      ...(project.permissions?.edit ? [["tag", "Edit tags", () => editProjectTags(project)]] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
-      [project.archived ? "archive-restore" : "archive", project.archived ? "Unarchive" : "Archive", () => setProjectArchived(project, !project.archived)],
-      ["download", "Download ZIP", () => downloadProject(project.id)],
+      ...(project.permissions?.edit ? [["tag", t("Edit tags"), () => editProjectTags(project)]] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
+      [project.archived ? "archive-restore" : "archive", project.archived ? t("Unarchive") : t("Archive"), () => setProjectArchived(project, !project.archived)],
+      ["download", t("Download ZIP"), () => downloadProject(project.id)],
       ...(project.permissions?.manage ? [
-        ["pencil", "Rename", () => renameProject(project)],
-        ["trash-2", "Delete project", () => deleteProject(project), true],
+        ["pencil", t("Rename"), () => renameProject(project)],
+        ["trash-2", t("Delete project"), () => deleteProject(project), true],
       ] as Array<[string, string, () => void | Promise<void>, boolean?]> : []),
     ];
     for (const [icon, label, action, danger] of actions) {
@@ -2832,7 +2844,7 @@ function renderProjects() {
       button.type = "button";
       button.className = `flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-accent [&_svg]:size-3.5${danger ? " danger text-destructive" : ""}`;
       button.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
-      button.querySelector("span").textContent = label;
+      localizedText(button.querySelector("span"), () => label);
       button.addEventListener("click", () => {
         menu.open = false;
         action();
@@ -2857,6 +2869,7 @@ type AdminPageResult<T> = { items: T[]; total: number; page: number; limit: numb
 
 let adminView: "users" | "projects" = "users";
 let adminPageNumber = 1;
+let renderCurrentAdminTable: (() => void) | undefined;
 let adminSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
 function adminCell(text: string, label: string, className = ""): HTMLTableCellElement {
@@ -2864,11 +2877,11 @@ function adminCell(text: string, label: string, className = ""): HTMLTableCellEl
   cell.className = `whitespace-nowrap border-b px-3 py-2.5 text-xs max-sm:grid max-sm:grid-cols-[5.25rem_minmax(0,1fr)] max-sm:items-start max-sm:gap-2 max-sm:whitespace-normal max-sm:border-0 max-sm:px-2 max-sm:py-1.5 ${className}`;
   const mobileLabel = document.createElement("span");
   mobileLabel.className = "hidden pt-0.5 text-[9px] font-semibold uppercase text-muted-foreground max-sm:block";
-  mobileLabel.textContent = label;
+  localizedText(mobileLabel, () => label);
   const value = document.createElement("span");
   value.className = "min-w-0 break-words";
   value.dataset.adminCellValue = "";
-  value.textContent = text;
+  localizedText(value, () => text);
   cell.append(mobileLabel, value);
   return cell;
 }
@@ -2880,8 +2893,8 @@ function adminCellValue(cell: HTMLTableCellElement): HTMLSpanElement {
 function adminAction(label: string, icon: "key-round" | "trash-2", action: () => void, danger = false): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.title = label;
-  button.setAttribute("aria-label", label);
+  localizedAttribute(button, "title", () => label);
+  localizedAttribute(button, "aria-label", () => label);
   button.className = `inline-flex size-7 items-center justify-center rounded hover:bg-accent [&_svg]:size-3.5 ${danger ? "text-destructive" : "text-muted-foreground"}`;
   button.innerHTML = `<i data-lucide="${icon}"></i>`;
   button.addEventListener("click", action);
@@ -2897,7 +2910,7 @@ function adminTable(headers: string[]): { table: HTMLTableElement; body: HTMLTab
   for (const header of headers) {
     const cell = document.createElement("th");
     cell.className = "whitespace-nowrap border-b px-3 py-2 font-semibold";
-    cell.textContent = header;
+    localizedText(cell, () => header);
     row.append(cell);
   }
   head.append(row);
@@ -2918,16 +2931,16 @@ async function createAdminPasswordResetLink(user: AdminUserRow): Promise<void> {
 
 async function softDeleteAdminUser(user: AdminUserRow): Promise<void> {
   const confirmed = await openActionDialog({
-    title: "Delete user",
-    message: `Disable ${user.username}? They will be signed out and cannot log in. Their projects and authorship history will be retained.`,
-    submitLabel: "Delete user",
+    title: t("Delete user"),
+    message: t("Disable {{v0}}? They will be signed out and cannot log in. Their projects and authorship history will be retained.", { v0: user.username }),
+    submitLabel: t("Delete user"),
     danger: true,
   });
   if (!confirmed) return;
   try {
     await request(`v1/admin/users/${encodeURIComponent(user.username)}`, { method: "DELETE" });
     await refreshAdminTable();
-    showToast(`${user.username} was disabled.`);
+    showToast(t("{{name}} was disabled.", { name: user.username }));
   } catch (error) { showToast(error.message); }
 }
 
@@ -2939,7 +2952,7 @@ async function updateAdminUserType(user: AdminUserRow, userType: "internal" | "e
       body: JSON.stringify({ userType }),
     });
     user.userType = userType;
-    showToast(`${user.username} is now ${userType}.`);
+    showToast(t("{{name}} is now {{type}}.", { name: user.username, type: userType === "internal" ? t("Internal") : t("External") }));
   } catch (error) {
     await refreshAdminTable();
     showToast(error.message);
@@ -2948,79 +2961,81 @@ async function updateAdminUserType(user: AdminUserRow, userType: "internal" | "e
 
 async function deleteAdminProject(project: AdminProjectRow): Promise<void> {
   const confirmed = await openActionDialog({
-    title: "Delete project",
-    message: `Permanently delete “${project.name}” (${project.id}) and all project files?`,
-    submitLabel: "Delete project",
+    title: t("Delete project"),
+    message: t("Permanently delete “{{v0}}” ({{v1}}) and all project files?", { v0: project.name, v1: project.id }),
+    submitLabel: t("Delete project"),
     danger: true,
   });
   if (!confirmed) return;
   try {
     await request(`v1/admin/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
     await refreshAdminTable();
-    showToast("Project deleted.");
+    showToast(t("Project deleted."));
   } catch (error) { showToast(error.message); }
 }
 
 function renderAdminUsers(result: AdminPageResult<AdminUserRow>): void {
-  const { table, body } = adminTable(["User", "Status", "Type", "Projects", "Created", "Invited by", "Actions"]);
+  renderCurrentAdminTable = () => renderAdminUsers(result);
+  const { table, body } = adminTable([t("User"), t("Status"), t("Type"), t("Projects"), t("Created"), t("Invited by"), t("Actions")]);
   for (const user of result.items) {
     const row = document.createElement("tr");
     row.className = "hover:bg-accent/40 max-sm:grid max-sm:rounded-md max-sm:border max-sm:bg-background max-sm:p-1";
-    const identity = adminCell("", "User");
+    const identity = adminCell("", t("User"));
     const name = document.createElement("strong");
     name.className = "block font-medium text-foreground";
-    name.textContent = user.displayName;
+    localizedText(name, () => user.displayName);
     const username = document.createElement("span");
     username.className = "text-[10px] text-muted-foreground";
-    username.textContent = `@${user.username}`;
+    localizedText(username, () => `@${user.username}`);
     adminCellValue(identity).append(name, username);
-    const status = user.deletedAt ? "Deleted" : user.isAdmin ? "Admin" : "Active";
-    const statusCell = adminCell(status, "Status", user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
-    const typeCell = adminCell("", "Type");
+    const status = user.deletedAt ? t("Deleted") : user.isAdmin ? t("Admin") : t("Active");
+    const statusCell = adminCell(status, t("Status"), user.deletedAt ? "text-muted-foreground" : user.isAdmin ? "font-medium text-primary" : "text-emerald-700 dark:text-emerald-400");
+    const typeCell = adminCell("", t("Type"));
     const typeSelect = document.createElement("select");
     typeSelect.className = "h-7 rounded border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60";
-    typeSelect.setAttribute("aria-label", `Account type for ${user.username}`);
+    localizedAttribute(typeSelect, "aria-label", () => t("Account type for {{v0}}", { v0: user.username }));
     for (const type of ["internal", "external"] as const) {
       const option = document.createElement("option");
       option.value = type;
-      option.textContent = type === "internal" ? "Internal" : "External";
+      localizedText(option, () => type === "internal" ? t("Internal") : t("External"));
       option.selected = user.userType === type;
       typeSelect.append(option);
     }
     typeSelect.disabled = user.isAdmin || Boolean(user.deletedAt);
     typeSelect.addEventListener("change", () => void updateAdminUserType(user, typeSelect.value as "internal" | "external"));
     adminCellValue(typeCell).append(typeSelect);
-    const projects = adminCell(`${user.projectCount} total · ${user.ownedProjectCount} owned`, "Projects", "tabular-nums");
-    const actions = adminCell("", "Actions");
+    const projects = adminCell(t("{{total}} total · {{owned}} owned", { total: user.projectCount, owned: user.ownedProjectCount }), t("Projects"), "tabular-nums");
+    const actions = adminCell("", t("Actions"));
     adminCellValue(actions).classList.add("flex", "justify-end", "gap-1");
     if (!user.deletedAt) {
-      adminCellValue(actions).append(adminAction(`Create password reset link for ${user.username}`, "key-round", () => void createAdminPasswordResetLink(user)));
-      if (!user.isAdmin) adminCellValue(actions).append(adminAction(`Delete ${user.username}`, "trash-2", () => void softDeleteAdminUser(user), true));
+      adminCellValue(actions).append(adminAction(t("Create password reset link for {{v0}}", { v0: user.username }), "key-round", () => void createAdminPasswordResetLink(user)));
+      if (!user.isAdmin) adminCellValue(actions).append(adminAction(t("Delete {{v0}}", { v0: user.username }), "trash-2", () => void softDeleteAdminUser(user), true));
     }
-    row.append(identity, statusCell, typeCell, projects, adminCell(new Date(user.createdAt).toLocaleDateString(), "Created"), adminCell(user.invitedBy || "Bootstrap", "Invited by"), actions);
+    row.append(identity, statusCell, typeCell, projects, adminCell(formatDate(user.createdAt, true), t("Created")), adminCell(user.invitedBy || t("Bootstrap"), t("Invited by")), actions);
     body.append(row);
   }
   elements.admin_table.replaceChildren(table);
 }
 
 function renderAdminProjects(result: AdminPageResult<AdminProjectRow>): void {
-  const { table, body } = adminTable(["Project", "Owner", "Members", "Last opened", "Created", "Actions"]);
+  renderCurrentAdminTable = () => renderAdminProjects(result);
+  const { table, body } = adminTable([t("Project"), t("Owner"), t("Members"), t("Last opened"), t("Created"), t("Actions")]);
   for (const project of result.items) {
     const row = document.createElement("tr");
     row.className = "hover:bg-accent/40 max-sm:grid max-sm:rounded-md max-sm:border max-sm:bg-background max-sm:p-1";
-    const identity = adminCell("", "Project");
+    const identity = adminCell("", t("Project"));
     const name = document.createElement("strong");
     name.className = "block max-w-80 truncate font-medium text-foreground";
-    name.textContent = project.name;
+    localizedText(name, () => project.name);
     const id = document.createElement("code");
     id.className = "text-[10px] text-muted-foreground";
-    id.textContent = project.id;
+    localizedText(id, () => project.id);
     adminCellValue(identity).append(name, id);
-    const owner = adminCell(project.ownerDisplayName || project.ownerUsername || "No owner", "Owner", project.ownerDeletedAt ? "text-muted-foreground line-through" : "");
-    const actions = adminCell("", "Actions");
+    const owner = adminCell(project.ownerDisplayName || project.ownerUsername || t("No owner"), t("Owner"), project.ownerDeletedAt ? "text-muted-foreground line-through" : "");
+    const actions = adminCell("", t("Actions"));
     adminCellValue(actions).classList.add("flex", "justify-end");
-    adminCellValue(actions).append(adminAction(`Delete ${project.name}`, "trash-2", () => void deleteAdminProject(project), true));
-    row.append(identity, owner, adminCell(String(project.memberCount), "Members", "tabular-nums"), adminCell(new Date(project.lastOpenedAt).toLocaleString(), "Last opened"), adminCell(new Date(project.createdAt).toLocaleDateString(), "Created"), actions);
+    adminCellValue(actions).append(adminAction(t("Delete {{v0}}", { v0: project.name }), "trash-2", () => void deleteAdminProject(project), true));
+    row.append(identity, owner, adminCell(String(project.memberCount), t("Members"), "tabular-nums"), adminCell(formatDate(project.lastOpenedAt), t("Last opened")), adminCell(formatDate(project.createdAt, true), t("Created")), actions);
     body.append(row);
   }
   elements.admin_table.replaceChildren(table);
@@ -3028,6 +3043,7 @@ function renderAdminProjects(result: AdminPageResult<AdminProjectRow>): void {
 
 async function refreshAdminTable(): Promise<void> {
   elements.admin_table.innerHTML = '<p class="px-4 py-12 text-center text-sm text-muted-foreground">Loading...</p>';
+  localizedText(elements.admin_table.querySelector("p")!, () => t("Loading..."));
   const query = new URLSearchParams({ q: elements.admin_search.value, page: String(adminPageNumber), limit: "50" });
   const result = adminView === "users"
     ? await request<AdminPageResult<AdminUserRow>>(`v1/admin/users?${query}`)
@@ -3036,8 +3052,8 @@ async function refreshAdminTable(): Promise<void> {
   else renderAdminProjects(result as AdminPageResult<AdminProjectRow>);
   const start = result.total ? (result.page - 1) * result.limit + 1 : 0;
   const end = Math.min(result.total, result.page * result.limit);
-  elements.admin_total.textContent = `${result.total} ${adminView}`;
-  elements.admin_page_status.textContent = `${start}-${end} of ${result.total}`;
+  localizedText(elements.admin_total, () => t(adminView, { count: result.total }));
+  localizedText(elements.admin_page_status, () => t("{{start}}-{{end}} of {{total}}", { start, end, total: result.total }));
   elements.admin_previous.disabled = result.page <= 1;
   elements.admin_next.disabled = end >= result.total;
   createIcons({ icons: ICONS });
@@ -3046,7 +3062,7 @@ async function refreshAdminTable(): Promise<void> {
 function showAdminPage(push = true): void {
   if (!state.user?.isAdmin) {
     showProjectsPage(false);
-    showToast("Administrator access is required.");
+    showToast(t("Administrator access is required."));
     return;
   }
   stopProjectEvents();
@@ -3057,18 +3073,18 @@ function showAdminPage(push = true): void {
   elements.share_confirm_page.hidden = true;
   elements.admin_page.hidden = false;
   if (push) window.history.pushState({}, "", "/admin");
-  document.title = "Administration · LaTeX Coder";
+  localizedDocumentTitle(() => t("Administration · LaTeX Coder"));
   void refreshAdminTable().catch(error => showToast(error.message));
 }
 
 async function editProjectTags(project: ProjectSummary): Promise<void> {
   const value = await openActionDialog({
-    title: "Edit project tags",
-    label: "Tags",
+    title: t("Edit project tags"),
+    label: t("Tags"),
     value: project.tags.join(", "),
     maxLength: 512,
-    message: "Separate tags with commas. Use up to 12 tags.",
-    submitLabel: "Save tags",
+    message: t("Separate tags with commas. Use up to 12 tags."),
+    submitLabel: t("Save tags"),
     allowEmpty: true,
   });
   if (typeof value !== "string") return;
@@ -3080,7 +3096,7 @@ async function editProjectTags(project: ProjectSummary): Promise<void> {
       body: JSON.stringify({ tags }),
     });
     await refreshProjects(project.id);
-    showToast("Project tags updated.");
+    showToast(t("Project tags updated."));
   } catch (error) { showToast(error.message); }
 }
 
@@ -3092,7 +3108,7 @@ async function setProjectArchived(project: ProjectSummary, archived: boolean): P
       body: JSON.stringify({ archived }),
     });
     await refreshProjects();
-    showToast(archived ? "Project archived for your account." : "Project restored to active projects.");
+    showToast(archived ? t("Project archived for your account.") : t("Project restored to active projects."));
   } catch (error) { showToast(error.message); }
 }
 
@@ -3157,30 +3173,30 @@ async function showProjectShareConfirmation(share: { projectId: string; token: s
   elements.share_confirm_page.hidden = false;
   elements.share_confirm_submit.hidden = false;
   elements.share_confirm_submit.disabled = true;
-  elements.share_confirm_cancel.textContent = "Back to projects";
+  localizedText(elements.share_confirm_cancel, () => t("Back to projects"));
   delete elements.share_confirm_cancel.dataset.projectId;
-  elements.share_confirm_project.textContent = "Checking project access...";
-  elements.share_confirm_description.textContent = "";
-  document.title = "Project invitation · LaTeX Coder";
+  localizedText(elements.share_confirm_project, () => t("Checking project access..."));
+  localizedText(elements.share_confirm_description, () => "");
+  localizedDocumentTitle(() => t("Project invitation · LaTeX Coder"));
   try {
     const { join } = await request<{ join: ProjectJoinDetails }>(projectJoinApiPath(share));
     if (join.action === "open") return enterJoinedProject(join.projectId);
     const upgrading = join.action === "upgrade";
-    elements.share_confirm_title.textContent = upgrading ? "Upgrade project access?" : "Add this project?";
-    elements.share_confirm_project.textContent = join.projectName;
-    elements.share_confirm_description.textContent = upgrading
-      ? "You currently have view-only access. This link grants editing and collaboration access."
+    localizedText(elements.share_confirm_title, () => upgrading ? t("Upgrade project access?") : t("Add this project?"));
+    localizedText(elements.share_confirm_project, () => join.projectName);
+    localizedText(elements.share_confirm_description, () => upgrading
+      ? t("You currently have view-only access. This link grants editing and collaboration access.")
       : join.requestedRole === "viewer"
-        ? "This project will be added to your account with view-only access."
-        : "This project will be added to your account with editing and collaboration access.";
-    elements.share_confirm_submit.querySelector("span")!.textContent = upgrading ? "Upgrade access" : "Add project";
-    elements.share_confirm_cancel.textContent = upgrading ? "Keep view access" : "Back to projects";
+        ? t("This project will be added to your account with view-only access.")
+        : t("This project will be added to your account with editing and collaboration access."));
+    localizedText(elements.share_confirm_submit.querySelector("span")!, () => upgrading ? t("Upgrade access") : t("Add project"));
+    localizedText(elements.share_confirm_cancel, () => upgrading ? t("Keep view access") : t("Back to projects"));
     if (upgrading) elements.share_confirm_cancel.dataset.projectId = join.projectId;
     elements.share_confirm_submit.disabled = false;
   } catch (error) {
-    elements.share_confirm_title.textContent = "Link unavailable";
-    elements.share_confirm_project.textContent = "This project could not be opened";
-    elements.share_confirm_description.textContent = error.message;
+    localizedText(elements.share_confirm_title, () => t("Link unavailable"));
+    localizedText(elements.share_confirm_project, () => t("This project could not be opened"));
+    localizedText(elements.share_confirm_description, () => error.message);
     elements.share_confirm_submit.hidden = true;
   }
 }
@@ -3231,7 +3247,7 @@ function watchProjectFiles(): void {
   });
 }
 
-function showAuthPage(mode: "login" | "register" | "reset" = "login", description = "") {
+function showAuthPage(mode: "login" | "register" | "reset" = "login", description: string | (() => string) = "") {
   stopProjectEvents();
   disconnectEditor();
   elements.projects_page.hidden = true;
@@ -3240,24 +3256,24 @@ function showAuthPage(mode: "login" | "register" | "reset" = "login", descriptio
   elements.share_confirm_page.hidden = true;
   elements.auth_page.hidden = false;
   elements.auth_error.hidden = true;
-  elements.auth_error.textContent = "";
+  localizedText(elements.auth_error, () => "");
   elements.auth_submit.disabled = false;
   elements.auth_password.value = "";
   const registering = mode === "register";
   const resetting = mode === "reset";
   elements.auth_notice.hidden = resetting;
   elements.auth_username.disabled = resetting;
-  elements.auth_title.textContent = registering ? "Create your account" : resetting ? "Set a new password" : "Sign in";
-  elements.auth_description.textContent = description || (registering
-    ? "Choose an account for this invitation."
+  localizedText(elements.auth_title, () => registering ? t("Create your account") : resetting ? t("Set a new password") : t("Sign in"));
+  localizedText(elements.auth_description, () => (typeof description === "function" ? description() : description) || (registering
+    ? t("Choose an account for this invitation.")
     : resetting
-      ? "Choose a new password for your account."
+      ? t("Choose a new password for your account.")
     : state.bootstrapReady
-      ? "Core team members can sign in to manage projects."
-      : "Set LATEXCODER_ADMIN_PASSWORD and restart the service to create the initial admin account.");
-  elements.auth_submit.querySelector("span").textContent = registering ? "Create account" : resetting ? "Set password" : "Sign in";
+      ? t("Core team members can sign in to manage projects.")
+      : t("Set LATEXCODER_ADMIN_PASSWORD and restart the service to create the initial admin account.")));
+  localizedText(elements.auth_submit.querySelector("span"), () => registering ? t("Create account") : resetting ? t("Set password") : t("Sign in"));
   elements.auth_password.autocomplete = registering || resetting ? "new-password" : "current-password";
-  document.title = `${registering ? "Join" : resetting ? "Reset password" : "Sign in"} · LaTeX Coder`;
+  localizedDocumentTitle(() => `${registering ? t("Join") : resetting ? t("Reset password") : t("Sign in")} · LaTeX Coder`);
   (resetting ? elements.auth_password : elements.auth_username).focus();
 }
 
@@ -3278,7 +3294,7 @@ function showProjectsPage(push = true) {
   elements.auth_page.hidden = true;
   elements.share_confirm_page.hidden = true;
   if (push && window.location.pathname !== "/projects") window.history.pushState({}, "", "/projects");
-  document.title = "Projects · LaTeX Coder";
+  localizedDocumentTitle(() => t("Projects · LaTeX Coder"));
   void refreshProjects().catch(error => showToast(error.message));
 }
 
@@ -3287,7 +3303,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
     || { id: projectId, name: projectId };
   if (!project) {
     showProjectsPage(false);
-    throw new Error("Project does not exist");
+    throw new Error(t("Project does not exist"));
   }
   const changed = projectId !== state.projectId;
   if (changed) {
@@ -3300,7 +3316,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   elements.share_confirm_page.hidden = true;
   elements.editor_page.hidden = false;
   state.projectId = projectId;
-  elements.project_name.textContent = project.name;
+  localizedText(elements.project_name, () => project.name);
   elements.download_project.href = projectApiUrl("v1/project/archive").toString();
   elements.download_project.download = `${project.id}.zip`;
   state.projectCanManage = false;
@@ -3309,7 +3325,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   syncProjectPermissionUi();
   syncAccountUi();
   if (push && window.location.pathname !== projectPageUrl(projectId)) window.history.pushState({}, "", projectPageUrl(projectId));
-  document.title = `${project.name} · LaTeX Coder`;
+  localizedDocumentTitle(() => `${project.name} · LaTeX Coder`);
   if (!changed && state.view) return;
   state.activeFile = "";
   buildEpoch++;
@@ -3317,7 +3333,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   compileMode = "project";
   compileModeSelect.value = "project";
   await pdfController.reset();
-  elements.build_output.textContent = "";
+  localizedText(elements.build_output, () => "");
   await refreshProject(true, true);
   watchProjectFiles();
 }
@@ -3347,7 +3363,7 @@ const pdfController = new PdfController({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page, x, y, revision }),
     });
-    if (state.projectId !== projectId || epoch !== buildEpoch) throw new Error("The compile target changed. Try again.");
+    if (state.projectId !== projectId || epoch !== buildEpoch) throw new Error(t("The compile target changed. Try again."));
     return destination;
   },
   revealSource,
@@ -3375,9 +3391,9 @@ async function compile() {
   const selection = currentCompileSelection();
   let epoch = buildEpoch;
   elements.compile_button.disabled = true;
-  elements.compile_button.querySelector("span").textContent = "Compiling";
+  localizedText(elements.compile_button.querySelector("span"), () => t("Compiling"));
   elements.compile_button.setAttribute("aria-busy", "true");
-  elements.sync_state.textContent = "Compiling";
+  localizedText(elements.sync_state, () => t("Compiling"));
   try {
     if (JSON.stringify(selection) !== JSON.stringify(previewSelection)) epoch = await selectBuild(selection);
     if (state.projectId !== project || epoch !== buildEpoch) return;
@@ -3388,25 +3404,25 @@ async function compile() {
     });
     if (state.projectId !== project || epoch !== buildEpoch) return;
     describeBuild(result.build);
-    elements.build_output.textContent = result.build.log;
+    localizedText(elements.build_output, () => result.build.log);
     renderBuildErrors(result.build.log, result.build.errors);
     await showPdf(true);
     if (state.projectId !== project || epoch !== buildEpoch) return;
     selectOutput("pdf");
     setOutputViewOpen(true);
-    showToast("PDF compiled.");
+    showToast(t("PDF compiled."));
   } catch (error) {
     if (state.projectId !== project || epoch !== buildEpoch) return;
     const build = await request<{ build: BuildInfo }>(buildEndpoint("v1/build", selection)).catch((): null => null);
     if (state.projectId !== project || epoch !== buildEpoch) return;
-    elements.build_output.textContent = build?.build?.log || error.message;
+    localizedText(elements.build_output, () => build?.build?.log || error.message);
     renderBuildErrors(build?.build?.log || error.message, build?.build?.errors, true);
     selectOutput("log");
     setOutputViewOpen(true);
-    showToast("Compilation failed. See Log for details.");
+    showToast(t("Compilation failed. See Log for details."));
   } finally {
     elements.compile_button.disabled = false;
-    elements.compile_button.querySelector("span").textContent = "Compile";
+    localizedText(elements.compile_button.querySelector("span"), () => t("Compile"));
     elements.compile_button.removeAttribute("aria-busy");
     compileRunning = false;
     updateSyncStatus();
@@ -3450,19 +3466,19 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
   const list = document.getElementById("build-errors")!;
   list.replaceChildren();
   const errors = buildDiagnostics(log, mappedErrors, state.main);
-  if (failed && !errors.some(error => error.severity === "error")) errors.unshift({ severity: "error", message: log.trim() || "Compilation failed." });
+  if (failed && !errors.some(error => error.severity === "error")) errors.unshift({ severity: "error", message: log.trim() || t("Compilation failed.") });
   const resolvedErrors = errors.map(error => ({ ...error, resolvedPath: error.line ? resolveDiagnosticPath(error.path) : undefined }));
   state.compileDiagnostics = resolvedErrors.map(({ resolvedPath, ...diagnostic }) => resolvedPath ? { ...diagnostic, path: resolvedPath } : diagnostic);
   applyEditorDiagnostics();
   const count = document.getElementById("log-error-count")!;
   const fatalCount = resolvedErrors.filter(error => error.severity === "error").length;
-  count.textContent = String(fatalCount);
+  localizedText(count, () => String(fatalCount));
   count.hidden = !fatalCount;
   list.hidden = !errors.length;
   const heading = document.createElement("h3");
   heading.className = "mb-2 text-sm font-semibold";
   const warningCount = resolvedErrors.length - fatalCount;
-  heading.textContent = `${fatalCount} ${fatalCount === 1 ? "error" : "errors"} · ${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`;
+  localizedText(heading, () => `${t("errors", { count: fatalCount })} · ${t("warnings", { count: warningCount })}`);
   list.append(heading);
   const items = document.createElement("ol");
   items.className = "list-decimal space-y-2 pl-5";
@@ -3477,18 +3493,18 @@ function renderBuildErrors(log: string, mappedErrors?: ReturnType<typeof compile
       button.id = "first-fatal-error";
       const badge = document.createElement("strong");
       badge.className = "mb-1 block text-xs";
-      badge.textContent = "First fatal error";
+      localizedText(badge, () => t("First fatal error"));
       button.append(badge);
     }
     const message = document.createElement("span");
     const displayedPath = error.resolvedPath || error.path;
-    message.textContent = `${displayedPath ? `${displayedPath}${error.line ? `:${error.line}` : ""} · ` : ""}${error.message}`;
+    localizedText(message, () => `${displayedPath ? `${displayedPath}${error.line ? `:${error.line}` : ""} · ` : ""}${error.message}`);
     button.append(message);
     if (error.resolvedPath && error.line) {
-      button.title = "Go to source";
+      localizedAttribute(button, "title", () => t("Go to source"));
       const action = document.createElement("span");
       action.className = "mt-1 block text-[11px] underline";
-      action.textContent = "Go to source";
+      localizedText(action, () => t("Go to source"));
       button.append(action);
       button.addEventListener("click", () => { void revealSource({ path: error.resolvedPath!, line: error.line!, from: error.from, to: error.to }).catch(error => showToast(error.message)); });
     } else button.disabled = true;
@@ -3524,29 +3540,29 @@ setInterval(() => {
 
 function renderGitStatus(gitState: GitState): void {
   state.git = gitState;
-  elements.git_summary.textContent = `${gitState.branch} · ${gitState.dirty ? "uncommitted changes" : "clean"}`;
-  elements.git_change_count.textContent = String(gitState.files.length);
+  localizedText(elements.git_summary, () => `${gitState.branch} · ${gitState.dirty ? t("uncommitted changes") : t("clean")}`);
+  localizedText(elements.git_change_count, () => String(gitState.files.length));
   elements.git_file_list.replaceChildren();
   if (!gitState.files.length) {
     const empty = document.createElement("div");
     empty.className = "git-empty py-4 text-center text-xs text-muted-foreground";
-    empty.textContent = "Working tree clean";
+    localizedText(empty, () => t("Working tree clean"));
     elements.git_file_list.append(empty);
   } else {
     for (const file of gitState.files) {
       const row = document.createElement("div");
       row.className = "git-file-row grid min-h-7 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2 border-b text-xs [&_code]:text-amber-700 [&_span]:truncate";
       const status = document.createElement("code");
-      status.textContent = `${file.index}${file.worktree}`.trim() || "M";
+      localizedText(status, () => `${file.index}${file.worktree}`.trim() || "M");
       const name = document.createElement("span");
-      name.textContent = file.path;
+      localizedText(name, () => file.path);
       row.append(status, name);
       elements.git_file_list.append(row);
     }
   }
   const conflict = gitState.conflict;
   elements.git_conflict.hidden = !conflict;
-  elements.git_conflict_branch.textContent = conflict?.branch || "";
+  localizedText(elements.git_conflict_branch, () => conflict?.branch || "");
   elements.git_resolve.hidden = !state.projectCanEdit || !conflict;
 }
 
@@ -3564,7 +3580,7 @@ async function refreshGit(showErrors = true) {
 async function runGitAction(endpoint: string, body: Record<string, unknown>, successMessage: string) {
   const buttons = [elements.git_commit, elements.git_resolve, elements.git_refresh];
   buttons.forEach(button => { button.disabled = true; });
-  elements.sync_state.textContent = "Git operation";
+  localizedText(elements.sync_state, () => t("Git operation"));
   try {
     const result = await request<{ git: GitState }>(endpoint, {
       method: "POST",
@@ -3575,7 +3591,7 @@ async function runGitAction(endpoint: string, body: Record<string, unknown>, suc
     await refreshGit();
     await refreshEditorBlame();
     await versionHistory.refresh();
-    showToast(result.git.status === "conflict" ? `Conflict saved to ${result.git.conflict.branch}.` : successMessage);
+    showToast(result.git.status === "conflict" ? t("Conflict saved to {{v0}}.", { v0: result.git.conflict.branch }) : successMessage);
     return result;
   } catch (error) {
     showToast(error.message);
@@ -3595,11 +3611,11 @@ function downloadProject(projectId: string): void {
 
 async function renameProject(project: ProjectSummary): Promise<void> {
   const name = await openActionDialog({
-    title: "Rename project",
-    label: "Project name",
+    title: t("Rename project"),
+    label: t("Project name"),
     value: project.name,
     maxLength: 80,
-    submitLabel: "Rename",
+    submitLabel: t("Rename"),
   });
   if (!name || name === project.name) return;
   try {
@@ -3610,18 +3626,18 @@ async function renameProject(project: ProjectSummary): Promise<void> {
     });
     await refreshProjects(project.id);
     if (state.projectId === project.id) {
-      elements.project_name.textContent = String(name);
-      document.title = `${name} · LaTeX Coder`;
+      localizedText(elements.project_name, () => String(name));
+      localizedDocumentTitle(() => `${name} · LaTeX Coder`);
     }
-    showToast("Project renamed.");
+    showToast(t("Project renamed."));
   } catch (error) { showToast(error.message); }
 }
 
 async function deleteProject(project: ProjectSummary): Promise<void> {
   const confirmed = await openActionDialog({
-    title: "Delete project",
-    message: `Delete “${project.name}” and all of its files? This cannot be undone.`,
-    submitLabel: "Delete project",
+    title: t("Delete project"),
+    message: t("Delete “{{v0}}” and all of its files? This cannot be undone.", { v0: project.name }),
+    submitLabel: t("Delete project"),
     danger: true,
   });
   if (!confirmed) return;
@@ -3631,7 +3647,7 @@ async function deleteProject(project: ProjectSummary): Promise<void> {
     if (state.projectId === project.id) state.projectId = "";
     await refreshProjects();
     showProjectsPage();
-    showToast("Project deleted.");
+    showToast(t("Project deleted."));
   } catch (error) { showToast(error.message); }
 }
 
@@ -3664,10 +3680,10 @@ function setBrowserShareMode(mode: "view" | "edit"): void {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-checked", String(selected));
   }
-  elements.share_link_label.textContent = mode === "view" ? "View link" : "Edit link";
-  elements.browser_editing_description.textContent = mode === "view"
-    ? "Signed-in users join as viewers. Guests can read the source and PDF but cannot change the project."
-    : "Signed-in users join as collaborators. Guests can edit the project without creating an account.";
+  localizedText(elements.share_link_label, () => mode === "view" ? t("View link") : t("Edit link"));
+  localizedText(elements.browser_editing_description, () => mode === "view"
+    ? t("Signed-in users join as viewers. Guests can read the source and PDF but cannot change the project.")
+    : t("Signed-in users join as collaborators. Guests can edit the project without creating an account."));
   if (currentAccessShare) {
     const path = mode === "view" ? currentAccessShare.viewPath : currentAccessShare.editPath;
     elements.share_link.value = `${window.location.origin}${path}`;
@@ -3681,10 +3697,10 @@ function setAgentEditingMode(mode: "direct" | "propose"): void {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-checked", String(selected));
   }
-  elements.agent_command_label.textContent = mode === "direct" ? "Direct editing" : "Proposed changes";
-  elements.agent_editing_description.textContent = mode === "direct"
-    ? "Use this command when the agent should edit the live source directly, without review."
-    : "Every agent edit is forced into Review for acceptance or rejection.";
+  localizedText(elements.agent_command_label, () => mode === "direct" ? t("Direct editing") : t("Proposed changes"));
+  localizedText(elements.agent_editing_description, () => mode === "direct"
+    ? t("Use this command when the agent should edit the live source directly, without review.")
+    : t("Every agent edit is forced into Review for acceptance or rejection."));
   if (currentAccessShare) {
     const path = mode === "direct" ? currentAccessShare.agentPath : currentAccessShare.proposalAgentPath;
     elements.agent_command.value = `curl -fsSL '${window.location.origin}${path}'`;
@@ -3709,14 +3725,14 @@ function updateGitAccess(): void {
   const url = ssh ? sshGitAccess?.url : currentAccessShare ? `${window.location.origin}${currentAccessShare.clonePath}` : null;
   elements.clone_command.value = url ? `git clone ${url}` : "";
   (document.getElementById("copy-clone-command") as HTMLButtonElement).disabled = !url;
-  document.getElementById("git-access-description")!.textContent = ssh
-    ? sshGitAccess!.keyCount ? "Authenticate with the private key matching a public key in your account."
-      : "Add an SSH public key to your account before cloning. Your private key stays on your device."
-    : available ? "Anyone with this access link can clone and push without an SSH key. Keep it private."
-      : "Clone with your personal Git URL. Keep it private: anyone with this link can clone and push.";
+  localizedText(document.getElementById("git-access-description")!, () => ssh
+    ? sshGitAccess!.keyCount ? t("Authenticate with the private key matching a public key in your account.")
+      : t("Add an SSH public key to your account before cloning. Your private key stays on your device.")
+    : available ? t("Anyone with this access link can clone and push without an SSH key. Keep it private.")
+      : t("Clone with your personal Git URL. Keep it private: anyone with this link can clone and push."));
   document.getElementById("git-host-fingerprint")!.hidden = !ssh;
-  document.getElementById("git-host-fingerprint")!.textContent = ssh && sshGitAccess?.hostFingerprint
-    ? `Server fingerprint: ${sshGitAccess.hostFingerprint}` : "";
+  localizedText(document.getElementById("git-host-fingerprint")!, () => ssh && sshGitAccess?.hostFingerprint
+    ? t("Server fingerprint: {{v0}}", { v0: sshGitAccess.hostFingerprint }) : "");
   document.getElementById("git-manage-keys")!.hidden = !ssh;
 }
 
@@ -3724,29 +3740,29 @@ async function refreshSshKeys(): Promise<void> {
   const { keys } = await request<{ keys: SshKey[] }>("v1/users/me/ssh-keys");
   const list = document.getElementById("ssh-key-list")!;
   list.replaceChildren();
-  if (!keys.length) list.textContent = "No SSH keys added yet.";
+  if (!keys.length) localizedText(list, () => t("No SSH keys added yet."));
   for (const key of keys) {
     const row = document.createElement("div");
     row.className = "flex items-center justify-between gap-2 rounded border p-2 text-xs";
     const text = document.createElement("div");
     text.className = "min-w-0 break-all";
     const title = document.createElement("strong");
-    title.textContent = key.title;
+    localizedText(title, () => key.title);
     const fingerprint = document.createElement("div");
     fingerprint.className = "font-mono text-muted-foreground";
-    fingerprint.textContent = key.fingerprint;
+    localizedText(fingerprint, () => key.fingerprint);
     text.append(title, fingerprint);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "shrink-0 rounded border px-2 py-1";
-    remove.textContent = "Remove";
-    remove.setAttribute("aria-label", `Remove SSH key ${key.title}`);
+    localizedText(remove, () => t("Remove"));
+    localizedAttribute(remove, "aria-label", () => t("Remove SSH key {{v0}}", { v0: key.title }));
     remove.addEventListener("click", async () => {
       remove.disabled = true;
       try {
         await request(`v1/users/me/ssh-keys/${encodeURIComponent(key.id)}`, { method: "DELETE" });
         await refreshSshKeys();
-        showToast("SSH key removed.");
+        showToast(t("SSH key removed."));
       } catch (error) { remove.disabled = false; showToast(error.message); }
     });
     row.append(text, remove);
@@ -3774,7 +3790,7 @@ document.getElementById("ssh-key-add")!.addEventListener("click", async () => {
     title.value = "";
     publicKey.value = "";
     await refreshSshKeys();
-    showToast("SSH key added.");
+    showToast(t("SSH key added."));
   } catch (error) { showToast(error.message); }
   finally { button.disabled = false; }
 });
@@ -3796,14 +3812,14 @@ async function refreshProjectMembers() {
     identity.className = "min-w-0";
     const name = document.createElement("strong");
     name.className = "block truncate font-medium text-foreground";
-    name.textContent = member.displayName;
+    localizedText(name, () => member.displayName);
     const username = document.createElement("span");
     username.className = "block truncate text-[10px] text-muted-foreground";
-    username.textContent = `@${member.username}`;
+    localizedText(username, () => `@${member.username}`);
     identity.append(name, username);
     const role = document.createElement("span");
     role.className = "shrink-0 text-muted-foreground";
-    role.textContent = member.role === "owner" ? "Owner" : member.role === "viewer" ? "View" : "Edit";
+    localizedText(role, () => member.role === "owner" ? t("Owner") : member.role === "viewer" ? t("View") : t("Edit"));
     row.append(identity, role);
     return row;
   }));
@@ -3829,7 +3845,7 @@ async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
     gitAccessMode = state.sshGitEnabled ? "ssh" : "link";
     updateGitAccess();
   }
-  elements.access_project_name.textContent = project.name;
+  localizedText(elements.access_project_name, () => project.name);
   const dialog = {
     browser: elements.access_dialog,
     agent: elements.agent_access_dialog,
@@ -3844,9 +3860,9 @@ async function openCollaboratePanel(panel: CollaboratePanel): Promise<void> {
 async function rotateShareSecret() {
   elements.access_secret_dialog.close();
   const confirmed = await openActionDialog({
-    title: "Rotate access secrets?",
-    message: "Your previous View, Edit, Agent editing, and Git access links will stop working immediately, and their guest sessions will be signed out. Other collaborators’ links keep working.",
-    submitLabel: "Rotate my secrets",
+    title: t("Rotate access secrets?"),
+    message: t("Your previous View, Edit, Agent editing, and Git access links will stop working immediately, and their guest sessions will be signed out. Other collaborators’ links keep working."),
+    submitLabel: t("Rotate my secrets"),
     danger: true,
   });
   if (!confirmed) {
@@ -3856,7 +3872,7 @@ async function rotateShareSecret() {
   const result = await request<{ share: ShareDetails }>("v1/project/share/rotate", { method: "POST" });
   displayAccessShare(result.share);
   elements.access_secret_dialog.showModal();
-  showToast("Your secrets were rotated. Previous links no longer work.");
+  showToast(t("Your secrets were rotated. Previous links no longer work."));
 }
 
 async function enterProjectDashboard(replace = false) {
@@ -3883,11 +3899,11 @@ function syncInvitationMode(): void {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-checked", String(selected));
   }
-  const uses = invitationMode === "single" ? "one account" : "multiple accounts";
+  const uses = invitationMode === "single" ? t("one account") : t("multiple accounts");
   const permission = invitationUserType === "internal"
-    ? "The new user can manage projects and invite other users."
-    : "The new user can manage their own projects but cannot invite users.";
-  elements.invite_description.textContent = `This link can register ${uses} and expires in seven days. ${permission}`;
+    ? t("The new user can manage projects and invite other users.")
+    : t("The new user can manage their own projects but cannot invite users.");
+  localizedText(elements.invite_description, () => t("This link can register {{v0}} and expires in seven days. {{v1}}", { v0: uses, v1: permission }));
 }
 
 async function createInvitation(mode: InvitationMode = invitationMode, userType: InvitationUserType = invitationUserType): Promise<void> {
@@ -3910,9 +3926,9 @@ async function createInvitation(mode: InvitationMode = invitationMode, userType:
   }
 }
 
-elements.display_name.value = localStorage.getItem("paper-display-name") || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
+elements.display_name.value = localStorage.getItem("paper-display-name") || t("Guest {{v0}}", { v0: Math.floor(Math.random() * 900 + 100) });
 elements.display_name.addEventListener("change", () => {
-  elements.display_name.value = cleanMetadata(displayName()).slice(0, 28) || "Guest";
+  elements.display_name.value = cleanMetadata(displayName()).slice(0, 28) || t("Guest");
   localStorage.setItem("paper-display-name", elements.display_name.value);
   setAwareness();
 });
@@ -3937,7 +3953,7 @@ elements.account_form.addEventListener("submit", async (event: Event) => {
     syncAccountUi();
     setAwareness();
     elements.account_dialog.close();
-    showToast("Display name updated.");
+    showToast(t("Display name updated."));
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -3965,7 +3981,7 @@ elements.auth_form.addEventListener("submit", async (event: Event) => {
     syncAccountUi();
     await enterProjectDashboard(true);
   } catch (error) {
-    elements.auth_error.textContent = error.message;
+    localizedText(elements.auth_error, () => error.message);
     elements.auth_error.hidden = false;
   } finally {
     elements.auth_submit.disabled = false;
@@ -4022,9 +4038,9 @@ elements.share_view.addEventListener("click", () => setBrowserShareMode("view"))
 elements.share_edit.addEventListener("click", () => setBrowserShareMode("edit"));
 elements.agent_direct.addEventListener("click", () => setAgentEditingMode("direct"));
 elements.agent_propose.addEventListener("click", () => setAgentEditingMode("propose"));
-elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, `${browserShareMode === "view" ? "View" : "Edit"} link copied.`));
-elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, `${agentEditingMode === "direct" ? "Direct" : "Propose"} agent command copied.`));
-elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, "Clone command copied."));
+elements.copy_share_link.addEventListener("click", () => copyText(elements.share_link.value, t("{{permission}} link copied.", { permission: browserShareMode === "view" ? t("View") : t("Edit") })));
+elements.copy_agent_link.addEventListener("click", () => copyText(elements.agent_command.value, t("{{mode}} agent command copied.", { mode: agentEditingMode === "direct" ? t("Direct") : t("Propose") })));
+elements.copy_clone_command.addEventListener("click", () => copyText(elements.clone_command.value, t("Clone command copied.")));
 elements.rotate_share_secret.addEventListener("click", () => rotateShareSecret().catch(error => {
   showToast(error.message);
   if (!elements.access_secret_dialog.open) elements.access_secret_dialog.showModal();
@@ -4042,8 +4058,8 @@ elements.invite_dialog.addEventListener("cancel", (event: Event) => {
   event.preventDefault();
   elements.invite_dialog.close();
 });
-elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, "Invitation link copied."));
-elements.copy_password_reset_link.addEventListener("click", () => copyText(elements.password_reset_link.value, "Password reset link copied."));
+elements.copy_invite_link.addEventListener("click", () => copyText(elements.invite_link.value, t("Invitation link copied.")));
+elements.copy_password_reset_link.addEventListener("click", () => copyText(elements.password_reset_link.value, t("Password reset link copied.")));
 elements.password_reset_link_close.addEventListener("click", () => elements.password_reset_link_dialog.close());
 elements.password_reset_link_done.addEventListener("click", () => elements.password_reset_link_dialog.close());
 elements.password_reset_link_dialog.addEventListener("cancel", (event: Event) => {
@@ -4067,7 +4083,7 @@ const versionHistory = createVersionHistory({
   confirm: openActionDialog,
   project: () => state.projectId,
   editable: () => state.projectCanEdit,
-  restored: async () => { await refreshProject(true); await refreshGit(); markPdfStale(); showToast("Version restored. Your previous work is saved in History."); },
+  restored: async () => { await refreshProject(true); await refreshGit(); markPdfStale(); showToast(t("Version restored. Your previous work is saved in History.")); },
 });
 async function openHistory(focusCheckpoint = false): Promise<void> {
   elements.git_dialog.showModal();
@@ -4083,11 +4099,11 @@ elements.git_dialog.addEventListener("cancel", (event: Event) => {
 });
 elements.git_refresh.addEventListener("click", () => { void refreshGit(); void versionHistory.refresh(); });
 elements.git_commit.addEventListener("click", async () => {
-  const result = await runGitAction("v1/git/commit", { message: elements.git_message.value }, "Checkpoint committed.");
+  const result = await runGitAction("v1/git/commit", { message: elements.git_message.value }, t("Checkpoint committed."));
   if (result) elements.git_message.value = "";
 });
 elements.git_resolve.addEventListener("click", async () => {
-  const result = await runGitAction("v1/git/resolve", { message: elements.git_message.value }, "Conflict marked resolved.");
+  const result = await runGitAction("v1/git/resolve", { message: elements.git_message.value }, t("Conflict marked resolved."));
   if (result) elements.git_message.value = "";
 });
 elements.project_search.addEventListener("input", () => {
@@ -4101,7 +4117,7 @@ const selectAdminView = (view: "users" | "projects"): void => {
   elements.admin_projects_tab.classList.toggle("active", view === "projects");
   elements.admin_users_tab.setAttribute("aria-selected", String(view === "users"));
   elements.admin_projects_tab.setAttribute("aria-selected", String(view === "projects"));
-  elements.admin_search.placeholder = view === "users" ? "Search username or display name" : "Search title, ID, or owner";
+  localizedAttribute(elements.admin_search, "placeholder", () => view === "users" ? t("Search username or display name") : t("Search title, ID, or owner"));
   void refreshAdminTable().catch(error => showToast(error.message));
 };
 elements.admin_users_tab.addEventListener("click", () => selectAdminView("users"));
@@ -4137,12 +4153,12 @@ for (const [button, view] of [[elements.projects_active, "active"], [elements.pr
 }
 elements.new_project.addEventListener("click", async () => {
   const name = await openActionDialog({
-    title: "New project",
+    title: t("New project"),
     zip: true,
-    label: "Project name",
-    value: "Untitled paper",
+    label: t("Project name"),
+    value: t("Untitled paper"),
     maxLength: 80,
-    submitLabel: "Create project",
+    submitLabel: t("Create project"),
   });
   if (!name) return;
   try {
@@ -4154,7 +4170,7 @@ elements.new_project.addEventListener("click", async () => {
     });
     await refreshProjects(result.project.id);
     await openProjectPage(result.project.id);
-    showToast("Project created.");
+    showToast(t("Project created."));
   } catch (error) { showToast(error.message); }
 });
 elements.compile_button.addEventListener("click", compile);
@@ -4176,8 +4192,8 @@ elements.suggest_edit.addEventListener("click", () => {
   state.suggesting = !state.suggesting;
   elements.suggest_edit.classList.toggle("active", state.suggesting);
   elements.suggest_edit.setAttribute("aria-pressed", String(state.suggesting));
-  elements.suggest_edit.querySelector("span").textContent = state.suggesting ? "Suggesting" : "Suggest";
-  showToast(state.suggesting ? "Suggestion mode on." : "Suggestion mode off.");
+  localizedText(elements.suggest_edit.querySelector("span"), () => state.suggesting ? t("Suggesting") : t("Suggest"));
+  showToast(state.suggesting ? t("Suggestion mode on.") : t("Suggestion mode off."));
   state.view?.focus();
 });
 elements.open_pdf.addEventListener("click", () => {
@@ -4232,17 +4248,17 @@ elements.upload_input.addEventListener("change", async () => {
       });
     }
     await refreshProject();
-    showToast("Upload complete.");
+    showToast(t("Upload complete."));
   } catch (error) { showToast(error.message); }
   elements.upload_input.value = "";
   uploadFolder = "";
 });
 async function newFile(folderPath = "") {
   const name = await openActionDialog({
-    title: "New file",
-    label: "File path",
+    title: t("New file"),
+    label: t("File path"),
     value: folderPath ? `${folderPath}/chapter.tex` : "chapter.tex",
-    submitLabel: "Create file",
+    submitLabel: t("Create file"),
   });
   if (!name) return;
   try {
@@ -4257,10 +4273,10 @@ async function newFile(folderPath = "") {
 }
 async function renameEntry(target: string, folder: boolean): Promise<void> {
   const name = await openActionDialog({
-    title: folder ? "Rename folder" : "Rename file",
-    label: "Path",
+    title: folder ? t("Rename folder") : t("Rename file"),
+    label: t("Path"),
     value: target,
-    submitLabel: "Rename",
+    submitLabel: t("Rename"),
   });
   if (!name || name === target) return;
   try { await moveFilePath(target, String(name)); }
@@ -4270,9 +4286,9 @@ async function renameEntry(target: string, folder: boolean): Promise<void> {
 async function deleteEntry(target: string, folder: boolean): Promise<void> {
   if (!folder) return deleteFile(target);
   const confirmed = await openActionDialog({
-    title: "Delete folder?",
-    message: `Move “${target}” and all files inside it to Recently deleted? They can be restored.`,
-    submitLabel: "Delete folder",
+    title: t("Delete folder?"),
+    message: t("Move “{{v0}}” and all files inside it to Recently deleted? They can be restored.", { v0: target }),
+    submitLabel: t("Delete folder"),
     danger: true,
   });
   if (!confirmed) return;
@@ -4282,7 +4298,7 @@ async function deleteEntry(target: string, folder: boolean): Promise<void> {
     await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
     if (wasActive) state.activeFile = "";
     await refreshProject(wasActive);
-    showToast("Folder deleted.");
+    showToast(t("Folder deleted."));
   } catch (error) {
     showToast(error.message);
     await refreshProject(state.activeFile.startsWith(`${target}/`));
@@ -4291,9 +4307,9 @@ async function deleteEntry(target: string, folder: boolean): Promise<void> {
 
 async function deleteFile(target: string): Promise<void> {
   const confirmed = await openActionDialog({
-    title: "Delete file",
-    message: `Move “${target}” to Recently deleted? It can be restored.`,
-    submitLabel: "Delete file",
+    title: t("Delete file"),
+    message: t("Move “{{v0}}” to Recently deleted? It can be restored.", { v0: target }),
+    submitLabel: t("Delete file"),
     danger: true,
   });
   if (!confirmed) return;
@@ -4303,7 +4319,7 @@ async function deleteFile(target: string): Promise<void> {
     await request(`v1/files?path=${encodeURIComponent(target)}`, { method: "DELETE" });
     if (wasActive) state.activeFile = "";
     await refreshProject(wasActive);
-    showToast("File deleted.");
+    showToast(t("File deleted."));
   } catch (error) {
     showToast(error.message);
     await refreshProject(state.activeFile === target || state.activeFile.startsWith(`${target}/`));
@@ -4320,7 +4336,7 @@ async function moveFilePath(from: string, to: string) {
 }
 
 async function newFolder(prefix = "") {
-  const name = await openActionDialog({ title: "New folder", label: "Folder path", value: prefix ? prefix + "/folder" : "folder", submitLabel: "Create" });
+  const name = await openActionDialog({ title: t("New folder"), label: t("Folder path"), value: prefix ? prefix + "/folder" : "folder", submitLabel: t("Create") });
   if (!name) return;
   try { await request("v1/files/folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: name }) }); await refreshProject(); }
   catch (error) { showToast(error.message); }
@@ -4362,12 +4378,12 @@ async function renderTrash() {
   const { items } = await request<{ items: Array<{ id: string; path: string }> }>("v1/trash");
   const list = document.getElementById("trash-list")!;
   list.replaceChildren();
-  if (!items.length) list.textContent = "No deleted files";
+  if (!items.length) localizedText(list, () => t("No deleted files"));
   for (const item of items) {
     const row = document.createElement("div");
     row.className = "flex min-w-0 items-center justify-between gap-2 border-b py-2 text-xs";
-    const label = document.createElement("span"); label.className = "min-w-0 truncate"; label.textContent = item.path;
-    const restore = document.createElement("button"); restore.className = "shrink-0 rounded-md border px-2 py-1 hover:bg-accent"; restore.textContent = "Restore";
+    const label = document.createElement("span"); label.className = "min-w-0 truncate"; localizedText(label, () => item.path);
+    const restore = document.createElement("button"); restore.className = "shrink-0 rounded-md border px-2 py-1 hover:bg-accent"; localizedText(restore, () => t("Restore"));
     restore.addEventListener("click", async () => {
       restore.disabled = true;
       try { await request("v1/trash/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id }) }); await refreshProject(); await renderTrash(); }
@@ -4411,7 +4427,7 @@ function closeLineContextMenu(): void {
 function openLineContextMenu(event: MouseEvent, lineNumber: number): void {
   closeEditorContextMenu();
   currentLineReference = `${state.activeFile}:${lineNumber}`;
-  lineContextReference.textContent = currentLineReference;
+  localizedText(lineContextReference, () => currentLineReference);
   lineContextMenu.hidden = false;
   const bounds = lineContextMenu.getBoundingClientRect();
   lineContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - bounds.width - 8))}px`;
@@ -4455,7 +4471,9 @@ function openEditorContextMenu(event: MouseEvent, view: EditorView) {
   editorContextMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 }
 
+let pdfNavigationRequest = 0;
 async function goToPdf(view: EditorView) {
+  const navigationRequest = ++pdfNavigationRequest;
   const project = state.projectId;
   const epoch = buildEpoch;
   const file = state.activeFile;
@@ -4463,15 +4481,15 @@ async function goToPdf(view: EditorView) {
   const { from, to } = view.state.selection.main;
   const line = view.state.doc.lineAt(from).number;
   selectOutput("pdf");
-  elements.pdf_status.textContent = "Locating source; updating PDF if needed...";
+  localizedText(elements.pdf_status, () => t("Locating source; updating PDF if needed..."));
   let position;
   try {
     position = await request<PdfPosition>(buildEndpoint("v1/build/position"), {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: file, source, line, from, to }),
     });
   } finally {
-    if (state.projectId === project && elements.pdf_status.textContent === "Locating source; updating PDF if needed...") {
-      elements.pdf_status.textContent = pdfController.hasDocument ? "PDF ready" : "No compiled PDF";
+    if (navigationRequest === pdfNavigationRequest && state.projectId === project && epoch === buildEpoch && state.view === view) {
+      localizedText(elements.pdf_status, () => pdfController.hasDocument ? t("PDF ready") : t("No compiled PDF"));
     }
   }
   if (state.projectId !== project || state.view !== view || epoch !== buildEpoch) return;
@@ -4481,7 +4499,7 @@ async function goToPdf(view: EditorView) {
     setOutputViewOpen(true);
   }
   await pdfController.revealPosition(position, revealedOutput);
-  if (state.projectId !== project) throw new Error("The project changed. Try again.");
+  if (state.projectId !== project) throw new Error(t("The project changed. Try again."));
   await refreshPdfStatus();
 }
 
@@ -4500,7 +4518,7 @@ editorContextMenu.addEventListener("click", async event => {
     if (action === "select-all") { selectAll(view); return; }
     if (action === "comment" || action === "pdf") {
       const canonical = canonicalContext(view);
-      if (!canonical) throw new Error("The source range changed. Reopen the TreeWriter editor.");
+      if (!canonical) throw new Error(t("The source range changed. Reopen the TreeWriter editor."));
       canonical.view.dispatch({ selection: { anchor: canonical.from, head: canonical.to } });
       if (action === "comment") openReviewDialog();
       else await goToPdf(canonical.view);
@@ -4509,11 +4527,11 @@ editorContextMenu.addEventListener("click", async event => {
     if (action === "copy" || action === "cut") {
       const text = selection.ranges.map(range => stripReviewStorage(doc.sliceString(range.from, range.to))).join("\n");
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-      else if (!document.execCommand("copy")) throw new Error("Clipboard access unavailable");
+      else if (!document.execCommand("copy")) throw new Error(t("Clipboard access unavailable"));
       if (action === "copy") return;
     }
     const inserted = action === "paste" ? await navigator.clipboard.readText() : "";
-    if (view.state.doc !== doc || !view.state.selection.eq(selection)) throw new Error("The selection changed. Try again.");
+    if (view.state.doc !== doc || !view.state.selection.eq(selection)) throw new Error(t("The selection changed. Try again."));
     view.dispatch({ ...view.state.replaceSelection(inserted), userEvent: action === "paste" ? "input.paste" : "delete.cut" });
   } catch (error) { showToast(error.message); }
 });
@@ -4536,7 +4554,7 @@ editorContextMenu.addEventListener("keydown", event => {
 copyLineReference.addEventListener("click", async () => {
   const reference = currentLineReference;
   closeLineContextMenu();
-  if (reference) await copyText(reference, `Copied ${reference}`);
+  if (reference) await copyText(reference, t("Copied {{v0}}", { v0: reference }));
 });
 lineContextMenu.addEventListener("keydown", event => {
   if (event.key !== "Escape" && event.key !== "Tab") return;
@@ -4610,7 +4628,7 @@ document.getElementById("replace-preview")!.addEventListener("click", async () =
   const version = ++searchVersion;
   const project = state.projectId;
   replacementPlan = []; applyReplacements.hidden = true; searchResults.replaceChildren();
-  searchStatus.textContent = "Preparing replacement preview...";
+  localizedText(searchStatus, () => t("Preparing replacement preview..."));
   try {
     const result = await request<{ files: ReplacementPreview[]; count: number }>("v1/search/replace/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       query: searchQuery.value, replacement: (document.getElementById("replace-text") as HTMLInputElement).value,
@@ -4619,28 +4637,28 @@ document.getElementById("replace-preview")!.addEventListener("click", async () =
     }) });
     if (version !== searchVersion || project !== state.projectId) return;
     replacementPlan = result.files; replacementProject = project;
-    searchStatus.textContent = `${result.count} replacements in ${result.files.length} files`;
+    localizedText(searchStatus, () => t("{{count}} replacements in {{files}} files", { count: result.count, files: result.files.length }));
     for (const file of result.files) {
-      const heading = document.createElement("strong"); heading.className = "block border-t py-2 text-xs"; heading.textContent = file.path;
+      const heading = document.createElement("strong"); heading.className = "block border-t py-2 text-xs"; localizedText(heading, () => file.path);
       const preview = document.createElement("pre"); preview.className = "overflow-auto whitespace-pre-wrap break-words font-mono text-xs";
       for (const part of diffLines(file.before, file.source)) {
         const row = document.createElement("span"); row.className = "block " + (part.added ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200" : part.removed ? "bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-200" : "text-muted-foreground");
-        row.textContent = part.value.split("\n").map(line => (part.added ? "+ " : part.removed ? "- " : "  ") + line).join("\n");
+        localizedText(row, () => part.value.split("\n").map(line => (part.added ? "+ " : part.removed ? "- " : "  ") + line).join("\n"));
         preview.append(row);
       }
       searchResults.append(heading, preview);
     }
     applyReplacements.hidden = !result.files.length;
-  } catch (error) { if (version === searchVersion) searchStatus.textContent = error.message; }
+  } catch (error) { if (version === searchVersion) localizedText(searchStatus, () => error.message); }
 });
 applyReplacements.addEventListener("click", async () => {
   if (!replacementPlan.length || replacementProject !== state.projectId) return;
   applyReplacements.disabled = true;
   try {
     await request("v1/search/replace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ files: replacementPlan.map(({ before, ...file }) => file) }) });
-    replacementPlan = []; applyReplacements.hidden = true; searchStatus.textContent = "Replacements applied";
+    replacementPlan = []; applyReplacements.hidden = true; localizedText(searchStatus, () => t("Replacements applied"));
     markPdfStale(); await refreshProject();
-  } catch (error) { replacementPlan = []; applyReplacements.hidden = true; searchStatus.textContent = error.message; }
+  } catch (error) { replacementPlan = []; applyReplacements.hidden = true; localizedText(searchStatus, () => error.message); }
   finally { applyReplacements.disabled = false; }
 });
 window.addEventListener("keydown", event => {
@@ -4654,7 +4672,7 @@ document.getElementById("search-form")!.addEventListener("submit", async event =
   const version = ++searchVersion;
   replacementPlan = []; applyReplacements.hidden = true;
   const project = state.projectId;
-  searchStatus.textContent = "Searching...";
+  localizedText(searchStatus, () => t("Searching..."));
   searchResults.replaceChildren();
   try {
     const result = await request<{ matches: SearchMatch[]; truncated: boolean }>("v1/search/project", {
@@ -4662,26 +4680,26 @@ document.getElementById("search-form")!.addEventListener("submit", async event =
       body: JSON.stringify({ query: searchQuery.value, caseSensitive: (document.getElementById("search-case") as HTMLInputElement).checked, regex: (document.getElementById("search-regex") as HTMLInputElement).checked }),
     });
     if (version !== searchVersion || state.projectId !== project) return;
-    searchStatus.textContent = result.matches.length ? `${result.matches.length} matches${result.truncated ? " (first 500)" : ""}` : "No matches";
+    localizedText(searchStatus, () => result.matches.length ? `${t("matches", { count: result.matches.length })}${result.truncated ? t(" (first 500)") : ""}` : t("No matches"));
     for (const match of result.matches) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "search-result block w-full min-w-0 border-b px-2 py-2 text-left hover:bg-accent focus-visible:bg-accent";
       const label = document.createElement("strong");
       label.className = "block truncate text-xs";
-      label.textContent = `${match.path}:${match.line}`;
+      localizedText(label, () => `${match.path}:${match.line}`);
       const text = document.createElement("div");
       text.className = "mt-1 overflow-hidden text-ellipsis whitespace-pre font-mono text-xs text-muted-foreground";
       text.append(document.createTextNode(match.text.slice(0, match.from)));
       const mark = document.createElement("mark");
       mark.className = "bg-amber-200 text-foreground dark:bg-amber-800/60";
-      mark.textContent = match.text.slice(match.from, match.to);
+      localizedText(mark, () => match.text.slice(match.from, match.to));
       text.append(mark, document.createTextNode(match.text.slice(match.to)));
       button.append(label, text);
       button.addEventListener("click", () => { searchDialog.close(); void revealSource(match).catch(error => showToast(error.message)); });
       searchResults.append(button);
     }
-  } catch (error) { if (version === searchVersion) searchStatus.textContent = error.message; }
+  } catch (error) { if (version === searchVersion) localizedText(searchStatus, () => error.message); }
 });
 
 const workspaceController = new WorkspaceController({
@@ -4723,9 +4741,9 @@ async function routeApp() {
     try {
       const result = await request<{ reset: { username: string; displayName: string } }>(`v1/auth/password-reset/${encodeURIComponent(passwordResetToken)}`);
       elements.auth_username.value = result.reset.username;
-      showAuthPage("reset", `Set a new password for ${result.reset.displayName} (@${result.reset.username}). This link can only be used once.`);
+      showAuthPage("reset", () => t("Set a new password for {{v0}} (@{{v1}}). This link can only be used once.", { v0: result.reset.displayName, v1: result.reset.username }));
     } catch (error) {
-      showAuthPage("reset", error.message);
+      showAuthPage("reset", () => error.message);
       elements.auth_submit.disabled = true;
     }
     return;
@@ -4733,13 +4751,13 @@ async function routeApp() {
   if (window.location.pathname === "/admin") {
     if (state.user?.isAdmin) showAdminPage(false);
     else if (state.user) showProjectsPage(false);
-    else showAuthPage("login", "Sign in with an administrator account.");
+    else showAuthPage("login", () => t("Sign in with an administrator account."));
     return;
   }
   const projectShare = routeProjectShare();
   if (projectShare) {
     if (!state.user) {
-      showAuthPage("login", "Sign in to add this shared project to your account.");
+      showAuthPage("login", () => t("Sign in to add this shared project to your account."));
       return;
     }
     await showProjectShareConfirmation(projectShare);
@@ -4749,12 +4767,14 @@ async function routeApp() {
   if (invitationToken) {
     try {
       const result = await request<{ invitation: { invitedBy: string; userType: InvitationUserType } }>(`v1/invitations/${encodeURIComponent(invitationToken)}`);
-      const accountDescription = result.invitation.userType === "internal"
-        ? "This internal account can create projects and invite users."
-        : "This external account can create and manage its own projects.";
-      showAuthPage("register", `Invited by ${result.invitation.invitedBy}. ${accountDescription}`);
+      showAuthPage("register", () => t("Invited by {{v0}}. {{v1}}", {
+        v0: result.invitation.invitedBy,
+        v1: result.invitation.userType === "internal"
+          ? t("This internal account can create projects and invite users.")
+          : t("This external account can create and manage its own projects."),
+      }));
     } catch (error) {
-      showAuthPage("register", error.message);
+      showAuthPage("register", () => error.message);
       elements.auth_submit.disabled = true;
     }
     return;

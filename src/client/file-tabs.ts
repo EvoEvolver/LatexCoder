@@ -1,3 +1,4 @@
+import { localizedAttribute, localizedText, t } from './i18n.ts';
 export type TabFile = { path: string };
 export type AuxiliaryTab = { id: string; label: string; controls: string };
 export type TabUpdateOptions = { transient?: boolean };
@@ -25,9 +26,9 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
       button.setAttribute("aria-selected", String(!auxiliaryActive && path === active));
       button.setAttribute("aria-controls", "editor");
       button.tabIndex = !auxiliaryActive && path === active ? 0 : -1;
-      button.title = path;
+      localizedAttribute(button, "title", () => path);
       const basename = path.split("/").at(-1)!;
-      button.textContent = paths.some(other => other !== path && other.split("/").at(-1) === basename) ? path : basename;
+      localizedText(button, () => paths.some(other => other !== path && other.split("/").at(-1) === basename) ? path : basename);
       button.addEventListener("click", () => open(path));
       button.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -42,9 +43,9 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
       const close = document.createElement("button");
       close.type = "button";
       close.className = "close-tab";
-      close.textContent = "x";
-      close.title = `Close ${path}`;
-      close.setAttribute("aria-label", close.title);
+      localizedText(close, () => "x");
+      localizedAttribute(close, "title", () => t("Close {{v0}}", { v0: path }));
+      localizedAttribute(close, "aria-label", () => close.title);
       close.hidden = paths.length === 1;
       close.addEventListener("click", () => {
         if (paths.length === 1) return;
@@ -57,6 +58,7 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
       host.append(tab);
     }
     if (auxiliary) {
+      const auxiliaryTab = auxiliary;
       const tab = document.createElement("div");
       tab.className = "file-tab auxiliary-tab";
       tab.classList.toggle("active", auxiliaryActive);
@@ -67,14 +69,14 @@ export function createFileTabs(host: HTMLElement, open: (path: string) => void, 
       button.setAttribute("aria-selected", String(auxiliaryActive));
       button.setAttribute("aria-controls", auxiliary.controls);
       button.tabIndex = auxiliaryActive ? 0 : -1;
-      button.textContent = auxiliary.label;
+      localizedText(button, () => auxiliaryTab.label);
       button.addEventListener("click", () => { auxiliaryActive = true; render(); openAuxiliary(auxiliary!.id); });
       const close = document.createElement("button");
       close.type = "button";
       close.className = "close-tab";
-      close.textContent = "x";
-      close.title = `Close ${auxiliary.label}`;
-      close.setAttribute("aria-label", close.title);
+      localizedText(close, () => "x");
+      localizedAttribute(close, "title", () => t("Close {{v0}}", { v0: auxiliaryTab.label }));
+      localizedAttribute(close, "aria-label", () => close.title);
       close.addEventListener("click", () => {
         const wasActive = auxiliaryActive;
         auxiliary = null;
