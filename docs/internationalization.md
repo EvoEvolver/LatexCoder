@@ -31,9 +31,11 @@ use the selected interface locale.
 
 For Japanese, prefer natural Japanese wording to phonetic English translations:
 use 設定, 履歴, 共有, 検索, 置換, and 組版 where appropriate. Keep established terms
-such as ファイル and プロジェクト when they aid understanding, and leave product
-names and source identifiers unchanged. Use the same wording across labels,
-instructions, and errors.
+such as ファイル when they aid understanding, and leave product names and source
+identifiers unchanged. Translate the application concept “project” as 原稿
+(原稿一覧, 原稿設定, 新規原稿). Keep labels concise and omit unnecessary の where
+natural compounds work; retain it where grammar or clarity requires it. Use the
+same wording across labels, instructions, and errors.
 
 ## React and controller ownership
 

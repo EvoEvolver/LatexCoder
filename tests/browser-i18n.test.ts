@@ -4,7 +4,7 @@ import { withEditor, openRootFileMenu } from "./helpers/browser.ts";
 
 for (const locale of [
   { code: "zh-CN", browser: "zh-Hans-CN", compile: "编译", chapter: "章节入口", root: "顶层入口:", newFile: "新建文件", settings: "项目设置" },
-  { code: "ja", browser: "ja-JP", compile: "組版", chapter: "章の起点", root: "全体の起点:", newFile: "新規ファイル", settings: "プロジェクト設定" },
+  { code: "ja", browser: "ja-JP", compile: "組版", chapter: "章の起点", root: "全体の起点:", newFile: "新規ファイル", settings: "原稿設定" },
 ]) {
 test(`${locale.code} language switching preserves the live editor and updates React and controller UI`, async () => {
   await withEditor(async ({ page, base }) => {
