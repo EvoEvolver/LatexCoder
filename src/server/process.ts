@@ -118,16 +118,34 @@ export async function runRipgrep(projectDir: string, args: string[], options: Ri
 
 export function runBinary(command: string, args: string[], options: ProcessOptions = {}, input: Uint8Array = Buffer.alloc(0)): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, shell: false });
+    const { timeoutMs = 60_000, ...spawnOptions } = options;
+    const child = spawn(command, args, { ...spawnOptions, shell: false });
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
-    let settled = false;
+    let inputError: NodeJS.ErrnoException | undefined;
+    let processError: NodeJS.ErrnoException | undefined;
+    let timedOut = false;
     child.stdout.on("data", chunk => stdout.push(chunk)); child.stderr.on("data", chunk => stderr.push(chunk));
-    child.on("error", error => { if (!settled) reject(error); settled = true; });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
-    child.on("close", code => {
-      clearTimeout(timer); if (settled) return; settled = true;
-      if (code === 0) return resolve(Buffer.concat(stdout));
-      reject(apiError("git_failed", Buffer.concat(stderr).toString("utf8").trim() || `Git exited with code ${code}`, 409));
+    // A child can exit before reading all input. Wait for close so stderr is
+    // drained and the Git error is not replaced by a secondary pipe error.
+    child.stdin.on("error", error => { inputError = error; });
+    child.on("error", error => { processError = error; });
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
+      const failed = processError || code !== 0 || (inputError && inputError.code !== "EPIPE");
+      if (failed || inputError) {
+        const details = {
+          command, exitCode: code, signal, timedOut, stderr: errorOutput,
+          inputError: inputError && { code: inputError.code, message: inputError.message },
+          processError: processError && { code: processError.code, message: processError.message },
+        };
+        if (failed) console.error("Git subprocess failed", details);
+        else console.warn("Git subprocess closed stdin early", details);
+      }
+      if (processError) return reject(processError);
+      if (!failed) return resolve(Buffer.concat(stdout));
+      reject(apiError("git_failed", errorOutput || inputError?.message || (signal ? `Git terminated by signal ${signal}` : `Git exited with code ${code}`), 409));
     });
     child.stdin.end(input);
   });
