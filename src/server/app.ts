@@ -1320,8 +1320,9 @@ export async function createPaperServer(options: ServerOptions = {}): Promise<Pa
     withGitReader, withTemporaryWorktree,
   });
   const sshPort = options.sshPort ?? (process.env.LATEXCODER_SSH_PORT ? Number(process.env.LATEXCODER_SSH_PORT) : undefined);
-  const sshEndpoint = sshPublicEndpoint(options.sshPublicHost ?? process.env.LATEXCODER_SSH_PUBLIC_HOST,
-    options.sshPublicPort ?? process.env.LATEXCODER_SSH_PUBLIC_PORT);
+  const sshEndpoint = sshPublicEndpoint(
+    options.sshPublicHost ?? process.env.LATEXCODER_SSH_PUBLIC_HOST ?? process.env.RAILWAY_TCP_PROXY_DOMAIN,
+    options.sshPublicPort ?? process.env.LATEXCODER_SSH_PUBLIC_PORT ?? process.env.RAILWAY_TCP_PROXY_PORT);
   const httpPort = Number(options.port ?? process.env.LATEXCODER_PORT ?? process.env.PORT ?? 8090);
   const validSshPort = Number.isInteger(sshPort) && sshPort! >= 0 && sshPort! <= 65535;
   const portsConflict = sshPort !== 0 && sshPort === httpPort;

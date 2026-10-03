@@ -297,8 +297,8 @@ the existing HTTPS access links remain available under **Access link**.
 | `LATEXCODER_PORT` | `PORT` or `8090` | HTTP listener port. |
 | `LATEXCODER_SSH_PORT` | `2222` | SSH Git listener port; enabled only with a valid public host and port. |
 | `LATEXCODER_SSH_HOST` | `0.0.0.0` | SSH listener address. |
-| `LATEXCODER_SSH_PUBLIC_HOST` | none | Required public hostname for SSH Git. |
-| `LATEXCODER_SSH_PUBLIC_PORT` | none | Required external SSH port. |
+| `LATEXCODER_SSH_PUBLIC_HOST` | `RAILWAY_TCP_PROXY_DOMAIN` | Public hostname for SSH Git; explicit configuration overrides the Railway fallback. |
+| `LATEXCODER_SSH_PUBLIC_PORT` | `RAILWAY_TCP_PROXY_PORT` | External SSH port; explicit configuration overrides the Railway fallback. Does not change the internal listener port. |
 | `LATEXCODER_LATEX_BIN` | auto-detected | Explicit Tectonic or latexmk executable. |
 | `LATEXCODER_TECTONIC_BUNDLE_URL` | Tectonic default | Tectonic bundle mirror URL, useful when the default package bundle is slow or unavailable. |
 | `LATEXCODER_COMPILE_CONCURRENCY` | `2` | Process-wide concurrent build limit. |

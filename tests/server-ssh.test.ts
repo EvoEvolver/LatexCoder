@@ -151,6 +151,44 @@ test("incomplete or invalid SSH configuration hides the feature and keeps HTTP G
   }, { sshPort: 0, sshHost: "127.0.0.1", ...options }));
 });
 
+test("SSH public endpoint falls back to Railway without changing the listener port", async t => {
+  const variables = ["LATEXCODER_SSH_PUBLIC_HOST", "LATEXCODER_SSH_PUBLIC_PORT", "RAILWAY_TCP_PROXY_DOMAIN", "RAILWAY_TCP_PROXY_PORT"] as const;
+  const original = variables.map(name => process.env[name]);
+  const cases = [
+    { name: "Railway fallback", host: undefined, port: undefined, railwayPort: "15140", endpoint: "shuttle.proxy.rlwy.net:15140" },
+    { name: "explicit environment wins", host: "git.example.test", port: "45124", railwayPort: "15140", endpoint: "git.example.test:45124" },
+    { name: "host override only", host: "git.example.test", port: undefined, railwayPort: "15140", endpoint: "git.example.test:15140" },
+    { name: "port override only", host: undefined, port: "45124", railwayPort: "15140", endpoint: "shuttle.proxy.rlwy.net:45124" },
+    { name: "invalid explicit host stays disabled", host: "https://git.example.test", port: undefined, railwayPort: "15140", endpoint: null },
+    { name: "invalid Railway port stays disabled", host: undefined, port: undefined, railwayPort: "65536", endpoint: null },
+    { name: "incomplete Railway endpoint stays disabled", host: undefined, port: undefined, railwayPort: undefined, endpoint: null },
+  ];
+  try {
+    for (const scenario of cases) await t.test(scenario.name, async () => {
+      const values = [scenario.host, scenario.port, "shuttle.proxy.rlwy.net", scenario.railwayPort];
+      variables.forEach((name, index) => {
+        if (values[index] === undefined) delete process.env[name];
+        else process.env[name] = values[index];
+      });
+      await withServer(async ({ base, sshServer }) => {
+        const enabled = scenario.endpoint !== null;
+        assert.equal(Boolean(sshServer), enabled);
+        assert.equal((await (await fetch(`${base}/v1/auth/me`)).json()).features.sshGit, enabled);
+        const { projects } = await (await fetch(`${base}/v1/projects`)).json();
+        const access = await (await fetch(`${base}/v1/git/ssh?project=${projects[0].id}`)).json();
+        assert.equal(access.enabled, enabled);
+        assert.equal(access.url, enabled ? `ssh://git@${scenario.endpoint}/${projects[0].id}.git` : null);
+        if (sshServer) assert.ok((sshServer.address() as AddressInfo).port > 0);
+      }, { sshPort: 0, sshHost: "127.0.0.1" });
+    });
+  } finally {
+    variables.forEach((name, index) => {
+      if (original[index] === undefined) delete process.env[name];
+      else process.env[name] = original[index];
+    });
+  }
+});
+
 test("SSH bind failure does not crash HTTP or advertise SSH", async () => {
   const occupied = createServer();
   await new Promise<void>(resolve => occupied.listen(0, "127.0.0.1", resolve));
