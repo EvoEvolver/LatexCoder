@@ -1,4 +1,12 @@
 {
+  "Compile a chapter": "编译单个章节",
+  "No chapter configuration was found in {{file}}.": "{{file}} 中没有章节编译标记。",
+  "At the top of each child file, point to the chapter entry:": "在各个子文件开头，指定所属章节的入口文件：",
+  "At the top of the chapter entry, specify its template:": "在章节入口文件开头，指定编译模板：",
+  "Create the template with the document setup and one content marker:": "创建模板，包含文档设置和一个正文插入标记：",
+  "Paths are relative to the project root. Keep directives in the leading comment block.": "路径相对于项目根目录。请将配置标记写在文件开头的注释区。",
+  "For a complete chapter document, use %% latexcoder:template none.": "如果章节文件本身是完整文档，使用 %% latexcoder:template none。",
+  "Until configured, Chapter root uses the top-level root.": "完成配置前，章节编译仍会使用顶层入口。",
   "all project files": "所有项目文件",
   "unsupported formula": "不支持的公式",
   "− removed  /  + added": "− 删除  /  + 新增",

@@ -51,6 +51,11 @@ export async function chooseAppMenu(page: Page, menu: "project" | "history" | "a
   await page.locator(item).click();
 }
 
+export async function chooseCompileMode(page: Page, mode: "project" | "chapter"): Promise<void> {
+  await page.locator("#compile-mode").click();
+  await page.locator(`#compile-mode-${mode}`).click();
+}
+
 export async function toggleBlame(page: Page): Promise<void> {
   await page.locator("#history-menu").click();
   await page.locator("#toggle-blame").click();

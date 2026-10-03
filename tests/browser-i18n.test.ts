@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Page } from "playwright";
-import { withEditor, openRootFileMenu, chooseAppMenu } from "./helpers/browser.ts";
+import { withEditor, openRootFileMenu, chooseAppMenu, chooseCompileMode } from "./helpers/browser.ts";
 
 async function setEditorLanguage(page: Page, language: string): Promise<void> {
   await chooseAppMenu(page, "account", "#editor-account-button");
@@ -20,7 +20,9 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
-    await page.locator("#compile-mode").selectOption("chapter");
+    await chooseCompileMode(page, "chapter");
+    await page.locator("#chapter-help-dialog").waitFor();
+    await page.locator("#chapter-help-done").click();
     await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title")?.startsWith("Top-level root:"));
     const language = page.locator("#account-dialog [data-language-select]");
     assert.equal(await page.locator("[data-language-select]").count(), 2);
@@ -36,7 +38,10 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     await setEditorLanguage(page, locale.code);
     await page.waitForFunction(text => document.querySelector("#compile-button")?.textContent === text, locale.compile);
     assert.equal(await page.locator("html").getAttribute("lang"), locale.code);
-    assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), locale.chapter);
+    await page.locator("#compile-mode").click();
+    assert.equal(await page.locator("#compile-mode-chapter").textContent(), locale.chapter);
+    assert.equal(await page.locator("#compile-mode-chapter").getAttribute("aria-checked"), "true");
+    await page.keyboard.press("Escape");
     assert.ok((await page.locator("#compile-mode").getAttribute("title"))?.startsWith(locale.root));
     assert.ok(await page.evaluate(view => view === globalThis.__paperE2E.state.view, view));
     assert.ok(await page.evaluate(provider => provider === globalThis.__paperE2E.state.provider, provider));
@@ -49,7 +54,9 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     await page.keyboard.press("Escape");
     await setEditorLanguage(page, "en");
     await page.waitForFunction(() => document.querySelector("#compile-button")?.textContent === "Compile");
-    assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), "Chapter root");
+    await page.locator("#compile-mode").click();
+    assert.equal(await page.locator("#compile-mode-chapter").textContent(), "Chapter root");
+    await page.keyboard.press("Escape");
     assert.match(await page.locator("#compile-mode").getAttribute("title") || "", /^Top-level root:/);
     await page.locator("#editor .cm-content").focus();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");

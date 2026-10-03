@@ -1,6 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { withEditor, realLatexmk, previewPdf } from "./helpers/browser.ts";
+import { withEditor, realLatexmk, previewPdf, chooseCompileMode } from "./helpers/browser.ts";
+
+test("compile arrow offers checked targets and explains missing chapter directives using live source", async () => {
+  await withEditor(async ({ page, base }) => {
+    const { defaultProjectId: id } = await (await page.request.get(`${base}/v1/projects`)).json();
+    const source = "\\documentclass{article}\n\\begin{document}\nText\n%% latexcoder:template none\n\\end{document}\n";
+    await page.request.put(`${base}/v1/files?project=${id}&path=main.tex`, { data: source });
+    await page.goto(`${base}/projects/${id}?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
+    assert.equal(await page.locator("select#compile-mode").count(), 0);
+    assert.equal(await page.locator("#compile-control > button").count(), 2);
+    await page.locator("#compile-mode").focus();
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await page.locator("#compile-mode-project").getAttribute("aria-checked"), "true");
+    await page.locator("#compile-mode-chapter").click();
+    const help = page.locator("#chapter-help-dialog");
+    await help.waitFor();
+    assert.match(await help.textContent() || "", /main.tex/);
+    for (const marker of ["chapter-root", "template", "content"]) assert.ok((await help.textContent())?.includes(`%% latexcoder:${marker}`));
+    assert.equal(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString()), source);
+    await page.keyboard.press("Escape");
+    await chooseCompileMode(page, "chapter");
+    await help.waitFor();
+    await page.locator("#chapter-help-close").click();
+    await page.evaluate(() => {
+      const view = globalThis.__paperE2E.state.view;
+      view.dispatch({ changes: { from: 0, insert: "%% latexcoder:template none\n" } });
+    });
+    const targetResponse = page.waitForResponse(response => response.url().includes("/v1/build?") && response.url().includes("mode=chapter"));
+    await chooseCompileMode(page, "chapter");
+    await targetResponse;
+    assert.equal(await help.isVisible(), false, "a live template declaration suppresses the setup guide");
+    await page.locator("#compile-mode").click();
+    assert.equal(await page.locator("#compile-mode-chapter").getAttribute("aria-checked"), "true");
+    await page.locator("#compile-mode-project").click();
+    assert.equal(await help.isVisible(), false);
+  });
+});
 
 test("Compile switches between the top-level document and the whole chapter from a child file", { skip: !realLatexmk }, async () => {
   await withEditor(async ({ page, base }) => {
@@ -20,7 +57,9 @@ test("Compile switches between the top-level document and the whole chapter from
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
     // The unmarked main file uses the full document even in Chapter root mode.
-    await page.locator("#compile-mode").selectOption("chapter");
+    await chooseCompileMode(page, "chapter");
+    await page.locator("#chapter-help-dialog").waitFor();
+    await page.locator("#chapter-help-done").click();
     await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title") === "Top-level root: main.tex");
     const fallbackResponse = page.waitForResponse(response => response.url().includes("/v1/compile") && response.request().method() === "POST");
     await page.locator("#compile-button").click();
@@ -32,7 +71,7 @@ test("Compile switches between the top-level document and the whole chapter from
     await page.locator('[data-tree-path="chapters"]').click();
     await page.locator('[data-tree-path="chapters/child.tex"]').click();
     await page.waitForFunction(() => globalThis.__paperE2E.state.activeFile === "chapters/child.tex" && globalThis.__paperE2E.state.provider?.synced);
-    await page.locator("#compile-mode").selectOption("chapter");
+    await chooseCompileMode(page, "chapter");
     await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title")?.includes("templates/chapter.tex"));
     const compileResponse = page.waitForResponse(response => response.url().includes("/v1/compile") && response.request().method() === "POST");
     await page.locator("#compile-button").click();
@@ -57,7 +96,7 @@ test("Compile switches between the top-level document and the whole chapter from
     assert.equal(await page.locator("#pdf-download").getAttribute("download"), "methods.pdf");
     await page.locator('[data-tree-path="chapters/sibling.tex"]').click();
     assert.equal(await page.locator("#pdf-download").getAttribute("href"), chapterDownload);
-    await page.locator("#compile-mode").selectOption("project");
+    await chooseCompileMode(page, "project");
     await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title") === "Top-level root: main.tex");
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#compile-button")?.disabled);
     await page.locator("#compile-button").click();
@@ -95,11 +134,11 @@ test("switching compile mode discards a late response from the previous target",
     });
     await page.goto(`${base}/projects/${id}?e2e=1`);
     await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
-    await page.locator("#compile-mode").selectOption("chapter");
+    await chooseCompileMode(page, "chapter");
     await page.locator("#compile-button").click();
     await requestArrived;
     await page.waitForFunction(() => document.querySelector<HTMLButtonElement>("#compile-button")?.disabled);
-    await page.locator("#compile-mode").selectOption("project");
+    await chooseCompileMode(page, "project");
     finish!();
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#compile-button")?.disabled);
     assert.doesNotMatch(await page.locator("#build-output").textContent() || "", /OLD CHAPTER RESULT/);

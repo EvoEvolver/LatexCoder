@@ -1,10 +1,15 @@
 # Chapter compilation
 
-Choose **Top-level root** or **Chapter root** next to Compile. Manual compilation,
+Open the small arrow on the right side of **Compile**, then choose **Top-level root**
+or **Chapter root**. The menu marks the selected mode. Manual compilation,
 the compile shortcut, and existing automatic compilation use the selected mode.
 Compile resolves the target from the currently open `.tex` file. Opening another
 file leaves the displayed PDF attached to its existing target until you compile
-or change mode. The selector's tooltip identifies the last resolved entry and template.
+or change mode. The arrow's tooltip identifies the last resolved entry and template.
+Selecting **Chapter root** on a file without either a `chapter-root` or `template`
+directive opens a setup guide with examples. This also works when chapter mode is
+already selected. The guide does not change source files; without configuration,
+compilation still falls back to the top-level root.
 
 All new configuration lives in leading comments in project `.tex` files. Paths
 are relative to the project root, including paths written inside nested files.

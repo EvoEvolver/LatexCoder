@@ -1,5 +1,6 @@
 import { LanguageSelector, Localized, Message } from './Localized';
 import { VersionHistory } from "./VersionHistory";
+import { CompileTargetMenu } from "./CompileTargetMenu";
 import {
   Archive, ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, File, FileCheck2, FilePlus2,
   FileText, FolderKanban, FolderPlus, GitBranch, GitCommitHorizontal, GitMerge,
@@ -327,10 +328,10 @@ export function AppShell() {
           <section id="output-pane" className="output-pane grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-zinc-700 max-[760px]:hidden max-[760px]:[&.mobile-open]:fixed max-[760px]:[&.mobile-open]:bottom-0 max-[760px]:[&.mobile-open]:left-0 max-[760px]:[&.mobile-open]:right-0 max-[760px]:[&.mobile-open]:top-10 max-[760px]:[&.mobile-open]:z-30 max-[760px]:[&.mobile-open]:grid">
             <div className={cn(paneToolbar, "pane-header output-header h-auto flex-wrap justify-between gap-1 py-1 max-[760px]:grid max-[760px]:min-h-0 max-[760px]:grid-cols-1")}>
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 max-[760px]:w-full">
-                <Localized title="Compile document"><Button id="compile-button" className="h-8 w-28 shrink-0 px-3 text-xs" size="sm" type="button" title="Compile document"><Icon name="play" /><span><Message id="Compile" /></span></Button></Localized>
-                <Localized aria-label="Compile target" title="Chapter root and template are declared in the source file's leading comments"><select id="compile-mode" aria-label="Compile target" className="h-8 min-w-0 max-w-48 rounded-md border bg-background px-2 text-xs" title="Chapter root and template are declared in the source file's leading comments">
-                  <Localized text="Top-level root"><option value="project">Top-level root</option></Localized><Localized text="Chapter root"><option value="chapter">Chapter root</option></Localized>
-                </select></Localized>
+                <div id="compile-control" className="inline-flex shrink-0 rounded-md shadow-xs">
+                  <Localized title="Compile document"><Button id="compile-button" className="h-8 w-28 shrink-0 rounded-r-none px-3 text-xs shadow-none" size="sm" type="button" title="Compile document"><Icon name="play" /><span><Message id="Compile" /></span></Button></Localized>
+                  <CompileTargetMenu />
+                </div>
                 <div id="output-view-tabs" className="segmented grid w-32 grid-cols-2 rounded-md border bg-muted p-0.5" role="tablist"><Button className="active h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="pdf">PDF</Button><Button className="h-7 px-2 text-xs [&.active]:bg-background [&.active]:shadow-sm" variant="ghost" data-output="log"><Message id="Log" /> <span id="log-error-count" className="text-red-700" hidden /></Button></div>
               </div>
               <div className="ml-auto flex items-center max-[760px]:w-full max-[760px]:justify-end"><Localized title="Fit page width"><IconButton id="pdf-fit-width" icon="stretch-horizontal" title="Fit page width" className="[&.active]:bg-accent [&.active]:text-primary" /></Localized><Localized title="Fit whole page"><IconButton id="pdf-fit-page" icon="stretch-vertical" title="Fit whole page" className="[&.active]:bg-accent [&.active]:text-primary" /></Localized><Localized title="Zoom out"><IconButton id="pdf-zoom-out" icon="zoom-out" title="Zoom out" /></Localized><Localized title="Zoom in"><IconButton id="pdf-zoom-in" icon="zoom-in" title="Zoom in" /></Localized><Localized title="Download PDF"><Button id="pdf-download" className={iconButton} variant="ghost" size="icon" title="Download PDF" asChild><a download="paper.pdf"><Icon name="download" /></a></Button></Localized><Localized title="Show source editor"><Button id="close-output" className="ml-1 h-8 px-2.5 text-xs" variant="ghost" type="button" title="Show source editor"><Message id="Switch to source" /></Button></Localized></div>
@@ -424,6 +425,25 @@ export function AppShell() {
       <dialog id="collaborator-dialog" className={dialogClass}><div className="p-5"><Localized title="Project members"><DialogHeader title="Project members" closeId="collaborator-close" /></Localized><div id="collaborator-list" className="space-y-1 text-xs" /><footer className="mt-5 flex justify-end"><Button id="collaborator-done"><Message id="Done" /></Button></footer></div></dialog>
 
       <dialog id="access-secret-dialog" className={dialogClass}><div className="p-5"><Localized title="Access secrets"><DialogHeader title="Access secrets" closeId="access-secret-close" /></Localized><p id="rotate-secret-warning" className="mb-4 text-xs text-muted-foreground"><Message id="Rotating your secrets immediately invalidates your previous View, Edit, Agent editing, and Git access links, and signs out their guest sessions. Other collaborators’ links keep working." /></p><Button id="rotate-share-secret" variant="outline" type="button"><Icon name="refresh-cw" /><Message id="Rotate my secrets" /></Button><footer className="mt-5 flex justify-end"><Button id="access-secret-done"><Message id="Done" /></Button></footer></div></dialog>
+
+      <dialog id="chapter-help-dialog" aria-labelledby="chapter-help-title" className={cn(dialogClass, "w-[min(38rem,calc(100%-1.5rem))]")}>
+        <div className="space-y-4 p-5 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <h2 id="chapter-help-title" className="text-base font-semibold"><Message id="Compile a chapter" /></h2>
+            <Localized title="Close"><IconButton id="chapter-help-close" icon="x" title="Close" /></Localized>
+          </div>
+          <p id="chapter-help-description" className="text-muted-foreground" />
+          <ol className="list-decimal space-y-4 pl-5">
+            <li><p><Message id="At the top of each child file, point to the chapter entry:" /></p><pre className="mt-2 overflow-x-auto rounded bg-muted p-3 text-xs"><code>{"%% latexcoder:chapter-root chapters/methods.tex"}</code></pre></li>
+            <li><p><Message id="At the top of the chapter entry, specify its template:" /></p><pre className="mt-2 overflow-x-auto rounded bg-muted p-3 text-xs"><code>{"%% latexcoder:root main.tex\n%% latexcoder:template templates/chapter.tex\n\\chapter{Methods}\n\\input{chapters/child.tex}"}</code></pre></li>
+            <li><p><Message id="Create the template with the document setup and one content marker:" /></p><pre className="mt-2 overflow-x-auto rounded bg-muted p-3 text-xs"><code>{"\\documentclass{report}\n\\begin{document}\n%% latexcoder:content\n\\end{document}"}</code></pre></li>
+          </ol>
+          <p className="text-xs text-muted-foreground"><Message id="Paths are relative to the project root. Keep directives in the leading comment block." /></p>
+          <p className="text-xs text-muted-foreground"><Message id="For a complete chapter document, use %% latexcoder:template none." /></p>
+          <p className="text-xs text-muted-foreground"><Message id="Until configured, Chapter root uses the top-level root." /></p>
+          <footer className="flex justify-end"><Button id="chapter-help-done" type="button"><Message id="Done" /></Button></footer>
+        </div>
+      </dialog>
 
       <dialog id="account-dialog" className={dialogClass}>
         <form id="account-form" className="space-y-4 p-5">

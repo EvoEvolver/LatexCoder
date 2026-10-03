@@ -1,6 +1,6 @@
 import { formatDate, localizedDocumentTitle, localizedAttribute, localizedText, t } from './i18n.ts';
 import { createVersionHistory } from "./version-history";
-import type { CompileMode, CompileSelection } from "../shared/compile-directives.ts";
+import { compileDirectives, type CompileMode, type CompileSelection } from "../shared/compile-directives.ts";
 import { createFileTabs } from "./file-tabs.ts";
 import { createFileTree } from "./file-tree.ts";
 import { renderMarkdownPreview as renderMarkdownDocument } from "./markdown-preview.ts";
@@ -342,7 +342,11 @@ let compileQueued = false;
 let compileMode: CompileMode = "project";
 let previewSelection: CompileSelection = {};
 let buildEpoch = 0;
-const compileModeSelect = document.getElementById("compile-mode") as HTMLSelectElement;
+const compileModeButton = document.getElementById("compile-mode") as HTMLButtonElement;
+const chapterHelpDialog = document.getElementById("chapter-help-dialog") as HTMLDialogElement;
+for (const id of ["chapter-help-close", "chapter-help-done"]) {
+  document.getElementById(id)!.addEventListener("click", () => chapterHelpDialog.close());
+}
 
 function currentCompileSelection(): CompileSelection {
   return { mode: compileMode, file: state.activeFile.endsWith(".tex") ? state.activeFile : state.main };
@@ -358,7 +362,7 @@ function buildEndpoint(endpoint: string, selection = previewSelection): string {
 function describeBuild(build: BuildInfo): void {
   const target = build.target;
   const main = target?.main || build.main || state.main;
-  localizedAttribute(compileModeSelect, "title", () => `${target?.mode === "chapter" ? t("Chapter root") : t("Top-level root")}: ${main}${target?.template ? `\n${t("Template: {{template}}", { template: target.template })}` : ""}`);
+  localizedAttribute(compileModeButton, "title", () => `${target?.mode === "chapter" ? t("Chapter root") : t("Top-level root")}: ${main}${target?.template ? `\n${t("Template: {{template}}", { template: target.template })}` : ""}`);
   elements.pdf_download.download = `${main.split("/").at(-1)?.replace(/\.tex$/, "") || "paper"}.pdf`;
 }
 
@@ -372,13 +376,28 @@ async function selectBuild(selection: CompileSelection): Promise<number> {
   return epoch;
 }
 
-compileModeSelect.addEventListener("change", async () => {
-  compileMode = compileModeSelect.value as CompileMode;
+window.addEventListener("latexcoder-select-compile-mode", async event => {
+  const mode = (event as CustomEvent<CompileMode>).detail;
+  if (mode !== "project" && mode !== "chapter") return;
+  compileMode = mode;
   const project = state.projectId;
+  const activeFile = state.activeFile;
   const selection = currentCompileSelection();
   const epoch = await selectBuild(selection);
   try {
     if (project !== state.projectId || epoch !== buildEpoch) return;
+    if (mode === "chapter") {
+      const file = selection.file!;
+      const source = file === state.activeFile && editorSession?.synced
+        ? editorSession.text.toString()
+        : await request<string>(`v1/files?path=${encodeURIComponent(file)}`);
+      if (project !== state.projectId || epoch !== buildEpoch) return;
+      const directives = compileDirectives(source, file);
+      if (!directives["chapter-root"] && !directives.template && activeFile === state.activeFile) {
+        localizedText(document.getElementById("chapter-help-description")!, () => t("No chapter configuration was found in {{file}}.", { file }));
+        chapterHelpDialog.showModal();
+      }
+    }
     const { build } = await request<{ build: BuildInfo }>(buildEndpoint("v1/build", selection));
     if (project !== state.projectId || epoch !== buildEpoch) return;
     describeBuild(build);
@@ -3331,7 +3350,7 @@ async function openProjectPage(projectId: string, push = true): Promise<void> {
   buildEpoch++;
   previewSelection = {};
   compileMode = "project";
-  compileModeSelect.value = "project";
+  window.dispatchEvent(new CustomEvent("latexcoder-compile-mode-change", { detail: compileMode }));
   await pdfController.reset();
   localizedText(elements.build_output, () => "");
   await refreshProject(true, true);
