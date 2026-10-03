@@ -1,4 +1,6 @@
 {
+  "Back": "戻る",
+  "Key name": "鍵名",
   "Compile a chapter": "章単位で組版",
   "No chapter configuration was found in {{file}}.": "{{file}} に章の組版設定がありません。",
   "At the top of each child file, point to the chapter entry:": "各子ファイルの冒頭で、章の起点を指定します：",

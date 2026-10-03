@@ -498,7 +498,6 @@ function openAccountPanel(): void {
   elements.account_display_name.value = state.user.displayName || state.user.username;
   syncThemeControls();
   elements.account_dialog.showModal();
-  if (state.sshGitEnabled) void refreshSshKeys().catch(error => showToast(error.message));
   queueMicrotask(() => elements.account_display_name.select());
 }
 
@@ -3755,6 +3754,42 @@ function updateGitAccess(): void {
   document.getElementById("git-manage-keys")!.hidden = !ssh;
 }
 
+const sshKeysDialog = document.getElementById("ssh-keys-dialog") as HTMLDialogElement;
+const sshKeysError = document.getElementById("ssh-keys-error")!;
+let sshKeysOrigin: "account" | "git" = "account";
+
+function showSshKeyError(error: Error): void {
+  localizedText(sshKeysError, () => error.message);
+  sshKeysError.hidden = false;
+  sshKeysError.scrollIntoView({ block: "nearest" });
+}
+
+function openSshKeys(origin: "account" | "git"): void {
+  if (!state.user || !state.sshGitEnabled) return;
+  sshKeysOrigin = origin;
+  (origin === "account" ? elements.account_dialog : elements.git_access_dialog).close();
+  sshKeysError.hidden = true;
+  localizedText(document.getElementById("ssh-key-list")!, () => t("Loading..."));
+  sshKeysDialog.showModal();
+  void refreshSshKeys().catch(showSshKeyError);
+}
+
+function returnFromSshKeys(): void {
+  sshKeysDialog.close();
+  if (sshKeysOrigin === "account") {
+    // Reopen without repopulating fields: preserve unsaved profile edits.
+    elements.account_dialog.showModal();
+    document.getElementById("account-manage-keys")!.focus();
+  } else {
+    updateGitAccess();
+    elements.git_access_dialog.showModal();
+    document.getElementById("git-manage-keys")!.focus();
+  }
+}
+document.getElementById("account-manage-keys")!.addEventListener("click", () => openSshKeys("account"));
+for (const id of ["ssh-keys-back", "ssh-keys-close", "ssh-keys-done"]) document.getElementById(id)!.addEventListener("click", returnFromSshKeys);
+sshKeysDialog.addEventListener("cancel", event => { event.preventDefault(); returnFromSshKeys(); });
+
 async function refreshSshKeys(): Promise<void> {
   const { keys } = await request<{ keys: SshKey[] }>("v1/users/me/ssh-keys");
   const list = document.getElementById("ssh-key-list")!;
@@ -3782,7 +3817,7 @@ async function refreshSshKeys(): Promise<void> {
         await request(`v1/users/me/ssh-keys/${encodeURIComponent(key.id)}`, { method: "DELETE" });
         await refreshSshKeys();
         showToast(t("SSH key removed."));
-      } catch (error) { remove.disabled = false; showToast(error.message); }
+      } catch (error) { remove.disabled = false; showSshKeyError(error); }
     });
     row.append(text, remove);
     list.append(row);
@@ -3793,16 +3828,13 @@ async function refreshSshKeys(): Promise<void> {
 for (const mode of ["ssh", "link"] as const) {
   document.getElementById(`git-mode-${mode}`)!.addEventListener("click", () => { gitAccessMode = mode; updateGitAccess(); });
 }
-document.getElementById("git-manage-keys")!.addEventListener("click", () => {
-  elements.git_access_dialog.close();
-  openAccountPanel();
-  document.getElementById("ssh-key-title")!.focus();
-});
+document.getElementById("git-manage-keys")!.addEventListener("click", () => openSshKeys("git"));
 document.getElementById("ssh-key-add")!.addEventListener("click", async () => {
   const button = document.getElementById("ssh-key-add") as HTMLButtonElement;
   const title = document.getElementById("ssh-key-title") as HTMLInputElement;
   const publicKey = document.getElementById("ssh-key-public") as HTMLTextAreaElement;
   button.disabled = true;
+  sshKeysError.hidden = true;
   try {
     await request("v1/users/me/ssh-keys", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title.value, publicKey: publicKey.value }) });
@@ -3810,7 +3842,7 @@ document.getElementById("ssh-key-add")!.addEventListener("click", async () => {
     publicKey.value = "";
     await refreshSshKeys();
     showToast(t("SSH key added."));
-  } catch (error) { showToast(error.message); }
+  } catch (error) { showSshKeyError(error); }
   finally { button.disabled = false; }
 });
 

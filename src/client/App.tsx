@@ -445,6 +445,26 @@ export function AppShell() {
         </div>
       </dialog>
 
+      <dialog id="ssh-keys-dialog" aria-labelledby="ssh-keys-heading" className={cn(dialogClass, "overflow-hidden")}>
+        <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
+            <div className="flex items-center gap-2"><Localized title="Back"><IconButton id="ssh-keys-back" icon="arrow-left" title="Back" /></Localized><h2 id="ssh-keys-heading" className="text-base font-semibold"><Message id="SSH keys" /></h2></div>
+            <Localized title="Close"><IconButton id="ssh-keys-close" icon="x" title="Close" /></Localized>
+          </header>
+          <div id="ssh-keys-body" className="min-h-0 space-y-4 overflow-y-auto p-5">
+            <p className="text-xs text-muted-foreground"><Message id="Add a public key to clone and push your projects over SSH. Keep the private key on your device." /></p>
+            <p id="ssh-keys-error" role="alert" hidden className="break-words text-xs text-destructive" />
+            <div id="ssh-key-list" className="space-y-2" aria-live="polite" />
+            <div className="space-y-3 border-t pt-4">
+              <label className="grid gap-1 text-sm" htmlFor="ssh-key-title"><Message id="Key name" /><Localized placeholder="My laptop"><Input id="ssh-key-title" maxLength={80} placeholder="My laptop" /></Localized></label>
+              <label className="grid gap-1 text-sm" htmlFor="ssh-key-public"><Message id="Public key" /><textarea id="ssh-key-public" rows={3} maxLength={16384} placeholder="ssh-ed25519 AAAA…" className="w-full resize-y rounded-md border bg-background p-2 font-mono text-xs" /></label>
+              <Button id="ssh-key-add" type="button" variant="outline" size="sm"><Message id="Add SSH key" /></Button>
+            </div>
+          </div>
+          <footer className="flex shrink-0 justify-end border-t px-5 py-3"><Button id="ssh-keys-done" type="button"><Message id="Done" /></Button></footer>
+        </div>
+      </dialog>
+
       <dialog id="account-dialog" className={dialogClass}>
         <form id="account-form" className="space-y-4 p-5">
           <Localized title="Account"><DialogHeader title="Account" closeId="account-close" /></Localized>
@@ -460,14 +480,9 @@ export function AppShell() {
             </div></Localized>
           </section>
           <LanguageSelector />
-          <Localized aria-label="SSH keys"><section id="account-ssh-keys" hidden className="space-y-3 border-t pt-4" aria-label="SSH keys">
-            <strong className="text-sm font-medium"><Message id="SSH keys" /></strong>
-            <p className="text-xs text-muted-foreground"><Message id="Add a public key to clone and push your projects over SSH. Keep the private key on your device." /></p>
-            <div id="ssh-key-list" className="max-h-36 space-y-2 overflow-y-auto" aria-live="polite" />
-            <label className="grid gap-1 text-sm" htmlFor="ssh-key-title">Key name<Localized placeholder="My laptop"><Input id="ssh-key-title" maxLength={80} placeholder="My laptop" /></Localized></label>
-            <label className="grid gap-1 text-sm" htmlFor="ssh-key-public"><Message id="Public key" /><textarea id="ssh-key-public" rows={3} maxLength={16384} placeholder="ssh-ed25519 AAAA…" className="w-full rounded-md border bg-background p-2 font-mono text-xs" /></label>
-            <Button id="ssh-key-add" type="button" variant="outline" size="sm"><Message id="Add SSH key" /></Button>
-          </section></Localized>
+          <div id="account-ssh-keys" hidden className="border-t pt-4">
+            <Button id="account-manage-keys" type="button" variant="ghost" className="w-full justify-between px-2" aria-haspopup="dialog"><span className="flex items-center gap-2"><Icon name="key-round" /><Message id="SSH keys" /></span><ChevronRight aria-hidden="true" className="size-4" /></Button>
+          </div>
           <footer className="flex justify-between gap-2"><Button id="account-logout" variant="outline" type="button"><Icon name="log-out" /><Message id="Sign out" /></Button><div className="flex gap-2"><Button id="account-cancel" variant="outline" type="button"><Message id="Cancel" /></Button><Button id="account-save" type="submit"><Message id="Save" /></Button></div></footer>
         </form>
       </dialog>

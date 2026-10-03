@@ -1,4 +1,6 @@
 {
+  "Back": "返回",
+  "Key name": "密钥名称",
   "Compile a chapter": "编译单个章节",
   "No chapter configuration was found in {{file}}.": "{{file}} 中没有章节编译标记。",
   "At the top of each child file, point to the chapter entry:": "在各个子文件开头，指定所属章节的入口文件：",
