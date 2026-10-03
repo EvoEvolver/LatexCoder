@@ -1,8 +1,9 @@
 # Interface languages
 
 LaTeX Coder supports English, Simplified Chinese, and Japanese through i18next and
-react-i18next. The language selector is available on the sign-in page, project
-list, administration page, editor toolbar, and account settings. Choose **Auto**
+react-i18next. The language selector is available on the sign-in and registration
+screen and in account settings. It is not shown in the editor toolbar or the
+project and administration page headers. Choose **Auto**
 (**Follow browser** in account settings) to use the
 first supported browser language, with English as the fallback. Japanese browser
 locales such as `ja-JP` resolve to `ja`.

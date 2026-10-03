@@ -179,7 +179,6 @@ export function AppShell() {
         <header className="projects-header flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-65rem)/2))]">
           <Localized title="About LaTeX Coder"><button id="projects-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder" aria-haspopup="dialog"><Brand /></button></Localized>
           <div className="projects-account flex items-center gap-2">
-            <LanguageSelector compact />
             <Button id="admin-button" variant="ghost" size="sm" hidden><Icon name="shield-check" /><span className="max-sm:hidden"><Message id="Admin" /></span></Button>
             <Button id="account-button" variant="ghost" size="sm"><Icon name="user-round" /><span id="current-user" className="max-w-36 truncate max-sm:hidden" /></Button>
             <Button id="invite-user" data-internal-only variant="outline" size="sm"><Icon name="user-plus" /><span className="max-sm:hidden"><Message id="Invite" /></span></Button>
@@ -201,7 +200,7 @@ export function AppShell() {
       <div id="admin-page" className="min-h-dvh overflow-auto bg-muted/40" hidden>
         <header className="flex h-16 items-center justify-between border-b bg-background px-[max(1rem,calc((100vw-80rem)/2))]">
           <Localized title="About LaTeX Coder"><button id="admin-about" className="rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" title="About LaTeX Coder"><Brand /></button></Localized>
-          <div className="flex items-center gap-2"><LanguageSelector compact /><Button id="admin-back" variant="ghost" size="sm"><Icon name="arrow-left" /><Message id="Projects" /></Button></div>
+          <Button id="admin-back" variant="ghost" size="sm"><Icon name="arrow-left" /><Message id="Projects" /></Button>
         </header>
         <main className="mx-auto w-[min(calc(100%-2rem),80rem)] py-8 max-sm:py-5">
           <div className="mb-5"><h1 className="font-serif text-3xl font-semibold max-sm:text-2xl"><Message id="Administration" /></h1><p className="mt-1 text-sm text-muted-foreground"><Message id="Manage accounts and projects across this installation." /></p></div>
@@ -278,7 +277,6 @@ export function AppShell() {
           </div>
           <span id="active-file-label" className="sr-only">main.tex</span>
           <div id="topbar-status" className="ml-auto flex min-w-0 shrink-0 items-center gap-2 px-1">
-            <LanguageSelector compact />
             <span id="sync-state" className="whitespace-nowrap text-[10px] text-muted-foreground max-[520px]:hidden"><Message id="Connecting" /></span>
             <Localized aria-label="Active collaborators"><div id="presence" className="presence flex min-w-0 max-[760px]:hidden" aria-label="Active collaborators" /></Localized>
             <label id="guest-name-field" className="name-field flex h-7 w-32 items-center gap-1.5 rounded border bg-background px-1.5 max-lg:hidden"><Icon name="user-round" /><Localized aria-label="Display name"><Input id="display-name" className="h-6 border-0 p-0 text-[10px] shadow-none focus-visible:ring-0" maxLength={28} aria-label="Display name" /></Localized></label>

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { withEditor, openRootFileMenu } from "./helpers/browser.ts";
+import type { Page } from "playwright";
+import { withEditor, openRootFileMenu, chooseAppMenu } from "./helpers/browser.ts";
+
+async function setEditorLanguage(page: Page, language: string): Promise<void> {
+  await chooseAppMenu(page, "account", "#editor-account-button");
+  await page.locator("#account-dialog [data-language-select]").selectOption(language);
+  await page.locator("#account-close").click();
+}
 
 for (const locale of [
   { code: "zh-CN", browser: "zh-Hans-CN", compile: "编译", chapter: "章节入口", root: "顶层入口:", newFile: "新建文件", settings: "项目设置" },
@@ -15,7 +22,10 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
     await page.locator("#compile-mode").selectOption("chapter");
     await page.waitForFunction(() => document.querySelector("#compile-mode")?.getAttribute("title")?.startsWith("Top-level root:"));
-    const language = page.locator("#editor-page [data-language-select]");
+    const language = page.locator("#account-dialog [data-language-select]");
+    assert.equal(await page.locator("[data-language-select]").count(), 2);
+    assert.equal(await page.locator("#auth-page [data-language-select]").count(), 1);
+    assert.equal(await page.locator("#editor-page [data-language-select], #projects-page [data-language-select], #admin-page [data-language-select]").count(), 0);
     const view = await page.evaluateHandle(() => globalThis.__paperE2E.state.view);
     const provider = await page.evaluateHandle(() => globalThis.__paperE2E.state.provider);
     await page.evaluate(() => {
@@ -23,7 +33,7 @@ test(`${locale.code} language switching preserves the live editor and updates Re
       view.dispatch({ changes: { from: 0, insert: "% Project — user content\n" }, selection: { anchor: 8 } });
     });
     const before = await page.evaluate(() => ({ text: globalThis.__paperE2E.state.view.state.doc.toString(), selection: globalThis.__paperE2E.state.view.state.selection.toJSON() }));
-    await language.selectOption(locale.code);
+    await setEditorLanguage(page, locale.code);
     await page.waitForFunction(text => document.querySelector("#compile-button")?.textContent === text, locale.compile);
     assert.equal(await page.locator("html").getAttribute("lang"), locale.code);
     assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), locale.chapter);
@@ -37,14 +47,14 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     await page.locator("#project-menu").click();
     assert.ok((await page.locator("#project-settings").textContent())?.includes(locale.settings));
     await page.keyboard.press("Escape");
-    await language.selectOption("en");
+    await setEditorLanguage(page, "en");
     await page.waitForFunction(() => document.querySelector("#compile-button")?.textContent === "Compile");
     assert.equal(await page.locator("#compile-mode option[value=chapter]").textContent(), "Chapter root");
     assert.match(await page.locator("#compile-mode").getAttribute("title") || "", /^Top-level root:/);
     await page.locator("#editor .cm-content").focus();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
     assert.ok(!(await page.evaluate(() => globalThis.__paperE2E.state.view.state.doc.toString())).includes("Project — user content"));
-    await language.selectOption(locale.code);
+    await setEditorLanguage(page, locale.code);
     await page.reload();
     await page.waitForFunction(() => globalThis.__paperE2E);
     assert.equal(await language.inputValue(), locale.code);
@@ -52,22 +62,24 @@ test(`${locale.code} language switching preserves the live editor and updates Re
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: `/tmp/latexcoder-i18n-${locale.code}-mobile.png` });
-    await language.selectOption("en");
+    await setEditorLanguage(page, "en");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.setViewportSize({ width: 1280, height: 800 });
-    await language.selectOption(locale.code);
+    await setEditorLanguage(page, locale.code);
     await page.screenshot({ path: `/tmp/latexcoder-i18n-${locale.code}-desktop.png` });
     assert.deepEqual(errors, []);
   });
 });
 
 test(`${locale.browser} browser language is used when no personal preference exists`, async () => {
-  await withEditor(async ({ page }) => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
     assert.equal(await page.locator("html").getAttribute("lang"), locale.code);
     assert.equal(await page.locator("#compile-button").textContent(), locale.compile);
-    await page.locator("#editor-page [data-language-select]").selectOption("en");
+    await setEditorLanguage(page, "en");
     await page.waitForFunction(() => document.documentElement.lang === "en");
-    await page.locator("#editor-page [data-language-select]").selectOption("system");
+    await setEditorLanguage(page, "system");
     await page.waitForFunction(language => document.documentElement.lang === language, locale.code);
   }, {}, locale.code === "ja"
     ? () => Object.defineProperty(navigator, "languages", { value: ["ja-JP", "en"] })
@@ -76,14 +88,16 @@ test(`${locale.browser} browser language is used when no personal preference exi
 }
 
 test("language switching after closing TreeWriter does not access the closed tab state", async () => {
-  await withEditor(async ({ page }) => {
+  await withEditor(async ({ page, base }) => {
+    await page.goto(`${base}/?e2e=1`);
+    await page.waitForFunction(() => globalThis.__paperE2E?.state.provider?.synced);
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.locator("#open-structure").click();
     // Retain the detached tab so the regression does not depend on GC timing.
     const tab = await page.locator(".auxiliary-tab").elementHandle();
     await page.locator(".auxiliary-tab .close-tab").click();
-    await page.locator("#editor-page [data-language-select]").selectOption("zh-CN");
+    await setEditorLanguage(page, "zh-CN");
     await page.waitForFunction(() => document.querySelector("#compile-button")?.textContent === "编译");
     assert.equal(await page.locator(".auxiliary-tab").count(), 0);
     assert.deepEqual(errors, []);
@@ -118,7 +132,7 @@ test("changing language preserves an open review reply and leaves document text 
     await page.locator("#toggle-review").click();
     await page.locator(".review-item").getByRole("button", { name: "Reply", exact: true }).click();
     await page.locator(".comment-reply-form textarea").fill("My unsent reply");
-    await page.locator("#editor-page [data-language-select]").selectOption("zh-CN");
+    await setEditorLanguage(page, "zh-CN");
     await page.locator(".comment-reply-form").getByRole("button", { name: "回复", exact: true }).waitFor();
     assert.equal(await page.locator(".comment-reply-form textarea").inputValue(), "My unsent reply");
     assert.equal(await page.locator(".comment-reply-form textarea").getAttribute("placeholder"), "撰写回复");
